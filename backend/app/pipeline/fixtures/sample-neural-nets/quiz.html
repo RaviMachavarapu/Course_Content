@@ -1,0 +1,35 @@
+<div class="studio-artifact" data-type="quiz">
+  <div class="question">
+    <p class="prompt">What does a single artificial neuron output before activation?</p>
+    <ol class="options">
+      <li>The maximum of its inputs</li>
+      <li>A weighted sum of its inputs plus a bias</li>
+      <li>The average of its weights</li>
+      <li>A random value</li>
+    </ol>
+    <p class="answer" data-correct-index="1">2</p>
+    <p class="explanation">The pre-activation value is w·x + b; the activation function is applied afterwards.</p>
+  </div>
+  <div class="question">
+    <p class="prompt">Which activation function is defined as max(0, x)?</p>
+    <ol class="options">
+      <li>Sigmoid</li>
+      <li>Tanh</li>
+      <li>ReLU</li>
+      <li>Softmax</li>
+    </ol>
+    <p class="answer" data-correct-index="2">3</p>
+    <p class="explanation">ReLU (Rectified Linear Unit) returns x for positive inputs and 0 otherwise.</p>
+  </div>
+  <div class="question">
+    <p class="prompt">Why are non-linear activations necessary in deep networks?</p>
+    <ol class="options">
+      <li>They make training slower on purpose</li>
+      <li>They keep weights positive</li>
+      <li>They prevent stacked layers from collapsing into one linear map</li>
+      <li>They remove the need for a loss function</li>
+    </ol>
+    <p class="answer" data-correct-index="2">3</p>
+    <p class="explanation">Composing linear maps yields another linear map; non-linearity is what adds expressive power.</p>
+  </div>
+</div>

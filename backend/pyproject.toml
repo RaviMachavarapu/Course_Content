@@ -1,0 +1,102 @@
+[project]
+name = "shikshak-dp-backend"
+version = "0.1.0"
+description = "Shikshak Dp AI Course Content Suite — backend API, pipeline, and workers"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.32,<0.33",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "email-validator>=2.2,<3",
+    "sqlalchemy>=2.0.36,<2.1",
+    "alembic>=1.14,<1.15",
+    "psycopg[binary]>=3.2,<3.3",
+    "redis>=5.2,<6",
+    "celery>=5.4,<5.5",
+    "argon2-cffi>=23.1,<24",
+    "httpx>=0.28,<0.29",
+    "python-multipart>=0.0.12,<0.1",
+    "itsdangerous>=2.2,<3",
+    "beautifulsoup4>=4.12,<5",
+    "lxml>=5.3,<6",
+    "nh3>=0.2.19,<0.3",
+    "python-pptx>=1.0,<2",
+    "weasyprint>=63,<64",
+    "structlog>=24.4,<25",
+    "sentry-sdk[fastapi,celery]>=2.17,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<0.25",
+    "pytest-cov>=6.0,<7",
+    "factory-boy>=3.3,<4",
+    "ruff>=0.8,<0.9",
+    "black>=24.10,<25",
+    "mypy>=1.13,<2",
+    "types-beautifulsoup4",
+    "types-redis",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "TID", "RUF"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "."
+exclude = ["alembic/"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["weasyprint.*", "pptx.*", "factory.*", "celery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# python-pptx ships only partial hints; its constructors (RGBColor, …) read as
+# untyped calls in our render module.
+module = ["app.render.slides_pptx"]
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+# Celery's decorators are untyped; don't fail strict mode on task definitions.
+module = ["app.tasks.*"]
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra -q"
+filterwarnings = [
+    "error::DeprecationWarning",
+    # starlette 0.46 imports anyio.abc.BlockingPortal, deprecated in anyio 4.15.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py", "alembic/*"]

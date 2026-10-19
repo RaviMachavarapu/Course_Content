@@ -1,0 +1,474 @@
+<!DOCTYPE html><html class="light" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>LearnForge Admin - Staging &amp; Review Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "tertiary-fixed-dim": "#d0bcff",
+                    "surface-container-highest": "#e0e3e5",
+                    "inverse-surface": "#2d3133",
+                    "error-container": "#ffdad6",
+                    "primary-fixed-dim": "#b4c5ff",
+                    "on-tertiary": "#ffffff",
+                    "surface-container": "#eceef0",
+                    "surface-tint": "#465c9b",
+                    "tertiary": "#3c0092",
+                    "outline-variant": "#c5c6d2",
+                    "inverse-primary": "#b4c5ff",
+                    "surface-container-low": "#f2f4f6",
+                    "on-secondary-fixed": "#002113",
+                    "outline": "#757681",
+                    "on-secondary-container": "#00714d",
+                    "primary-fixed": "#dbe1ff",
+                    "on-error": "#ffffff",
+                    "surface-container-lowest": "#ffffff",
+                    "primary": "#142d6a",
+                    "inverse-on-surface": "#eff1f3",
+                    "secondary": "#006c49",
+                    "surface": "#f7f9fb",
+                    "error": "#ba1a1a",
+                    "secondary-fixed": "#6ffbbe",
+                    "on-secondary": "#ffffff",
+                    "surface-dim": "#d8dadc",
+                    "tertiary-container": "#5517bf",
+                    "primary-container": "#2e4482",
+                    "on-error-container": "#93000a",
+                    "surface-bright": "#f7f9fb",
+                    "on-primary-fixed": "#00174b",
+                    "tertiary-fixed": "#e9ddff",
+                    "on-background": "#191c1e",
+                    "on-tertiary-fixed": "#23005c",
+                    "surface-variant": "#e0e3e5",
+                    "on-primary-container": "#9eb3f9",
+                    "surface-container-high": "#e6e8ea",
+                    "secondary-fixed-dim": "#4edea3",
+                    "on-surface-variant": "#444650",
+                    "on-surface": "#191c1e",
+                    "on-tertiary-fixed-variant": "#5516be",
+                    "background": "#f7f9fb",
+                    "secondary-container": "#6cf8bb",
+                    "on-primary-fixed-variant": "#2d4381",
+                    "on-tertiary-container": "#c1a8ff",
+                    "on-primary": "#ffffff",
+                    "on-secondary-fixed-variant": "#005236"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "margin-mobile": "16px",
+                    "gutter": "24px",
+                    "sm": "8px",
+                    "xs": "4px",
+                    "base": "4px",
+                    "margin-desktop": "48px",
+                    "md": "16px",
+                    "xl": "40px",
+                    "lg": "24px"
+            },
+            "fontFamily": {
+                    "display-lg": [
+                            "Public Sans"
+                    ],
+                    "headline-md": [
+                            "Public Sans"
+                    ],
+                    "label-sm": [
+                            "Inter"
+                    ],
+                    "label-md": [
+                            "Inter"
+                    ],
+                    "headline-lg-mobile": [
+                            "Public Sans"
+                    ],
+                    "body-md": [
+                            "Inter"
+                    ],
+                    "body-lg": [
+                            "Inter"
+                    ],
+                    "headline-lg": [
+                            "Public Sans"
+                    ]
+            },
+            "fontSize": {
+                    "display-lg": [
+                            "48px",
+                            {
+                                    "lineHeight": "56px",
+                                    "letterSpacing": "-0.02em",
+                                    "fontWeight": "700"
+                            }
+                    ],
+                    "headline-md": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "label-sm": [
+                            "12px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "label-md": [
+                            "14px",
+                            {
+                                    "lineHeight": "20px",
+                                    "letterSpacing": "0.01em",
+                                    "fontWeight": "500"
+                            }
+                    ],
+                    "headline-lg-mobile": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "body-md": [
+                            "16px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "body-lg": [
+                            "18px",
+                            {
+                                    "lineHeight": "28px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "headline-lg": [
+                            "32px",
+                            {
+                                    "lineHeight": "40px",
+                                    "letterSpacing": "-0.01em",
+                                    "fontWeight": "600"
+                            }
+                    ]
+            }
+    },
+        },
+      }
+    </script>
+<style>
+        .waveform {
+            background: repeating-linear-gradient(
+                90deg,
+                #142d6a,
+                #142d6a 2px,
+                transparent 2px,
+                transparent 4px
+            );
+            height: 100%;
+            width: 100%;
+            opacity: 0.8;
+            mask-image: linear-gradient(to right, black 40%, rgba(0,0,0,0.2) 40%);
+            -webkit-mask-image: linear-gradient(to right, black 40%, rgba(0,0,0,0.2) 40%);
+        }
+        .pulse-loader {
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.5; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md min-h-screen flex">
+<!-- SideNav (from Shared Components) -->
+<nav class="hidden lg:flex flex-col h-screen fixed left-0 top-0 py-lg px-md gap-sm border-r border-outline-variant bg-surface w-64 z-40">
+<div class="flex items-center gap-2 mb-8 px-2">
+<div class="w-8 h-8 bg-primary rounded flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-sm" data-icon="school">school</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md font-extrabold text-primary leading-tight">Shikshak Dp</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant leading-tight">AI Engine</p>
+</div>
+</div>
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-2 px-4 rounded-lg flex items-center justify-center gap-2 mb-4 hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="add">add</span>
+            New Artifact
+        </button>
+<ul class="flex flex-col gap-1 w-full">
+<li class="">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg font-label-md text-label-md transition-all scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="upload_file">upload_file</span>
+                    Ingestion
+                </a>
+</li>
+<li class="">
+<a class="flex items-center gap-3 px-3 py-2 bg-primary-container text-on-primary-container rounded-lg font-bold font-label-md text-label-md transition-all scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="fact_check" style="font-variation-settings: &quot;FILL&quot; 1;">fact_check</span>
+                    Review
+                </a>
+</li>
+<li class="">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg font-label-md text-label-md transition-all scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="edit_note">edit_note</span>
+                    Editor
+                </a>
+</li>
+
+<li class="">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg font-label-md text-label-md transition-all scale-98 active:scale-95 duration-200 mt-auto" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+                    Settings
+                </a>
+</li>
+</ul>
+</nav>
+<!-- Main Content -->
+<main class="flex-1 lg:ml-64 flex flex-col h-screen overflow-hidden">
+<!-- Top Header Area -->
+<header class="bg-surface-container-lowest border-b border-outline-variant px-margin-desktop py-md flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-0 z-30">
+<div class="flex flex-col gap-2">
+<a class="text-on-surface-variant hover:text-primary font-label-sm text-label-sm flex items-center gap-1 w-fit transition-colors" href="#">
+<span class="material-symbols-outlined text-[16px]" data-icon="arrow_back">arrow_back</span>
+                    Back to Ingestion
+                </a>
+<div class="flex items-center gap-3">
+<h1 class="font-headline-md text-headline-md md:font-headline-lg md:text-headline-lg text-on-background">Machine Learning Fundamentals: Neural Networks</h1>
+<a class="text-outline hover:text-primary transition-colors" href="#" title="View Source">
+<span class="material-symbols-outlined text-[20px]" data-icon="open_in_new">open_in_new</span>
+</a>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="bg-[#FEF3C7] text-[#92400E] px-3 py-1 rounded-full font-label-sm text-label-sm flex items-center gap-1 border border-[#FCD34D]">
+<span class="w-2 h-2 rounded-full bg-[#D97706]"></span>
+                    Status: Pending Review
+                </div>
+<button class="bg-secondary text-on-secondary hover:bg-secondary/90 px-4 py-2 rounded-lg font-label-md text-label-md flex items-center gap-2 transition-colors shadow-sm">
+<span class="material-symbols-outlined text-[18px]" data-icon="publish">publish</span>
+                    Publish Complete Course
+                </button>
+</div>
+</header>
+<!-- Dashboard Content -->
+<div class="flex-1 overflow-y-auto p-margin-mobile md:p-gutter lg:p-margin-desktop">
+<div class="max-w-7xl mx-auto">
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-gutter">
+<!-- 1. Slide Deck -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col group hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-all">
+<div class="h-40 bg-surface-container-low border-b border-outline-variant p-4 relative flex items-center justify-center overflow-hidden">
+<!-- Faux Carousel -->
+<div class="flex gap-2 w-full h-full justify-center items-center">
+<div class="w-3/4 h-full bg-white shadow-sm border border-outline-variant rounded-md flex flex-col p-3 z-10 relative">
+<div class="w-1/3 h-2 bg-primary-fixed-dim rounded mb-3"></div>
+<div class="w-full h-2 bg-surface-container-high rounded mb-2"></div>
+<div class="w-5/6 h-2 bg-surface-container-high rounded"></div>
+<div class="mt-auto self-end text-xs text-outline font-label-sm">3 / 8</div>
+</div>
+<div class="w-1/4 h-3/4 bg-white shadow-sm border border-outline-variant rounded-md opacity-50 -ml-8 z-0"></div>
+</div>
+<div class="absolute top-3 right-3 bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-[10px] uppercase tracking-wide flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]" data-icon="check_circle">check_circle</span> Ready
+                            </div>
+</div>
+<div class="p-4 flex-1 flex flex-col">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="co_present">co_present</span>
+<div>
+<h3 class="font-label-md text-label-md font-semibold">Slide Deck</h3>
+<p class="text-sm text-on-surface-variant">8-slide carousel preview</p>
+</div>
+</div>
+<div class="mt-auto pt-4 flex gap-2">
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-low px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Redo Slides</button>
+<button class="flex-1 bg-primary text-on-primary hover:bg-primary/90 px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Inspect &amp; Edit</button>
+</div>
+</div>
+</div>
+<!-- 2. Interactive Quiz -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col group hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-all">
+<div class="h-40 bg-surface-container-low border-b border-outline-variant p-4 relative overflow-hidden">
+<!-- Faux Quiz -->
+<div class="bg-white border border-outline-variant rounded-md p-3 h-full shadow-sm">
+<div class="font-label-sm text-label-sm font-semibold mb-2 line-clamp-2">Q: What is the primary function of an activation function in a neural network?</div>
+<div class="space-y-1.5">
+<div class="bg-surface-container-low border border-outline-variant px-2 py-1 rounded text-[10px] text-on-surface-variant">To initialize weights.</div>
+<div class="bg-[#D1FAE5] border border-[#34D399] px-2 py-1 rounded text-[10px] text-[#065F46] flex items-center justify-between">
+                                        To introduce non-linearity. <span class="material-symbols-outlined text-[12px]" data-icon="check">check</span>
+</div>
+</div>
+</div>
+<div class="absolute top-3 right-3 bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-[10px] uppercase tracking-wide flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-[12px]" data-icon="check_circle">check_circle</span> Ready
+                            </div>
+</div>
+<div class="p-4 flex-1 flex flex-col">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="quiz">quiz</span>
+<div>
+<h3 class="font-label-md text-label-md font-semibold">Interactive Quiz</h3>
+<p class="text-sm text-on-surface-variant">5 Q&amp;A list with highlights</p>
+</div>
+</div>
+<div class="mt-auto pt-4 flex gap-2">
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-low px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Redo Quiz</button>
+<button class="flex-1 bg-primary text-on-primary hover:bg-primary/90 px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Inspect &amp; Edit</button>
+</div>
+</div>
+</div>
+<!-- 3. Study Flashcards -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col group hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-all">
+<div class="h-40 bg-surface-container-low border-b border-outline-variant p-4 relative flex items-center justify-center">
+<!-- Faux 3D Cards -->
+<div class="relative w-32 h-24 perspective-1000">
+<div class="absolute inset-0 bg-white border border-outline-variant rounded-lg shadow-sm transform -rotate-6 translate-x-2 translate-y-2 opacity-50"></div>
+<div class="absolute inset-0 bg-white border border-outline-variant rounded-lg shadow-sm transform -rotate-3 translate-x-1 translate-y-1 opacity-75"></div>
+<div class="absolute inset-0 bg-white border border-outline-variant rounded-lg shadow-md flex items-center justify-center p-3 text-center font-label-sm text-primary font-semibold z-10">
+                                    Backpropagation
+                                </div>
+</div>
+<div class="absolute top-3 right-3 bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-[10px] uppercase tracking-wide flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-[12px]" data-icon="check_circle">check_circle</span> Ready
+                            </div>
+</div>
+<div class="p-4 flex-1 flex flex-col">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="style">style</span>
+<div>
+<h3 class="font-label-md text-label-md font-semibold">Study Flashcards</h3>
+<p class="text-sm text-on-surface-variant">3D-style card stack preview</p>
+</div>
+</div>
+<div class="mt-auto pt-4 flex gap-2">
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-low px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Redo Flashcards</button>
+<button class="flex-1 bg-primary text-on-primary hover:bg-primary/90 px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Inspect &amp; Edit</button>
+</div>
+</div>
+</div>
+<!-- 4. Audio Overview -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col group hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-all">
+<div class="h-40 bg-surface-container-low border-b border-outline-variant p-4 relative flex flex-col justify-center gap-4">
+<!-- Faux Player -->
+<div class="flex items-center justify-between w-full">
+<button class="w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[18px]" data-icon="play_arrow">play_arrow</span>
+</button>
+<div class="flex-1 h-6 mx-3 relative">
+<div class="waveform absolute inset-0"></div>
+</div>
+<span class="font-label-sm text-[10px] text-on-surface-variant shrink-0">14:32</span>
+</div>
+<div class="flex justify-between items-center text-xs text-outline font-label-sm">
+<span class="">Voice: Standard Female</span>
+<span class="bg-surface-container-high px-1.5 rounded">1.5x</span>
+</div>
+<div class="absolute top-3 right-3 bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-[10px] uppercase tracking-wide flex items-center gap-1 shadow-sm z-10">
+<span class="material-symbols-outlined text-[12px]" data-icon="check_circle">check_circle</span> Ready
+                            </div>
+</div>
+<div class="p-4 flex-1 flex flex-col">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="audio_file">audio_file</span>
+<div>
+<h3 class="font-label-md text-label-md font-semibold">Audio Overview</h3>
+<p class="text-sm text-on-surface-variant">Waveform player, 14:32 duration</p>
+</div>
+</div>
+<div class="mt-auto pt-4 flex gap-2">
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-low px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Redo Audio</button>
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface hover:bg-surface-container-low px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors flex items-center justify-center gap-1">
+<span class="material-symbols-outlined text-[16px]" data-icon="download">download</span> .mp3
+                                </button>
+</div>
+</div>
+</div>
+<!-- 5. Concept Infographic -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col group hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-all">
+<div class="h-40 bg-surface-container-low border-b border-outline-variant p-4 relative flex items-center justify-center">
+<!-- Faux Flowchart -->
+<div class="w-full h-full flex flex-col items-center justify-center gap-2">
+<div class="w-16 h-6 border border-primary bg-primary-fixed-dim/20 rounded-full"></div>
+<div class="w-px h-4 bg-outline-variant relative">
+<div class="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[3px] border-r-[3px] border-t-[4px] border-l-transparent border-r-transparent border-t-outline-variant"></div>
+</div>
+<div class="flex gap-4">
+<div class="w-12 h-6 border border-primary bg-primary-fixed-dim/20 rounded-sm"></div>
+<div class="w-12 h-6 border border-primary bg-primary-fixed-dim/20 rounded-sm"></div>
+</div>
+</div>
+<div class="absolute top-3 right-3 bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-[10px] uppercase tracking-wide flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-[12px]" data-icon="check_circle">check_circle</span> Ready
+                            </div>
+</div>
+<div class="p-4 flex-1 flex flex-col">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="account_tree">account_tree</span>
+<div>
+<h3 class="font-label-md text-label-md font-semibold">Concept Infographic</h3>
+<p class="text-sm text-on-surface-variant">Flowchart preview</p>
+</div>
+</div>
+<div class="mt-auto pt-4 flex gap-2">
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-low px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Redo Infographic</button>
+<button class="flex-1 bg-primary text-on-primary hover:bg-primary/90 px-3 py-1.5 rounded font-label-sm text-label-sm transition-colors">Inspect &amp; Edit</button>
+</div>
+</div>
+</div>
+<!-- 6. Executive Report (Generating) -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col group relative">
+<div class="absolute inset-0 bg-surface-container-lowest/50 z-20 backdrop-blur-[1px] pointer-events-none rounded-xl"></div>
+<div class="h-40 bg-surface-container-low border-b border-outline-variant p-4 relative overflow-hidden">
+<!-- Skeleton UI -->
+<div class="space-y-3 opacity-40">
+<div class="w-1/2 h-4 bg-outline-variant rounded"></div>
+<div class="space-y-2">
+<div class="w-full h-2 bg-outline-variant rounded"></div>
+<div class="w-5/6 h-2 bg-outline-variant rounded"></div>
+<div class="w-4/6 h-2 bg-outline-variant rounded"></div>
+</div>
+<div class="w-full h-12 bg-outline-variant rounded mt-4"></div>
+</div>
+<div class="absolute inset-0 flex items-center justify-center z-30 pointer-events-auto">
+<div class="bg-surface-container-lowest border border-outline-variant shadow-md rounded-full px-4 py-2 flex items-center gap-2 font-label-sm text-primary">
+<span class="material-symbols-outlined pulse-loader" data-icon="autorenew">autorenew</span>
+                                    Generating...
+                                </div>
+</div>
+</div>
+<div class="p-4 flex-1 flex flex-col opacity-60">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="summarize">summarize</span>
+<div>
+<h3 class="font-label-md text-label-md font-semibold">Executive Report</h3>
+<p class="text-sm text-on-surface-variant">Skeleton loader UI</p>
+</div>
+</div>
+<div class="mt-auto pt-4 flex gap-2">
+<button class="flex-1 bg-surface-container-low border border-outline-variant text-outline cursor-not-allowed px-3 py-1.5 rounded font-label-sm text-label-sm" disabled="">Redo Report</button>
+<button class="flex-1 bg-surface-container-highest text-outline cursor-not-allowed px-3 py-1.5 rounded font-label-sm text-label-sm" disabled="">Inspect &amp; Edit</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+
+
+
+
+</body></html>

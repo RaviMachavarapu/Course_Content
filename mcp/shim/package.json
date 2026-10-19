@@ -1,0 +1,15 @@
+{
+  "name": "notebooklm-mcp-shim",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Thin HTTP proxy in front of the stdio-only notebooklm-mcp-server, so the Python backend (in a separate container) can call its tools over the network (T016).",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.9.0",
+    "express": "^4.21.2"
+  }
+}

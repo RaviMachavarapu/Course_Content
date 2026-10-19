@@ -1,0 +1,105 @@
+"""Admin authentication API (spec.md §5.1) — a scope entirely separate from the
+student login. There is deliberately **no** register endpoint here (D3): admins
+are created only via the `seed-admin` CLI or admin-only user management.
+
+    POST /api/admin/auth/login                    -> 200 {user} + sdp_admin cookie
+    POST /api/admin/auth/logout                   -> 204
+    GET  /api/admin/auth/me                       -> 200 {user}
+    POST /api/admin/auth/password-reset/request   -> 202 (O6, always — no enumeration)
+    POST /api/admin/auth/password-reset/confirm   -> 204
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Request, Response, status
+
+from app.api.deps import (
+    CurrentAdmin,
+    DbDep,
+    RateLimiterDep,
+    RedisDep,
+    SessionStoreDep,
+    SettingsDep,
+)
+from app.auth.cookies import clear_session_cookie
+from app.auth.csrf import clear_csrf_cookie, csrf_protect
+from app.auth.login import login_flow
+from app.auth.password_reset import confirm_password_reset, request_password_reset
+from app.auth.sessions import COOKIE_NAMES
+from app.models.user import User, UserRole
+from app.schemas.auth import LoginRequest, PasswordResetConfirmRequest, PasswordResetRequest
+from app.schemas.user import UserEnvelope, UserOut
+
+router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
+
+
+def _envelope(user: User) -> UserEnvelope:
+    return UserEnvelope(user=UserOut.model_validate(user))
+
+
+@router.post("/login", response_model=UserEnvelope)
+def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    db: DbDep,
+    store: SessionStoreDep,
+    limiter: RateLimiterDep,
+    settings: SettingsDep,
+) -> UserEnvelope:
+    user = login_flow(
+        scope="admin",
+        role=UserRole.admin,
+        email=body.email,
+        password=body.password,
+        request=request,
+        response=response,
+        db=db,
+        store=store,
+        limiter=limiter,
+        settings=settings,
+    )
+    return _envelope(user)
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(csrf_protect)],
+)
+def logout(request: Request, store: SessionStoreDep, settings: SettingsDep) -> Response:
+    store.destroy("admin", request.cookies.get(COOKIE_NAMES["admin"]))
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_session_cookie(response, "admin", settings)
+    clear_csrf_cookie(response, settings)
+    return response
+
+
+@router.get("/me", response_model=UserEnvelope)
+def me(admin: CurrentAdmin) -> UserEnvelope:
+    return _envelope(admin)
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
+def password_reset_request(
+    body: PasswordResetRequest, db: DbDep, redis_client: RedisDep, settings: SettingsDep
+) -> Response:
+    request_password_reset(
+        db,
+        redis_client,
+        settings,
+        scope="admin",
+        email=body.email,
+        reset_path="/admin/reset-password",
+    )
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+def password_reset_confirm(
+    body: PasswordResetConfirmRequest, db: DbDep, redis_client: RedisDep
+) -> Response:
+    confirm_password_reset(
+        db, redis_client, scope="admin", token=body.token, new_password=body.password
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

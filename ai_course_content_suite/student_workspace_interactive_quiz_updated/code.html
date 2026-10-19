@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Student Learning Workspace - Quiz</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Public+Sans:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-surface": "#191c1e",
+                      "surface": "#f7f9fb",
+                      "tertiary-fixed-dim": "#d0bcff",
+                      "tertiary": "#3c0092",
+                      "error-container": "#ffdad6",
+                      "inverse-on-surface": "#eff1f3",
+                      "on-primary-fixed-variant": "#2d4381",
+                      "secondary-fixed-dim": "#4edea3",
+                      "error": "#ba1a1a",
+                      "secondary": "#006c49",
+                      "tertiary-fixed": "#e9ddff",
+                      "on-secondary-fixed": "#002113",
+                      "on-secondary-container": "#00714d",
+                      "surface-tint": "#465c9b",
+                      "on-primary-fixed": "#00174b",
+                      "on-tertiary": "#ffffff",
+                      "background": "#f7f9fb",
+                      "on-secondary-fixed-variant": "#005236",
+                      "on-tertiary-fixed": "#23005c",
+                      "on-error": "#ffffff",
+                      "on-tertiary-fixed-variant": "#5516be",
+                      "secondary-fixed": "#6ffbbe",
+                      "secondary-container": "#6cf8bb",
+                      "inverse-surface": "#2d3133",
+                      "on-background": "#191c1e",
+                      "inverse-primary": "#b4c5ff",
+                      "on-primary-container": "#9eb3f9",
+                      "surface-dim": "#d8dadc",
+                      "surface-container-lowest": "#ffffff",
+                      "surface-variant": "#e0e3e5",
+                      "primary-fixed-dim": "#b4c5ff",
+                      "surface-bright": "#f7f9fb",
+                      "on-secondary": "#ffffff",
+                      "on-error-container": "#93000a",
+                      "on-primary": "#ffffff",
+                      "primary": "#142d6a",
+                      "primary-fixed": "#dbe1ff",
+                      "outline": "#757681",
+                      "primary-container": "#2e4482",
+                      "on-surface-variant": "#444650",
+                      "surface-container-highest": "#e0e3e5",
+                      "tertiary-container": "#5517bf",
+                      "on-tertiary-container": "#c1a8ff",
+                      "surface-container-high": "#e6e8ea",
+                      "surface-container": "#eceef0",
+                      "surface-container-low": "#f2f4f6",
+                      "outline-variant": "#c5c6d2"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-mobile": "16px",
+                      "base": "4px",
+                      "sm": "8px",
+                      "xl": "40px",
+                      "xs": "4px",
+                      "gutter": "24px",
+                      "lg": "24px",
+                      "margin-desktop": "48px",
+                      "md": "16px"
+              },
+              "fontFamily": {
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Public Sans"
+                      ],
+                      "headline-lg": [
+                              "Public Sans"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "display-lg": [
+                              "Public Sans"
+                      ],
+                      "label-sm": [
+                              "Inter"
+                      ],
+                      "label-md": [
+                              "Inter"
+                      ],
+                      "headline-lg-mobile": [
+                              "Public Sans"
+                      ]
+              },
+              "fontSize": {
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-lg": [
+                              "32px",
+                              {
+                                      "lineHeight": "40px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "56px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "label-sm": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "letterSpacing": "0.01em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "headline-lg-mobile": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "fontWeight": "600"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+</head>
+<body class="bg-background text-on-surface font-body-md min-h-screen flex flex-col md:flex-row">
+<!-- TopAppBar (Visible on Mobile Only) -->
+<header class="bg-surface text-primary font-headline-md flex justify-between items-center w-full px-lg py-md h-16 sticky top-0 z-50 md:hidden">
+<div class="font-headline-md font-semibold text-primary">Individual Course</div>
+<div class="flex items-center gap-md">
+<span class="font-label-sm text-label-sm text-on-surface-variant">85% Complete</span>
+<button class="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md flex items-center scale-95 duration-150">
+<span class="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
+<span class="ml-1">Back to Dashboard</span>
+</button>
+</div>
+</header>
+<!-- SideNavBar (Hidden on Mobile) -->
+<nav class="bg-surface-container-lowest text-primary font-label-md flex flex-col h-screen fixed left-0 top-16 w-64 p-md border-r border-outline-variant flat no shadows hidden md:flex z-40">
+<div class="mb-xl">
+<div class="font-headline-md text-headline-md text-primary mb-sm">Module Explorer</div>
+<div class="text-on-surface-variant font-label-sm text-label-sm">Current: Unit 2</div>
+</div>
+<ul class="flex flex-col gap-sm">
+<li>
+<a class="flex items-center gap-md px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="headphones">headphones</span>
+<span>Audio</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-md px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="present_to_all">present_to_all</span>
+<span>Slides</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-md px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="style">style</span>
+<span>Flashcards</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-md px-4 py-3 rounded-lg text-primary font-bold bg-secondary-container translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="quiz">quiz</span>
+<span>Quiz</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-md px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="image">image</span>
+<span>Infographic</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-md px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="description">description</span>
+<span>Report</span>
+</a>
+</li>
+</ul>
+<div class="mt-auto flex items-center gap-md">
+<img alt="Course Instructor" class="w-10 h-10 rounded-full object-cover border border-outline-variant" data-alt="A small, circular avatar portrait of a professional e-learning course instructor, bright lighting, modern corporate style, friendly expression." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAnsNsgSSgtlvSeOXoc3AwMPJFn2xx0qmLGJp-eTHM_UvaVYUVoJNNZKxOgSwjw1vDZSJWXGSvTOt4MwnlF_WRR39Z52Trp75ex3jV4Slm0ph3KVFpEef1xDyvn2tEHLFb3ZohGL0opswC_HMfouicekAjfYJrTfVEMrF7YSHyl67VhbXzwYL3b717yY47FZSIUVRN6ruOwkyIxWChXBpaOK4EUhKWpgc6JFTA-2bNqE4bMrZBt0lun"/>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="flex-1 w-full max-w-[800px] mx-auto md:ml-64 pt-md md:pt-xl pb-xl px-margin-mobile md:px-margin-desktop">
+<!-- Focus Bar (Desktop) -->
+<div class="hidden md:flex justify-between items-center mb-xl pb-md border-b border-outline-variant">
+<a class="text-primary font-label-md text-label-md hover:underline flex items-center gap-sm" href="#">
+<span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                Back to Dashboard
+            </a>
+<div class="font-headline-md text-headline-md text-on-surface">Neural Networks: Unit 2 Quiz</div>
+<div class="text-secondary font-label-md text-label-md bg-secondary-container px-3 py-1 rounded-full">85% Complete</div>
+</div>
+<!-- Quiz Container -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-lg md:p-xl shadow-sm transition-shadow duration-300 hover:shadow-md">
+<!-- Progress Indicator -->
+<div class="flex items-center justify-between mb-lg">
+<span class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">Question 3 of 5</span>
+<div class="flex gap-1">
+<div class="h-2 w-8 bg-secondary rounded-full"></div>
+<div class="h-2 w-8 bg-secondary rounded-full"></div>
+<div class="h-2 w-8 bg-tertiary rounded-full"></div>
+<div class="h-2 w-8 bg-surface-variant rounded-full"></div>
+<div class="h-2 w-8 bg-surface-variant rounded-full"></div>
+</div>
+</div>
+<!-- Question -->
+<h2 class="font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface mb-xl leading-tight">
+                What is the primary function of an activation function in a neural network?
+            </h2>
+<!-- Options -->
+<div class="space-y-md mb-xl">
+<label class="block relative group cursor-pointer">
+<input class="peer sr-only" name="quiz_q3" type="radio"/>
+<div class="p-md rounded-lg border-2 border-outline-variant bg-surface-container-lowest text-on-surface transition-all duration-200 ease-in-out peer-hover:border-primary peer-hover:bg-primary-fixed peer-hover:shadow-sm peer-checked:border-primary peer-checked:bg-primary-fixed peer-checked:shadow-sm flex items-start gap-md">
+<div class="flex-shrink-0 w-8 h-8 rounded-full border border-outline-variant flex items-center justify-center font-label-md text-label-md text-on-surface-variant peer-checked:bg-primary peer-checked:text-on-primary peer-checked:border-primary transition-colors">
+                            A
+                        </div>
+<div class="pt-1 font-body-lg text-body-lg">To initialize the weights of the network to optimal values.</div>
+</div>
+</label>
+<label class="block relative group cursor-pointer">
+<input class="peer sr-only" name="quiz_q3" type="radio"/>
+<div class="p-md rounded-lg border-2 border-outline-variant bg-surface-container-lowest text-on-surface transition-all duration-200 ease-in-out peer-hover:border-primary peer-hover:bg-primary-fixed peer-hover:shadow-sm peer-checked:border-primary peer-checked:bg-primary-fixed peer-checked:shadow-sm flex items-start gap-md">
+<div class="flex-shrink-0 w-8 h-8 rounded-full border border-outline-variant flex items-center justify-center font-label-md text-label-md text-on-surface-variant peer-checked:bg-primary peer-checked:text-on-primary peer-checked:border-primary transition-colors">
+                            B
+                        </div>
+<div class="pt-1 font-body-lg text-body-lg">To determine the learning rate dynamically during training.</div>
+</div>
+</label>
+<label class="block relative group cursor-pointer">
+<input class="peer sr-only" name="quiz_q3" type="radio"/>
+<div class="p-md rounded-lg border-2 border-outline-variant bg-surface-container-lowest text-on-surface transition-all duration-200 ease-in-out peer-hover:border-primary peer-hover:bg-primary-fixed peer-hover:shadow-sm peer-checked:border-primary peer-checked:bg-primary-fixed peer-checked:shadow-sm flex items-start gap-md">
+<div class="flex-shrink-0 w-8 h-8 rounded-full border border-outline-variant flex items-center justify-center font-label-md text-label-md text-on-surface-variant peer-checked:bg-primary peer-checked:text-on-primary peer-checked:border-primary transition-colors">
+                            C
+                        </div>
+<div class="pt-1 font-body-lg text-body-lg">To introduce non-linearity into the output of a node.</div>
+</div>
+</label>
+<label class="block relative group cursor-pointer">
+<input class="peer sr-only" name="quiz_q3" type="radio"/>
+<div class="p-md rounded-lg border-2 border-outline-variant bg-surface-container-lowest text-on-surface transition-all duration-200 ease-in-out peer-hover:border-primary peer-hover:bg-primary-fixed peer-hover:shadow-sm peer-checked:border-primary peer-checked:bg-primary-fixed peer-checked:shadow-sm flex items-start gap-md">
+<div class="flex-shrink-0 w-8 h-8 rounded-full border border-outline-variant flex items-center justify-center font-label-md text-label-md text-on-surface-variant peer-checked:bg-primary peer-checked:text-on-primary peer-checked:border-primary transition-colors">
+                            D
+                        </div>
+<div class="pt-1 font-body-lg text-body-lg">To calculate the loss function for backpropagation.</div>
+</div>
+</label>
+</div>
+<!-- Actions -->
+<div class="flex justify-between items-center pt-md border-t border-outline-variant">
+<button class="px-lg py-sm rounded-lg font-label-md text-label-md text-primary border border-primary hover:bg-primary-fixed transition-colors">Previous</button>
+<button class="px-lg py-sm rounded-lg font-label-md text-label-md bg-tertiary text-on-tertiary hover:bg-tertiary-container transition-colors shadow-sm">Next Question</button>
+</div>
+</div>
+</main>
+</body></html>

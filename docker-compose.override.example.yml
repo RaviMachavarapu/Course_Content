@@ -1,0 +1,26 @@
+# Copy to docker-compose.override.yml and adjust locally (git-ignored).
+# Examples:
+#
+#   - run the frontend via the Vite dev server instead of the nginx build
+#   - switch the content provider to live NotebookLM
+#   - expose extra debug ports
+
+services:
+  web:
+    build:
+      context: ./frontend
+      target: build
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports: ["5173:5173"]
+
+  # api:
+  #   environment:
+  #     CONTENT_PROVIDER: notebooklm
+  #     MCP_ENDPOINT: http://mcp:7332
+  # worker:
+  #   environment:
+  #     CONTENT_PROVIDER: notebooklm
+  #     MCP_ENDPOINT: http://mcp:7332

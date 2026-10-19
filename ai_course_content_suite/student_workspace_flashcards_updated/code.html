@@ -1,0 +1,284 @@
+<!DOCTYPE html><html class="h-full" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Understanding Transformer Architectures - LearnForge</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@600;700;800;900&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary-fixed-dim": "#d0bcff",
+                        "surface-container-highest": "#e0e3e5",
+                        "inverse-surface": "#2d3133",
+                        "error-container": "#ffdad6",
+                        "primary-fixed-dim": "#b4c5ff",
+                        "on-tertiary": "#ffffff",
+                        "surface-container": "#eceef0",
+                        "surface-tint": "#465c9b",
+                        "tertiary": "#3c0092",
+                        "outline-variant": "#c5c6d2",
+                        "inverse-primary": "#b4c5ff",
+                        "surface-container-low": "#f2f4f6",
+                        "on-secondary-fixed": "#002113",
+                        "outline": "#757681",
+                        "on-secondary-container": "#00714d",
+                        "primary-fixed": "#dbe1ff",
+                        "on-error": "#ffffff",
+                        "surface-container-lowest": "#ffffff",
+                        "primary": "#142d6a",
+                        "inverse-on-surface": "#eff1f3",
+                        "secondary": "#006c49",
+                        "surface": "#f7f9fb",
+                        "error": "#ba1a1a",
+                        "secondary-fixed": "#6ffbbe",
+                        "on-secondary": "#ffffff",
+                        "surface-dim": "#d8dadc",
+                        "tertiary-container": "#5517bf",
+                        "primary-container": "#2e4482",
+                        "on-error-container": "#93000a",
+                        "surface-bright": "#f7f9fb",
+                        "on-primary-fixed": "#00174b",
+                        "tertiary-fixed": "#e9ddff",
+                        "on-background": "#191c1e",
+                        "on-tertiary-fixed": "#23005c",
+                        "surface-variant": "#e0e3e5",
+                        "on-primary-container": "#9eb3f9",
+                        "surface-container-high": "#e6e8ea",
+                        "secondary-fixed-dim": "#4edea3",
+                        "on-surface-variant": "#444650",
+                        "on-surface": "#191c1e",
+                        "on-tertiary-fixed-variant": "#5516be",
+                        "background": "#f7f9fb",
+                        "secondary-container": "#6cf8bb",
+                        "on-primary-fixed-variant": "#2d4381",
+                        "on-tertiary-container": "#c1a8ff",
+                        "on-primary": "#ffffff",
+                        "on-secondary-fixed-variant": "#005236"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-mobile": "16px",
+                        "gutter": "24px",
+                        "sm": "8px",
+                        "xs": "4px",
+                        "base": "4px",
+                        "margin-desktop": "48px",
+                        "md": "16px",
+                        "xl": "40px",
+                        "lg": "24px"
+                    },
+                    "fontFamily": {
+                        "display-lg": ["Public Sans"],
+                        "headline-md": ["Public Sans"],
+                        "label-sm": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg-mobile": ["Public Sans"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-lg": ["Public Sans"]
+                    },
+                    "fontSize": {
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "fontWeight": "600" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.01em", "fontWeight": "500" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .flip-card {
+            perspective: 1000px;
+        }
+        .flip-card-inner {
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-style: preserve-3d;
+        }
+        .flip-card.flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+        .flip-card-front, .flip-card-back {
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+        .flip-card-back {
+            transform: rotateY(180deg);
+        }
+        
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 12px;
+            width: 12px;
+            border-radius: 50%;
+            background: #142d6a; /* primary */
+            cursor: pointer;
+            margin-top: -4px; /* You need to specify a margin in Chrome, but in Firefox and IE it is automatic */
+        }
+
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #c5c6d2; /* outline-variant */
+            border-radius: 2px;
+        }
+        
+        input[type="range"]:focus {
+            outline: none;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background h-full flex flex-col font-body-md text-body-md overflow-hidden">
+<!-- Focus Bar (Top Nav) -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-margin-desktop h-20 bg-primary shadow-md border-b-0">
+<div class="flex items-center gap-md">
+<a class="flex items-center gap-xs text-on-primary/80 hover:text-secondary-fixed transition-colors font-label-md text-label-md" href="#">
+<span class="material-symbols-outlined" style="font-size: 20px;">arrow_back</span>
+                Back to Catalog
+            </a>
+</div>
+<div class="flex items-center justify-center flex-1">
+<h1 class="text-headline-md font-headline-md font-black text-on-primary text-center">Understanding Transformer Architectures</h1>
+</div>
+<div class="flex items-center gap-lg">
+<div class="flex items-center gap-sm bg-on-primary-fixed-variant rounded-full px-4 py-2 border border-outline/20 shadow-sm">
+<span class="font-label-sm text-label-sm text-on-primary">Progress</span>
+<span class="font-label-sm text-label-sm font-bold text-secondary-fixed">2/6</span>
+<svg class="w-6 h-6 text-secondary-fixed -rotate-90" viewBox="0 0 36 36">
+<path class="text-outline-variant stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke-width="3"></path>
+<path class="text-secondary-fixed stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke-dasharray="33, 100" stroke-linecap="round" stroke-width="3"></path>
+</svg>
+</div>
+<button aria-label="Bookmark" class="text-on-primary/80 hover:text-secondary-fixed transition-colors p-2 rounded-full hover:bg-white/10">
+<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 0;">bookmark</span>
+</button>
+</div>
+</header>
+<!-- Main Workspace -->
+<main class="flex-1 flex pt-20 pb-0 overflow-hidden">
+<!-- Sidebar (20%) -->
+<aside class="w-1/5 min-w-[250px] bg-surface border-r border-outline-variant flex flex-col h-full overflow-y-auto p-md"><div class="mb-8">
+<h2 class="font-headline-md text-headline-md text-primary mb-1">Module Explorer</h2>
+<p class="font-label-sm text-label-sm text-on-surface-variant">Current: Unit 2</p>
+</div>
+<nav class="flex flex-col gap-2 font-label-md text-label-md">
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">headphones</span>
+                    Audio
+                </a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">present_to_all</span>
+                    Slides
+                </a>
+<a class="flex items-center gap-3 p-3 text-primary font-bold bg-secondary-container rounded-lg transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">style</span>
+                    Flashcards
+                </a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">quiz</span>
+                    Quiz
+                </a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">image</span>
+                    Infographic
+                </a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">description</span>
+                    Report
+                </a>
+</nav></aside>
+<!-- Center Stage (80%) -->
+<section class="flex-1 bg-surface-container-low flex flex-col items-center justify-center p-xl relative overflow-hidden">
+<div class="w-full max-w-3xl flex flex-col items-center">
+<!-- Hint -->
+<div class="mb-lg flex items-center gap-xs text-on-surface-variant opacity-80 animate-pulse">
+<span class="material-symbols-outlined text-[18px]">touch_app</span>
+<span class="font-label-sm text-label-sm">Click or Space to flip</span>
+</div>
+<!-- 3D Flashcard Container -->
+<div class="w-full h-96 flip-card cursor-pointer group flipped" onclick="this.classList.toggle('flipped')">
+<div class="flip-card-inner w-full h-full relative shadow-[0_4px_12px_rgba(46,68,130,0.08)] rounded-xl group-hover:shadow-[0_8px_24px_rgba(46,68,130,0.12)] transition-shadow duration-300">
+<!-- Front (Question) -->
+<div class="flip-card-front absolute w-full h-full bg-surface-container-lowest border border-outline-variant rounded-xl flex flex-col items-center justify-center p-xl">
+<div class="absolute top-4 left-4 bg-primary-fixed text-primary px-3 py-1 rounded-full font-label-sm text-label-sm border border-primary/10 shadow-sm">Concept</div>
+<h2 class="font-headline-lg text-headline-lg text-primary text-center mb-md">Self-Attention Mechanism</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant text-center max-w-md">
+                                How does the transformer determine the importance of different words in a sequence relative to a specific word?
+                            </p>
+</div>
+<!-- Back (Answer) -->
+<div class="flip-card-back absolute w-full h-full bg-primary-container border border-primary rounded-xl flex flex-col items-center justify-center p-xl text-on-primary-container">
+<div class="absolute top-4 left-4 bg-on-primary-container text-primary-container px-3 py-1 rounded-full font-label-sm text-label-sm">
+                                Definition
+                            </div>
+<div class="prose prose-lg text-on-primary-container text-center max-w-2xl">
+<p class="font-body-lg text-body-lg leading-relaxed">
+                                    It computes three vectors for each word: <strong class="text-white">Query (Q)</strong>, <strong class="text-white">Key (K)</strong>, and <strong class="text-white">Value (V)</strong>.
+                                </p>
+<p class="font-body-md text-body-md opacity-90 mt-4">
+                                    The attention score is calculated by taking the dot product of the Query with all Keys, scaling it, applying a softmax function to get weights, and multiplying these weights by the Values.
+                                </p>
+</div>
+</div>
+</div>
+</div>
+<!-- Controls -->
+<div class="w-full flex justify-between items-center mt-xl">
+<button class="flex items-center gap-xs px-4 py-2 border border-outline-variant rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors font-label-md text-label-md">
+<span class="material-symbols-outlined">chevron_left</span>
+                        Prev
+                    </button>
+<div class="font-label-md text-label-md text-on-surface-variant font-bold bg-surface-container-high px-4 py-2 rounded-full">
+                        1 of 12
+                    </div>
+<button class="flex items-center gap-xs px-4 py-2 bg-primary text-on-primary rounded-lg hover:bg-primary-container transition-colors font-label-md text-label-md shadow-md">
+                        Next
+                        <span class="material-symbols-outlined">chevron_right</span>
+</button>
+</div>
+<!-- Confidence Tags (Visible on reveal ideally, static here for design) -->
+<div class="mt-lg flex gap-md justify-center w-full border-t border-outline-variant pt-lg">
+<span class="font-label-sm text-label-sm text-on-surface-variant mr-2 self-center">Rate difficulty:</span>
+<button class="px-4 py-2 border border-error text-error rounded-full font-label-md text-label-md hover:bg-error-container transition-colors">Hard</button>
+<button class="px-4 py-2 border border-secondary text-secondary rounded-full font-label-md text-label-md hover:bg-secondary-container hover:text-on-secondary-container transition-colors">Good</button>
+<button class="px-4 py-2 border border-tertiary text-tertiary rounded-full font-label-md text-label-md hover:bg-tertiary-container hover:text-on-tertiary-container transition-colors">Easy</button>
+</div>
+</div>
+</section>
+</main>
+<script>
+        // Simple script to handle spacebar flip if focused
+        document.addEventListener('keydown', function(event) {
+            if (event.code === 'Space') {
+                const flashcard = document.querySelector('.flip-card');
+                if (flashcard) {
+                    flashcard.classList.toggle('flipped');
+                    event.preventDefault(); // Prevent page scroll
+                }
+            }
+        });
+    </script>
+
+
+</body></html>

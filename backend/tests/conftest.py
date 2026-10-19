@@ -1,0 +1,145 @@
+"""Shared pytest fixtures.
+
+Tests run against a dedicated database (``<db>_test``, or ``TEST_DATABASE_URL``
+if set) that is created on demand and migrated to head once per session. Each
+test executes inside an outer transaction that is rolled back on teardown, so
+tests are fully isolated and the dev database is never touched.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+import redis
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config as AlembicConfig
+from fastapi.testclient import TestClient
+from sqlalchemy import Connection, Engine, create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.api.deps import get_redis as app_get_redis
+from app.config import get_settings
+from app.db.session import get_db as app_get_db
+from app.main import create_app
+
+if TYPE_CHECKING:
+    from app.storage.service import Storage
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _test_database_url() -> str:
+    if env := os.environ.get("TEST_DATABASE_URL"):
+        return env
+    url = make_url(get_settings().database_url)
+    return url.set(database=f"{url.database}_test").render_as_string(hide_password=False)
+
+
+def _ensure_database(url: str) -> None:
+    target = make_url(url)
+    admin = target.set(database="postgres")
+    engine = create_engine(admin, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as conn:
+            exists = conn.execute(
+                sa.text("SELECT 1 FROM pg_database WHERE datname = :n"),
+                {"n": target.database},
+            ).scalar()
+            if not exists:
+                conn.execute(sa.text(f'CREATE DATABASE "{target.database}"'))
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def db_engine() -> Iterator[Engine]:
+    url = _test_database_url()
+    _ensure_database(url)
+
+    cfg = AlembicConfig(str(_BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(url, future=True)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def db_connection(db_engine: Engine) -> Iterator[Connection]:
+    conn = db_engine.connect()
+    txn = conn.begin()
+    try:
+        yield conn
+    finally:
+        txn.rollback()
+        conn.close()
+
+
+@pytest.fixture
+def db_session(db_connection: Connection) -> Iterator[Session]:
+    """Commits inside a test become SAVEPOINTs within the outer transaction, so
+    everything is undone when `db_connection` rolls back.
+    """
+    factory = sessionmaker(
+        bind=db_connection,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
+    session = factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture(autouse=True)
+def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
+    """Isolate every test's media writes to a temp dir. Patches `get_storage` in
+    each module that imported it by name."""
+    from app.storage.service import Storage
+
+    store = Storage(tmp_path / "media", get_settings().public_base_url)
+    for module in (
+        "app.storage.service",
+        "app.pipeline.orchestrator",
+        "app.api.media",
+        "app.api.admin.artifacts",
+        "app.api.admin.jobs",
+    ):
+        monkeypatch.setattr(f"{module}.get_storage", lambda: store, raising=False)
+    return store
+
+
+@pytest.fixture
+def redis_client() -> Iterator[redis.Redis[str]]:
+    """A flushed, isolated Redis DB (index 15) for the duration of one test."""
+    url = os.environ.get("TEST_REDIS_URL") or get_settings().redis_url
+    client: redis.Redis[str] = redis.Redis.from_url(url, decode_responses=True, db=15)
+    client.flushdb()
+    try:
+        yield client
+    finally:
+        client.flushdb()
+        client.close()
+
+
+@pytest.fixture
+def client(db_session: Session, redis_client: redis.Redis[str]) -> Iterator[TestClient]:
+    app = create_app()
+
+    def _override_get_db() -> Iterator[Session]:
+        yield db_session
+
+    app.dependency_overrides[app_get_db] = _override_get_db
+    app.dependency_overrides[app_get_redis] = lambda: redis_client
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()

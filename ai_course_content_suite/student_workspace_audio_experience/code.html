@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Course Overview - Audio</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Public+Sans:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-surface": "#191c1e",
+                    "surface": "#f7f9fb",
+                    "tertiary-fixed-dim": "#d0bcff",
+                    "tertiary": "#3c0092",
+                    "error-container": "#ffdad6",
+                    "inverse-on-surface": "#eff1f3",
+                    "on-primary-fixed-variant": "#2d4381",
+                    "secondary-fixed-dim": "#4edea3",
+                    "error": "#ba1a1a",
+                    "secondary": "#006c49",
+                    "tertiary-fixed": "#e9ddff",
+                    "on-secondary-fixed": "#002113",
+                    "on-secondary-container": "#00714d",
+                    "surface-tint": "#465c9b",
+                    "on-primary-fixed": "#00174b",
+                    "on-tertiary": "#ffffff",
+                    "background": "#f7f9fb",
+                    "on-secondary-fixed-variant": "#005236",
+                    "on-tertiary-fixed": "#23005c",
+                    "on-error": "#ffffff",
+                    "on-tertiary-fixed-variant": "#5516be",
+                    "secondary-fixed": "#6ffbbe",
+                    "secondary-container": "#6cf8bb",
+                    "inverse-surface": "#2d3133",
+                    "on-background": "#191c1e",
+                    "inverse-primary": "#b4c5ff",
+                    "on-primary-container": "#9eb3f9",
+                    "surface-dim": "#d8dadc",
+                    "surface-container-lowest": "#ffffff",
+                    "surface-variant": "#e0e3e5",
+                    "primary-fixed-dim": "#b4c5ff",
+                    "surface-bright": "#f7f9fb",
+                    "on-secondary": "#ffffff",
+                    "on-error-container": "#93000a",
+                    "on-primary": "#ffffff",
+                    "primary": "#142d6a",
+                    "primary-fixed": "#dbe1ff",
+                    "outline": "#757681",
+                    "primary-container": "#2e4482",
+                    "on-surface-variant": "#444650",
+                    "surface-container-highest": "#e0e3e5",
+                    "tertiary-container": "#5517bf",
+                    "on-tertiary-container": "#c1a8ff",
+                    "surface-container-high": "#e6e8ea",
+                    "surface-container": "#eceef0",
+                    "surface-container-low": "#f2f4f6",
+                    "outline-variant": "#c5c6d2"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "margin-mobile": "16px",
+                    "base": "4px",
+                    "sm": "8px",
+                    "xl": "40px",
+                    "xs": "4px",
+                    "gutter": "24px",
+                    "lg": "24px",
+                    "margin-desktop": "48px",
+                    "md": "16px"
+            },
+            "fontFamily": {
+                    "body-lg": [
+                            "Inter"
+                    ],
+                    "headline-md": [
+                            "Public Sans"
+                    ],
+                    "headline-lg": [
+                            "Public Sans"
+                    ],
+                    "body-md": [
+                            "Inter"
+                    ],
+                    "display-lg": [
+                            "Public Sans"
+                    ],
+                    "label-sm": [
+                            "Inter"
+                    ],
+                    "label-md": [
+                            "Inter"
+                    ],
+                    "headline-lg-mobile": [
+                            "Public Sans"
+                    ]
+            },
+            "fontSize": {
+                    "body-lg": [
+                            "18px",
+                            {
+                                    "lineHeight": "28px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "headline-md": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "headline-lg": [
+                            "32px",
+                            {
+                                    "lineHeight": "40px",
+                                    "letterSpacing": "-0.01em",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "body-md": [
+                            "16px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "display-lg": [
+                            "48px",
+                            {
+                                    "lineHeight": "56px",
+                                    "letterSpacing": "-0.02em",
+                                    "fontWeight": "700"
+                            }
+                    ],
+                    "label-sm": [
+                            "12px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "label-md": [
+                            "14px",
+                            {
+                                    "lineHeight": "20px",
+                                    "letterSpacing": "0.01em",
+                                    "fontWeight": "500"
+                            }
+                    ],
+                    "headline-lg-mobile": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "fontWeight": "600"
+                            }
+                    ]
+            }
+          },
+        }
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.filled {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-md overflow-hidden">
+<!-- TopAppBar -->
+<header class="bg-surface flex justify-between items-center w-full px-lg py-md h-16 sticky top-0 z-50">
+<div class="flex items-center gap-4">
+<span class="font-headline-md text-headline-md font-semibold text-primary">Individual Course</span>
+</div>
+<nav class="hidden md:flex gap-6 h-full items-end">
+<a class="text-primary font-bold border-b-2 border-primary pb-1 hover:text-primary transition-colors font-label-md text-label-md" href="#">Course Overview</a>
+</nav>
+<div class="flex items-center gap-4">
+<span class="text-on-surface-variant font-label-md text-label-md hidden md:inline-block">85% Complete</span>
+<button class="font-label-md text-label-md bg-transparent border border-primary text-primary px-4 py-2 rounded-lg hover:bg-primary/5 transition-colors hidden md:block">Back to Dashboard</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden relative pb-0">
+<!-- SideNavBar -->
+<aside class="hidden md:flex flex-col h-[calc(100vh-4rem)] w-64 p-md bg-surface-container-lowest border-r border-outline-variant shrink-0 z-10 sticky top-16">
+<div class="mb-8">
+<div class="flex items-center gap-3 mb-2">
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-bold font-label-md text-label-md overflow-hidden">
+<img alt="Course Instructor" class="w-full h-full object-cover" data-alt="A professional headshot of a female course instructor in her 30s. She is smiling warmly at the camera, conveying expertise and approachability. She has shoulder-length brown hair and is wearing a crisp white blouse with a subtle navy blazer. The background is a softly blurred office environment with natural lighting, maintaining a clean, modern corporate aesthetic. High resolution, shallow depth of field." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBmPEb3B5vze8hrwCP6QqoHXD1uIQlMk8OjRkGPLkPlS3EhUdkNBV0ubyu_SHWO9CwqfYieWsGO5uPVlyzDsa_vDaA4jAbpC9nJ4OItlm2W_3lys6FJJj4yV22l2h2bLkmHP90-dbVP3aDTw68zcwiu6nzXxHcZGgQOrT9PBH7Z8UGaOwmmo2tNJDm2TKzZ4hQ0qWicSguHmisv8oKL7fAvaO5I1n9APHpu6ALirTnW5Y9nFNar9OA9"/>
+</div>
+<div>
+<h2 class="font-headline-md text-headline-md text-primary text-sm leading-tight">Module Explorer</h2>
+<p class="text-on-surface-variant font-label-sm text-label-sm">Current: Unit 2</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 flex flex-col gap-2 font-label-md text-label-md">
+<a class="flex items-center gap-3 px-3 py-2 text-primary font-bold bg-secondary-container rounded-lg translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined filled" data-icon="headphones">headphones</span>
+                    Audio
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="present_to_all">present_to_all</span>
+                    Slides
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="style">style</span>
+                    Flashcards
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="quiz">quiz</span>
+                    Quiz
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="image">image</span>
+                    Infographic
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-high transition-all translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="description">description</span>
+                    Report
+                </a>
+</nav>
+</aside>
+<!-- Main Content Area (Learning Focus) -->
+<main class="flex-1 overflow-y-auto px-margin-mobile md:px-margin-desktop py-xl">
+<div class="max-w-5xl mx-auto w-full">
+<!-- Audio Player Container -->
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant p-8 mb-8 shadow-sm flex flex-col items-center justify-center">
+<div class="w-32 h-32 bg-primary-container rounded-full flex items-center justify-center text-on-primary-container mb-6 shadow-md relative">
+<span class="material-symbols-outlined text-6xl">graphic_eq</span>
+<div class="absolute inset-0 rounded-full border-4 border-primary/20 animate-pulse"></div>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface mb-2">Listen to Lesson</h3>
+<p class="text-on-surface-variant font-body-md mb-8">Foundations of Digital Strategy</p>
+<!-- Audio Controls -->
+<div class="w-full max-w-2xl bg-surface-container rounded-2xl p-6 shadow-inner">
+<div class="flex items-center justify-between mb-4">
+<span class="text-on-surface-variant font-label-sm">0:00</span>
+<div class="flex-1 mx-4 h-2 bg-surface-variant rounded-full cursor-pointer relative">
+<div class="absolute left-0 top-0 h-full bg-primary rounded-full w-0"></div>
+<div class="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-primary rounded-full shadow cursor-grab active:cursor-grabbing transform scale-0 hover:scale-100 transition-transform"></div>
+</div>
+<span class="text-on-surface-variant font-label-sm">4:15</span>
+</div>
+<div class="flex items-center justify-center gap-8">
+<button class="text-on-surface-variant hover:text-primary transition-colors flex flex-col items-center">
+<span class="material-symbols-outlined text-2xl">replay_10</span>
+<span class="text-[10px] font-label-sm mt-1">10s</span>
+</button>
+<button class="w-16 h-16 bg-primary rounded-full flex items-center justify-center text-on-primary hover:bg-primary/90 transition-all shadow-md hover:shadow-lg hover:-translate-y-1">
+<span class="material-symbols-outlined filled text-4xl">play_arrow</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors flex flex-col items-center">
+<span class="material-symbols-outlined text-2xl">forward_10</span>
+<span class="text-[10px] font-label-sm mt-1">10s</span>
+</button>
+</div>
+<div class="flex items-center justify-between mt-6 px-4">
+<button class="text-on-surface-variant hover:text-primary transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-xl">speed</span>
+<span class="font-label-sm">1x</span>
+</button>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-on-surface-variant text-xl">volume_up</span>
+<div class="w-24 h-1 bg-surface-variant rounded-full cursor-pointer">
+<div class="w-2/3 h-full bg-primary rounded-full"></div>
+</div>
+</div>
+<button class="text-on-surface-variant hover:text-primary transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-xl">article</span>
+<span class="font-label-sm">Transcript</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Course Info beneath audio -->
+<div class="bg-surface-container-lowest p-8 rounded-xl border border-outline-variant mb-xl shadow-sm">
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+<div>
+<span class="inline-block px-3 py-1 bg-tertiary-fixed text-on-tertiary-fixed rounded-full font-label-sm text-label-sm mb-2">Module 1 • Unit 2</span>
+<h1 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface">Foundations of Digital Strategy</h1>
+</div>
+<button class="bg-tertiary text-on-tertiary px-6 py-3 rounded-lg font-label-md text-label-md font-semibold hover:bg-tertiary/90 transition-colors shadow-sm flex items-center gap-2">
+                            Next Lesson
+                            <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</button>
+</div>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-3xl">
+                        In this introductory session, we explore the core tenets of modern digital strategy. You'll learn how to align technological capabilities with business objectives to create sustainable competitive advantages. 
+                    </p>
+</div>
+</div>
+</main>
+</div>
+</body></html>

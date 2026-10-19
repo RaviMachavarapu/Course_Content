@@ -1,0 +1,425 @@
+<!DOCTYPE html><html lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Course Structure &amp; Content - Admin</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Public+Sans:wght@600;700;800&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary": "#ffffff",
+                      "surface-container-low": "#f2f4f6",
+                      "tertiary-fixed-dim": "#d0bcff",
+                      "outline": "#757681",
+                      "on-secondary-container": "#00714d",
+                      "on-tertiary-container": "#c1a8ff",
+                      "on-error-container": "#93000a",
+                      "on-secondary-fixed-variant": "#005236",
+                      "on-tertiary": "#ffffff",
+                      "on-surface-variant": "#444650",
+                      "on-tertiary-fixed": "#23005c",
+                      "on-tertiary-fixed-variant": "#5516be",
+                      "on-error": "#ffffff",
+                      "primary": "#142d6a",
+                      "inverse-surface": "#2d3133",
+                      "surface-variant": "#e0e3e5",
+                      "surface-tint": "#465c9b",
+                      "primary-fixed-dim": "#b4c5ff",
+                      "on-secondary-fixed": "#002113",
+                      "background": "#f7f9fb",
+                      "secondary-container": "#6cf8bb",
+                      "secondary": "#006c49",
+                      "on-secondary": "#ffffff",
+                      "inverse-primary": "#b4c5ff",
+                      "tertiary": "#3c0092",
+                      "surface-container-highest": "#e0e3e5",
+                      "on-primary-container": "#9eb3f9",
+                      "surface-container": "#eceef0",
+                      "secondary-fixed": "#6ffbbe",
+                      "tertiary-fixed": "#e9ddff",
+                      "on-background": "#191c1e",
+                      "secondary-fixed-dim": "#4edea3",
+                      "surface": "#f7f9fb",
+                      "error": "#ba1a1a",
+                      "primary-fixed": "#dbe1ff",
+                      "surface-container-lowest": "#ffffff",
+                      "on-surface": "#191c1e",
+                      "on-primary-fixed-variant": "#2d4381",
+                      "surface-dim": "#d8dadc",
+                      "surface-bright": "#f7f9fb",
+                      "primary-container": "#2e4482",
+                      "outline-variant": "#c5c6d2",
+                      "surface-container-high": "#e6e8ea",
+                      "error-container": "#ffdad6",
+                      "tertiary-container": "#5517bf",
+                      "inverse-on-surface": "#eff1f3",
+                      "on-primary-fixed": "#00174b"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "xs": "4px",
+                      "gutter": "24px",
+                      "md": "16px",
+                      "margin-desktop": "48px",
+                      "margin-mobile": "16px",
+                      "sm": "8px",
+                      "base": "4px",
+                      "xl": "40px",
+                      "lg": "24px"
+              },
+              "fontFamily": {
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Public Sans"
+                      ],
+                      "headline-lg": [
+                              "Public Sans"
+                      ],
+                      "headline-lg-mobile": [
+                              "Public Sans"
+                      ],
+                      "display-lg": [
+                              "Public Sans"
+                      ],
+                      "label-md": [
+                              "Inter"
+                      ],
+                      "label-sm": [
+                              "Inter"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-lg": [
+                              "32px",
+                              {
+                                      "lineHeight": "40px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-lg-mobile": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "56px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "label-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "letterSpacing": "0.01em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "label-sm": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+</head>
+<body class="bg-background text-on-surface min-h-screen flex flex-col md:flex-row">
+<!-- SideNavBar (Admin) -->
+<nav class="hidden lg:flex flex-col h-screen fixed left-0 top-0 py-lg px-md gap-sm border-r bg-surface dark:bg-on-background border-r border-outline-variant dark:border-outline docked left-0 h-full w-64 flat no shadows z-40">
+<div class="flex items-center gap-sm mb-lg px-2">
+<div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">neurology</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md font-extrabold text-primary dark:text-primary-fixed-dim">Shikshak Dp</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant">AI Engine</p>
+</div>
+</div>
+<button class="bg-primary text-on-primary font-label-md text-label-md rounded-lg py-3 px-4 mb-md flex items-center justify-center gap-sm hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined">add</span>
+            New Artifact
+        </button>
+<div class="flex flex-col gap-xs flex-1">
+<a class="text-on-surface-variant dark:text-outline hover:bg-surface-container-high dark:hover:bg-surface-container-low rounded-lg flex items-center gap-md px-4 py-3 scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined">upload_file</span>
+<span class="font-label-md text-label-md">Ingestion</span>
+</a>
+<a class="text-on-surface-variant dark:text-outline hover:bg-surface-container-high dark:hover:bg-surface-container-low rounded-lg flex items-center gap-md px-4 py-3 scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined">fact_check</span>
+<span class="font-label-md text-label-md">Review</span>
+</a>
+<a class="bg-primary-container dark:bg-on-primary-fixed-variant text-on-primary-container dark:text-primary-fixed rounded-lg font-bold flex items-center gap-md px-4 py-3 scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined">edit_note</span>
+<span class="font-label-md text-label-md">Editor</span>
+</a>
+
+<a class="text-on-surface-variant dark:text-outline hover:bg-surface-container-high dark:hover:bg-surface-container-low rounded-lg flex items-center gap-md px-4 py-3 scale-98 active:scale-95 duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-md text-label-md">Settings</span>
+</a></div>
+<div class="mt-auto">
+
+</div>
+</nav>
+<!-- TopAppBar (Admin Mobile/Tablet) -->
+<header class="lg:hidden sticky top-0 z-50 flex justify-between items-center w-full px-margin-mobile bg-surface-container-lowest dark:bg-inverse-surface h-16 border-b border-outline-variant dark:border-outline">
+<div class="flex items-center gap-sm">
+<div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">neurology</span>
+</div>
+<h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary-fixed-dim hidden sm:block">LearnForge Admin</h1>
+</div>
+<div class="flex items-center gap-sm text-primary dark:text-primary-fixed-dim">
+<button class="p-2 rounded-full hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="p-2 rounded-full hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined">api</span>
+</button>
+<button class="p-2 rounded-full hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-surface-variant overflow-hidden ml-2">
+<img alt="Admin Profile" class="w-full h-full object-cover" data-alt="A small circular avatar placeholder showing a generic silhouette or professional headshot in a modern corporate style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDgl82UPU5y17vrmnPMOfA7JBg-jibM8hwTtgsUyymhqyJVH8dGOxZdJlSADoCYEx9ggcJxPIp1QrJbHIFNV-k_tV7mhBtWH_oSiDYWRyyNQXgX7dtm6dXsD1EnTSLXAu7fi6egin7_EIwYxBR8YC_6uYdWBYEO2cXih2iCG77GH2JZLCSw9Ppub0dNzhOGPXAVMkRN5iYz-tIl2SCh2n6Kjm9mtP613LoWR8ybW0cvuWuVVhrbv3Pb">
+</div>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="flex-1 lg:ml-64 flex flex-col p-margin-mobile md:p-gutter lg:p-margin-desktop gap-lg">
+<!-- Header Section -->
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md border-b border-outline-variant pb-md">
+<div>
+<div class="flex items-center gap-sm mb-1">
+<span class="font-label-md text-label-md text-on-surface-variant">Course Editor</span>
+<span class="material-symbols-outlined text-[16px] text-outline">chevron_right</span>
+<span class="font-label-md text-label-md text-primary">Structure</span>
+</div>
+<h2 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface">Machine Learning Deep Dive</h2>
+</div>
+<button class="bg-primary text-on-primary font-label-md text-label-md rounded-lg py-2 px-5 flex items-center justify-center gap-sm hover:opacity-90 transition-opacity whitespace-nowrap shadow-sm">
+<span class="material-symbols-outlined">add_link</span>
+                Add New Video Source
+            </button>
+</div>
+<!-- Content List -->
+<div class="flex flex-col gap-md">
+<!-- Video Source Row 1 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-shadow">
+<!-- Video Metadata -->
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md border-b border-surface-variant pb-md">
+<div class="flex items-start gap-md">
+<div class="w-12 h-12 bg-surface-container-high rounded-lg flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-outline-variant text-[28px]">movie</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">1. Introduction to Neural Networks</h3>
+<div class="flex flex-wrap items-center gap-x-sm gap-y-1 mt-1 text-on-surface-variant">
+<span class="font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">link</span> youtube.com/watch?v=intro_nn</span>
+<span class="text-outline text-xs">•</span>
+<span class="font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">schedule</span> 45:20</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<span class="bg-secondary-container text-on-secondary-container font-label-sm text-label-sm px-2 py-1 rounded-full flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">check_circle</span> Processed
+                        </span>
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Artifacts Grid -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-sm">
+<!-- Artifact: Slides -->
+<div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+<div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-[18px]">slideshow</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface">Slides</span>
+<span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span>
+</div>
+<!-- Artifact: Flashcards -->
+<div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+<div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-[18px]">style</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface">Flashcards</span>
+<span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span>
+</div>
+<!-- Artifact: Quiz -->
+<div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group"><div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform"><span class="material-symbols-outlined text-[18px]">quiz</span></div><span class="font-label-sm text-label-sm text-on-surface">Quiz</span><span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span></div>
+<!-- Artifact: Audio -->
+<div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+<div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-[18px]">headphones</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface">Audio</span>
+<span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span>
+</div>
+<!-- Artifact: Infographic -->
+<div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group"><div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform"><span class="material-symbols-outlined text-[18px]">insert_chart</span></div><span class="font-label-sm text-label-sm text-on-surface">Infographic</span><span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span></div>
+<!-- Artifact: Report -->
+<div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+<div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-[18px]">summarize</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface">Report</span>
+<span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span>
+</div>
+</div>
+</div>
+<!-- Video Source Row 2 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-shadow">
+<!-- Video Metadata -->
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md border-b border-surface-variant pb-md">
+<div class="flex items-start gap-md">
+<div class="w-12 h-12 bg-surface-container-high rounded-lg flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-outline-variant text-[28px]">movie</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">2. Backpropagation Deep Dive</h3>
+<div class="flex flex-wrap items-center gap-x-sm gap-y-1 mt-1 text-on-surface-variant">
+<span class="font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">link</span> vimeo.com/459201</span>
+<span class="text-outline text-xs">•</span>
+<span class="font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">schedule</span> 1:12:05</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<span class="bg-[#fef08a] text-[#854d0e] font-label-sm text-label-sm px-2 py-1 rounded-full flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px] animate-spin">sync</span> Processing
+                        </span>
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Artifacts Grid -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-sm opacity-60 pointer-events-none"><div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1"><div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse"><span class="material-symbols-outlined text-[18px]">slideshow</span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Slides</span><span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span></div><div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1"><div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse"><span class="material-symbols-outlined text-[18px]">style</span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Flashcards</span><span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span></div><div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1"><div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse"><span class="material-symbols-outlined text-[18px]">quiz</span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Quiz</span><span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span></div><div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1"><div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse"><span class="material-symbols-outlined text-[18px]">headphones</span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Audio</span><span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span></div><div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1"><div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse"><span class="material-symbols-outlined text-[18px]">insert_chart</span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Infographic</span><span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span></div><div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1"><div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse"><span class="material-symbols-outlined text-[18px]">summarize</span></div><span class="font-label-sm text-label-sm text-on-surface-variant">Report</span><span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span></div></div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md hover:shadow-[0_4px_12px_rgba(46,68,130,0.08)] transition-shadow">
+  <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md border-b border-surface-variant pb-md">
+    <div class="flex items-start gap-md">
+      <div class="w-12 h-12 bg-surface-container-high rounded-lg flex items-center justify-center flex-shrink-0">
+        <span class="material-symbols-outlined text-outline-variant text-[28px]">movie</span>
+      </div>
+      <div>
+        <h3 class="font-headline-md text-headline-md text-on-surface">3. Advanced Optimization Techniques</h3>
+        <div class="flex flex-wrap items-center gap-x-sm gap-y-1 mt-1 text-on-surface-variant">
+          <span class="font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">link</span> vimeo.com/7821034</span>
+          <span class="text-outline text-xs">•</span>
+          <span class="font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">schedule</span> 55:12</span>
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center gap-sm">
+      <span class="bg-error-container text-on-error-container font-label-sm text-label-sm px-2 py-1 rounded-full flex items-center gap-1">
+        <span class="material-symbols-outlined text-[14px]">error</span> Error
+      </span>
+      <button class="text-on-surface-variant hover:text-primary transition-colors p-1">
+        <span class="material-symbols-outlined">more_vert</span>
+      </button>
+    </div>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-sm">
+    <div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+      <div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+        <span class="material-symbols-outlined text-[18px]">headphones</span>
+      </div>
+      <span class="font-label-sm text-label-sm text-on-surface">Audio</span>
+      <span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span>
+    </div>
+    <div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+      <div class="w-8 h-8 rounded-full bg-[#fef08a]/30 text-[#854d0e] flex items-center justify-center mb-1 animate-pulse">
+        <span class="material-symbols-outlined text-[18px]">slideshow</span>
+      </div>
+      <span class="font-label-sm text-label-sm text-on-surface">Slides</span>
+      <span class="text-[10px] text-[#854d0e] font-medium uppercase tracking-wide">Processing</span>
+    </div>
+    <div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+      <div class="w-8 h-8 rounded-full bg-error-container text-error flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+        <span class="material-symbols-outlined text-[18px]">quiz</span>
+      </div>
+      <span class="font-label-sm text-label-sm text-on-surface">Quiz</span>
+      <span class="text-[10px] text-error font-medium uppercase tracking-wide">Error</span>
+    </div>
+    <div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 opacity-60">
+      <div class="w-8 h-8 rounded-full bg-surface-container-high text-outline flex items-center justify-center mb-1">
+        <span class="material-symbols-outlined text-[18px]">style</span>
+      </div>
+      <span class="font-label-sm text-label-sm text-on-surface-variant">Flashcards</span>
+      <span class="text-[10px] text-outline font-medium uppercase tracking-wide">Pending</span>
+    </div>
+    <div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 hover:border-primary transition-colors cursor-pointer group">
+      <div class="w-8 h-8 rounded-full bg-secondary-container/20 text-secondary flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+        <span class="material-symbols-outlined text-[18px]">insert_chart</span>
+      </div>
+      <span class="font-label-sm text-label-sm text-on-surface">Infographic</span>
+      <span class="text-[10px] text-secondary font-medium uppercase tracking-wide">Ready</span>
+    </div>
+    <div class="bg-surface border border-outline-variant rounded-lg p-sm flex flex-col items-center text-center gap-1 opacity-60">
+      <div class="w-8 h-8 rounded-full bg-surface-container-high text-outline flex items-center justify-center mb-1">
+        <span class="material-symbols-outlined text-[18px]">summarize</span>
+      </div>
+      <span class="font-label-sm text-label-sm text-on-surface-variant">Report</span>
+      <span class="text-[10px] text-outline font-medium uppercase tracking-wide">Pending</span>
+    </div>
+  </div>
+</div></div>
+</main>
+
+
+
+
+
+
+
+
+</body></html>

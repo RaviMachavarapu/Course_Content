@@ -1,0 +1,130 @@
+name: shikshak-dp
+
+x-backend-env: &backend-env
+  APP_ENV: dev
+  DATABASE_URL: postgresql+psycopg://shikshak:shikshak@postgres:5432/shikshak
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  MEDIA_ROOT: /data/media
+  SESSION_SECRET: dev-only-not-secret
+  CORS_ORIGINS: http://localhost:5173
+  CONTENT_PROVIDER: fixture
+  SMTP_URL: smtp://mailhog:1025
+  LOG_LEVEL: info
+  # dev/e2e only — the Playwright suite logs in many times per run
+  LOGIN_RATE_LIMIT: 100/5m
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shikshak
+      POSTGRES_PASSWORD: shikshak
+      POSTGRES_DB: shikshak
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shikshak"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - media:/data/media
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q celery,text,audio
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - media:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping 2>&1 | grep -q pong"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+  beat:
+    build: ./backend
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - media:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "test -f celerybeat-schedule || test -f celerybeat-schedule.db"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      redis: { condition: service_healthy }
+
+  web:
+    build: ./frontend
+    ports: ["5173:80"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on: [api]
+
+  # Abandoned upstream; amd64-only image (runs emulated on arm64 — the platform
+  # warning is benign). Kept because the spec names the service `mailhog`.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports: ["1025:1025", "8025:8025"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "-", "http://localhost:8025/api/v2/messages"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Live NotebookLM. Off by default. Enable with:  docker compose --profile mcp up
+  mcp:
+    build: ./mcp
+    profiles: ["mcp"]
+    volumes:
+      - ./mcp/auth:/root/.notebooklm-mcp
+    ports:
+      - "7332:7332"
+      # noVNC — open http://localhost:6080/vnc.html to watch/click through
+      # the interactive Google login (see mcp/README.md).
+      - "6080:6080"
+
+volumes:
+  pgdata:
+  media:

@@ -1,0 +1,273 @@
+"""Admin — courses & modules (spec.md §3.2, §3.5, §5.2)."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, BackgroundTasks, Response, status
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
+
+from app.api.admin import ADMIN_DEPENDENCIES
+from app.api.deps import CurrentAdmin, DbDep
+from app.errors import APIError
+from app.models.course import Course
+from app.models.enums import ARTIFACT_TYPES
+from app.models.module import Module
+from app.pipeline import orchestrator
+from app.pipeline.factory import get_content_provider
+from app.schemas.courses import (
+    ArtifactSummary,
+    CourseCreateRequest,
+    CourseDetail,
+    CourseEnvelope,
+    CourseListResponse,
+    CoursePatchRequest,
+    CourseSummary,
+    ModuleCreateRequest,
+    ModuleEnvelope,
+    ModuleMoveRequest,
+    ModulePatchRequest,
+    ModuleSummary,
+)
+from app.services.ingestion import SUPPORTED_HINT, detect_source_type
+from app.services.slugs import unique_course_slug
+
+router = APIRouter(
+    prefix="/api/admin/courses", tags=["admin-courses"], dependencies=ADMIN_DEPENDENCIES
+)
+
+_ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
+
+
+def _module_summary(module: Module) -> ModuleSummary:
+    arts = sorted(module.artifacts, key=lambda a: _ARTIFACT_ORDER.get(a.type, 99))
+    return ModuleSummary(
+        id=module.id,
+        order_index=module.order_index,
+        title=module.title,
+        source_url=module.source_url,
+        source_type=module.source_type.value,
+        status=module.status,
+        artifacts=[ArtifactSummary(id=a.id, type=a.type, status=a.status) for a in arts],
+    )
+
+
+def _course_detail(course: Course) -> CourseDetail:
+    mods = sorted(course.modules, key=lambda m: m.order_index)
+    return CourseDetail(
+        id=course.id,
+        title=course.title,
+        slug=course.slug,
+        description=course.description,
+        category=course.category,
+        status=course.status,
+        cover_image_key=course.cover_image_key,
+        created_at=course.created_at,
+        updated_at=course.updated_at,
+        published_at=course.published_at,
+        modules=[_module_summary(m) for m in mods],
+    )
+
+
+def _get_course(db: Session, course_id: uuid.UUID) -> Course:
+    course = db.get(Course, course_id)
+    if course is None:
+        raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Course not found")
+    return course
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=CourseEnvelope)
+def create_course(body: CourseCreateRequest, db: DbDep, admin: CurrentAdmin) -> CourseEnvelope:
+    course = Course(
+        title=body.title.strip(),
+        slug=unique_course_slug(db, body.title),
+        description=body.description.strip(),
+        category=body.category.strip(),
+        cover_image_key=body.cover_image_key,
+        created_by=admin.id,
+    )
+    db.add(course)
+    db.flush()
+    return CourseEnvelope(course=_course_detail(course))
+
+
+@router.get("", response_model=CourseListResponse)
+def list_courses(db: DbDep) -> CourseListResponse:
+    counts: dict[uuid.UUID, int] = {
+        cid: int(n)
+        for cid, n in db.execute(
+            select(Module.course_id, func.count(Module.id)).group_by(Module.course_id)
+        ).all()
+    }
+    rows = db.scalars(select(Course).order_by(Course.updated_at.desc()))
+    return CourseListResponse(
+        courses=[
+            CourseSummary(
+                id=c.id,
+                title=c.title,
+                slug=c.slug,
+                category=c.category,
+                status=c.status,
+                module_count=int(counts.get(c.id, 0)),
+                updated_at=c.updated_at,
+                published_at=c.published_at,
+            )
+            for c in rows
+        ]
+    )
+
+
+@router.get("/{course_id}", response_model=CourseEnvelope)
+def get_course(course_id: uuid.UUID, db: DbDep) -> CourseEnvelope:
+    course = db.scalar(
+        select(Course)
+        .where(Course.id == course_id)
+        .options(selectinload(Course.modules).selectinload(Module.artifacts))
+    )
+    if course is None:
+        raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Course not found")
+    return CourseEnvelope(course=_course_detail(course))
+
+
+@router.patch("/{course_id}", response_model=CourseEnvelope)
+def patch_course(
+    course_id: uuid.UUID, body: CoursePatchRequest, db: DbDep, _: CurrentAdmin
+) -> CourseEnvelope:
+    course = _get_course(db, course_id)
+    if body.title is not None:
+        course.title = body.title.strip()
+    if body.description is not None:
+        course.description = body.description.strip()
+    if body.category is not None:
+        course.category = body.category.strip()
+    if body.cover_image_key is not None:
+        course.cover_image_key = body.cover_image_key
+    db.flush()
+    return CourseEnvelope(course=_course_detail(course))
+
+
+@router.post(
+    "/{course_id}/modules",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ModuleEnvelope,
+)
+def create_module(
+    course_id: uuid.UUID,
+    body: ModuleCreateRequest,
+    db: DbDep,
+    admin: CurrentAdmin,
+    background: BackgroundTasks,
+) -> ModuleEnvelope:
+    course = _get_course(db, course_id)
+
+    source_type = detect_source_type(body.source_url)
+    if source_type is None:
+        raise APIError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "unsupported_source",
+            f"That URL is not a supported source. Use {SUPPORTED_HINT}.",
+        )
+
+    max_index = db.scalar(
+        select(func.coalesce(func.max(Module.order_index), -1)).where(Module.course_id == course.id)
+    )
+    next_index = (max_index if max_index is not None else -1) + 1
+    module = Module(
+        course_id=course.id,
+        order_index=next_index,
+        title=body.title.strip(),
+        source_url=body.source_url.strip(),
+        source_type=source_type,
+    )
+    db.add(module)
+    db.flush()
+
+    provider = get_content_provider()
+    jobs = orchestrator.start_module_generation(
+        db, provider, module.id, body.types, requested_by=admin.id, options_by_type=body.options
+    )
+    db.flush()
+
+    dispatch = [(str(j.artifact_id), str(j.job_id), j.type.value) for j in jobs]
+    background.add_task(_dispatch_all, dispatch)
+
+    db.refresh(module)
+    return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
+
+
+def _dispatch_all(items: list[tuple[str, str, str]]) -> None:
+    from app.tasks.generation import generate_artifact_task
+
+    for artifact_id, job_id, artifact_type in items:
+        generate_artifact_task.apply_async(
+            kwargs={"artifact_id": artifact_id, "job_id": job_id},
+            queue="audio" if artifact_type == "audio_overview" else "text",
+        )
+
+
+def _get_module(db: Session, module_id: uuid.UUID) -> Module:
+    module = db.get(Module, module_id)
+    if module is None:
+        raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Module not found")
+    return module
+
+
+@router.patch("/modules/{module_id}", response_model=ModuleSummary)
+def rename_module(
+    module_id: uuid.UUID, body: ModulePatchRequest, db: DbDep, _: CurrentAdmin
+) -> ModuleSummary:
+    module = _get_module(db, module_id)
+    module.title = body.title.strip()
+    db.flush()
+    return _module_summary(module)
+
+
+@router.post("/modules/{module_id}/move", response_model=CourseEnvelope)
+def move_module(
+    module_id: uuid.UUID, body: ModuleMoveRequest, db: DbDep, _: CurrentAdmin
+) -> CourseEnvelope:
+    module = _get_module(db, module_id)
+    siblings = sorted(
+        db.scalars(select(Module).where(Module.course_id == module.course_id)),
+        key=lambda m: m.order_index,
+    )
+    idx = next(i for i, m in enumerate(siblings) if m.id == module.id)
+    swap = idx - 1 if body.direction == "up" else idx + 1
+    if 0 <= swap < len(siblings):
+        other = siblings[swap]
+        a, b = module.order_index, other.order_index
+        # three-phase via a sentinel: uq_module_course_order is checked per row
+        module.order_index = -1
+        db.flush()
+        other.order_index = a
+        db.flush()
+        module.order_index = b
+        db.flush()
+    course = db.get(Course, module.course_id)
+    assert course is not None
+    return CourseEnvelope(course=_course_detail(course))
+
+
+@router.post("/modules/{module_id}/regenerate", response_model=ModuleEnvelope)
+def regenerate_module(
+    module_id: uuid.UUID, db: DbDep, admin: CurrentAdmin, background: BackgroundTasks
+) -> ModuleEnvelope:
+    module = _get_module(db, module_id)
+    jobs = orchestrator.start_module_generation(
+        db, get_content_provider(), module.id, list(ARTIFACT_TYPES), requested_by=admin.id
+    )
+    db.flush()
+    background.add_task(
+        _dispatch_all, [(str(j.artifact_id), str(j.job_id), j.type.value) for j in jobs]
+    )
+    db.refresh(module)
+    return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
+
+
+@router.delete("/modules/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_module(module_id: uuid.UUID, db: DbDep, _: CurrentAdmin) -> Response:
+    module = _get_module(db, module_id)
+    db.delete(module)  # BR9 cascade
+    db.flush()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

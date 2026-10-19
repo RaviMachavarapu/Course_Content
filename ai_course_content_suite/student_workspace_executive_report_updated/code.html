@@ -1,0 +1,262 @@
+<!DOCTYPE html><html class="light" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Executive Report - Module Explorer</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Public+Sans:wght@600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-surface": "#191c1e",
+                        "surface": "#f7f9fb",
+                        "tertiary-fixed-dim": "#d0bcff",
+                        "tertiary": "#3c0092",
+                        "error-container": "#ffdad6",
+                        "inverse-on-surface": "#eff1f3",
+                        "on-primary-fixed-variant": "#2d4381",
+                        "secondary-fixed-dim": "#4edea3",
+                        "error": "#ba1a1a",
+                        "secondary": "#006c49",
+                        "tertiary-fixed": "#e9ddff",
+                        "on-secondary-fixed": "#002113",
+                        "on-secondary-container": "#00714d",
+                        "surface-tint": "#465c9b",
+                        "on-primary-fixed": "#00174b",
+                        "on-tertiary": "#ffffff",
+                        "background": "#f7f9fb",
+                        "on-secondary-fixed-variant": "#005236",
+                        "on-tertiary-fixed": "#23005c",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed-variant": "#5516be",
+                        "secondary-fixed": "#6ffbbe",
+                        "secondary-container": "#6cf8bb",
+                        "inverse-surface": "#2d3133",
+                        "on-background": "#191c1e",
+                        "inverse-primary": "#b4c5ff",
+                        "on-primary-container": "#9eb3f9",
+                        "surface-dim": "#d8dadc",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-variant": "#e0e3e5",
+                        "primary-fixed-dim": "#b4c5ff",
+                        "surface-bright": "#f7f9fb",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "on-primary": "#ffffff",
+                        "primary": "#142d6a",
+                        "primary-fixed": "#dbe1ff",
+                        "outline": "#757681",
+                        "primary-container": "#2e4482",
+                        "on-surface-variant": "#444650",
+                        "surface-container-highest": "#e0e3e5",
+                        "tertiary-container": "#5517bf",
+                        "on-tertiary-container": "#c1a8ff",
+                        "surface-container-high": "#e6e8ea",
+                        "surface-container": "#eceef0",
+                        "surface-container-low": "#f2f4f6",
+                        "outline-variant": "#c5c6d2"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-mobile": "16px",
+                        "base": "4px",
+                        "sm": "8px",
+                        "xl": "40px",
+                        "xs": "4px",
+                        "gutter": "24px",
+                        "lg": "24px",
+                        "margin-desktop": "48px",
+                        "md": "16px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "headline-md": ["Public Sans"],
+                        "headline-lg": ["Public Sans"],
+                        "body-md": ["Inter"],
+                        "display-lg": ["Public Sans"],
+                        "label-sm": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg-mobile": ["Public Sans"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", { "lineHeight": "32px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "fontWeight": "600" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.01em", "fontWeight": "500" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined';
+            font-weight: normal;
+            font-style: normal;
+            font-size: 24px;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            word-wrap: normal;
+            direction: ltr;
+            -webkit-font-feature-settings: 'liga';
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        /* Smooth scrolling for anchor links */
+        html {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen font-body-md selection:bg-primary-fixed selection:text-on-primary-fixed flex flex-col">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-lg py-md h-16 sticky top-0 z-50 bg-surface dark:bg-on-surface flat no shadows">
+<div class="flex items-center gap-md">
+<span class="font-headline-md text-headline-md font-semibold text-primary dark:text-primary-fixed">Individual Course</span>
+</div>
+<nav class="hidden md:flex items-center gap-lg">
+<a class="text-primary font-bold border-b-2 border-primary pb-1 font-label-md text-label-md" href="#">Course Overview</a>
+</nav>
+<div class="flex items-center gap-md">
+<span class="text-on-surface-variant font-label-md text-label-md hidden md:inline-block">85% Complete</span>
+<button class="bg-surface-container-highest text-on-surface hover:bg-surface-variant transition-colors rounded-lg px-4 py-2 font-label-md text-label-md flex items-center gap-sm scale-95 duration-150">
+                Back to Dashboard
+            </button>
+</div>
+</header>
+<div class="flex flex-1 relative">
+<!-- SideNavBar (Hidden on Mobile) -->
+<aside class="hidden md:flex flex-col h-screen fixed left-0 top-16 w-64 p-md bg-surface-container-lowest dark:bg-on-surface border-r border-outline-variant flat no shadows z-40">
+<div class="mb-lg px-sm">
+<h2 class="font-headline-md text-headline-md text-primary">Module Explorer</h2>
+<p class="font-label-md text-label-md text-on-surface-variant mt-xs">Current: Unit 2</p>
+<div class="mt-md flex items-center gap-sm">
+<img alt="Course Instructor" class="w-8 h-8 rounded-full object-cover" data-alt="A small circular avatar portrait of a professional e-learning instructor wearing modern corporate attire against a clean, light-mode background. The lighting is soft and flattering, suggesting approachability and expertise." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDZzElw7N5-c40ZVHBvvhLpCbF4wy3vh05OuAwnyBlpmSNieuB7a-nicXWpJ51dRDjYnGfsckFkXgFHTjG2lXrdS4v5WGYTx6Ib0KskMzQ9USPsrPkKMcVZl0EiyGDtgtHfH5xL2S83q3DroMKuWs8dfZVSGPbfELAzP03Q4Dbc-u-PeInPiZmqsPYSAvWUgTjm1mIlKfepkSXMz1D67e6Ra2Tl8D71AdVsaJtvqzG59wcc0Dy3FRH2">
+<span class="font-label-sm text-label-sm text-on-surface">Instructor</span>
+</div>
+</div>
+<nav class="flex flex-col gap-sm">
+<a class="flex items-center gap-md px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all font-label-md text-label-md translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="headphones">headphones</span>
+                    Audio
+                </a>
+<a class="flex items-center gap-md px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all font-label-md text-label-md translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="present_to_all">present_to_all</span>
+                    Slides
+                </a>
+<a class="flex items-center gap-md px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all font-label-md text-label-md translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="style">style</span>
+                    Flashcards
+                </a>
+<a class="flex items-center gap-md px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all font-label-md text-label-md translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="quiz">quiz</span>
+                    Quiz
+                </a>
+<a class="flex items-center gap-md px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all font-label-md text-label-md translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="image">image</span>
+                    Infographic
+                </a>
+<a class="flex items-center gap-md px-md py-sm rounded-lg text-primary font-bold bg-secondary-container hover:bg-surface-container-high transition-all font-label-md text-label-md translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="description">description</span>
+                    Report
+                </a>
+</nav>
+</aside>
+<!-- Main Content Area (Student Focus Layout) -->
+<main class="flex-1 w-full md:ml-64 pb-16">
+<!-- Focus Bar for Content Area -->
+<div class="sticky top-16 z-30 bg-surface/90 backdrop-blur-md border-b border-surface-variant px-margin-mobile md:px-margin-desktop py-md flex justify-between items-center hidden md:flex">
+<span class="font-label-sm text-label-sm text-outline font-medium tracking-wide uppercase">Reading Focus Mode</span>
+<div class="flex items-center gap-sm text-on-surface-variant font-label-md text-label-md">
+<span class="material-symbols-outlined text-[18px]">timer</span>
+                    12 min read
+                </div>
+</div>
+<div class="max-w-3xl mx-auto px-margin-mobile md:px-xl py-xl">
+<!-- Report Header -->
+<div class="mb-xl">
+<div class="inline-flex items-center gap-sm bg-primary-fixed text-on-primary-fixed px-3 py-1 rounded-full font-label-sm text-label-sm mb-md">
+<span class="material-symbols-outlined text-[16px]">summarize</span>
+                        Executive Report
+                    </div>
+<h1 class="font-display-lg text-display-lg text-on-surface mb-sm">Module Summary: Neural Network Fundamentals</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">A comprehensive overview of key concepts, architectures, and practical applications covered in Unit 2.</p>
+</div>
+<!-- Featured Image -->
+<div class="w-full h-[300px] md:h-[400px] rounded-xl overflow-hidden mb-xl shadow-md border border-outline-variant/30">
+<img alt="Neural Network Visualization" class="w-full h-full object-cover" data-alt="A clean, abstract digital illustration representing neural networks in a modern corporate style. Nodes and connections are rendered with subtle depth, using primary indigo and crisp whites on a soft gray background. The lighting suggests clarity and professional e-learning." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB429vh5icgGN_1C31O-ENlMN1PI85wFJc666QXU4xoRlLNl_WKBk3VTWH04VK3rKBgVwh6kldu67Qmcj3-tvSHzxBUDYMJLybPb-yXaqYxfH4Vi8XETe-IiQ3hGDe3odwoNhr0Uotzr4WGcP2tWMK0YhwzitOB6OGwsCVU6jPlCRflvpy87YODK-y0gZpixOVM3HIDaz-fLnfCcqM1iYCa7BlUMC93BDUKotMUWkpyrP3qFXMLHC6P">
+</div>
+<!-- Report Content -->
+<article class="prose max-w-none prose-headings:font-headline-md prose-h2:text-headline-md prose-h3:text-headline-md prose-p:font-body-lg prose-p:text-body-lg prose-p:text-on-surface-variant prose-p:leading-relaxed prose-a:text-primary prose-li:font-body-lg prose-li:text-on-surface-variant prose-li:leading-relaxed">
+<div class="bg-surface-container-low border border-outline-variant rounded-lg p-lg mb-xl shadow-sm">
+<h3 class="font-headline-md text-headline-md text-on-surface mb-md flex items-center gap-sm">
+<span class="material-symbols-outlined text-secondary">insights</span>
+                            Key Takeaways
+                        </h3>
+<ul class="space-y-sm font-body-md text-body-md text-on-surface-variant list-disc pl-md">
+<li class="">Artificial Neural Networks (ANNs) consist of input, hidden, and output layers.</li>
+<li class="">Activation functions introduce non-linearity, allowing networks to learn complex patterns.</li>
+<li class="">Backpropagation is the primary algorithm for training, relying on gradient descent to minimize loss.</li>
+<li class="">Overfitting remains a critical challenge, requiring regularization techniques like dropout.</li>
+</ul>
+</div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface mt-xl mb-md border-b border-surface-variant pb-sm">1. Architecture Overview</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-6 leading-relaxed">
+                        The architecture of a neural network determines its capacity to process information. At its core, the multi-layer perceptron (MLP) forms the foundation, where each node in a layer is fully connected to the subsequent layer. 
+                    </p>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-xl leading-relaxed">
+                        Modern applications often require specialized architectures. Convolutional Neural Networks (CNNs) are optimized for spatial data like images, while Recurrent Neural Networks (RNNs) excel with sequential data.
+                    </p>
+<h2 class="font-headline-lg text-headline-lg text-on-surface mt-xl mb-md border-b border-surface-variant pb-sm">2. Training Dynamics</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-md leading-relaxed">
+                        Training involves an iterative process of forward passes (generating predictions) and backward passes (updating weights). The learning rate is perhaps the most crucial hyperparameter, dictating the step size during gradient descent.
+                    </p>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md mb-xl mt-8">
+<div class="bg-surface border border-outline-variant rounded-lg p-md">
+<h4 class="font-label-md text-label-md text-primary font-bold mb-xs">Forward Propagation</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed">Data flows from input to output layers. Activations are computed sequentially.</p>
+</div>
+<div class="bg-surface border border-outline-variant rounded-lg p-md">
+<h4 class="font-label-md text-label-md text-tertiary font-bold mb-xs">Backpropagation</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed">Errors are propagated backward to adjust weights using chain rule calculus.</p>
+</div>
+</div>
+</article>
+<div class="mt-xl pt-lg border-t border-surface-variant flex justify-between items-center">
+<button class="font-label-md text-label-md text-primary hover:bg-primary-fixed/20 px-4 py-2 rounded-lg transition-colors flex items-center gap-sm">
+<span class="material-symbols-outlined">arrow_back</span>
+                        Previous&nbsp;&nbsp;</button>
+<button class="font-label-md text-label-md bg-tertiary-container text-on-tertiary-container hover:opacity-90 px-6 py-3 rounded-lg transition-colors flex items-center gap-sm shadow-md">
+                        Complete Module
+                        <span class="material-symbols-outlined">check_circle</span>
+</button>
+</div>
+</div>
+</main>
+</div>
+<!-- Floating Action Button (FAB) -->
+<button aria-label="Download PDF" class="fixed bottom-8 right-lg md:right-xl md:bottom-8 z-40 bg-primary text-on-primary w-14 h-14 rounded-2xl shadow-lg flex items-center justify-center hover:bg-primary-container hover:shadow-xl transition-all active:scale-95 group">
+<span class="material-symbols-outlined text-[28px]">download</span>
+<span class="absolute right-16 bg-inverse-surface text-inverse-on-surface font-label-sm text-label-sm px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-md">Download PDF</span>
+</button>
+
+
+</body></html>

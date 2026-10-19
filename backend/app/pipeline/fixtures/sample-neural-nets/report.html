@@ -1,0 +1,34 @@
+<div class="studio-artifact" data-type="report">
+  <h1>Neural Networks: An Executive Overview</h1>
+  <p class="executive-summary">Neural networks are function approximators built from many simple units.
+  Given enough data and capacity, they learn to map inputs to outputs by adjusting connection
+  weights to minimise a loss. Their strength is representation learning; their costs are data,
+  compute, and interpretability.</p>
+
+  <h2>How they work</h2>
+  <p>Each neuron computes a weighted sum of its inputs plus a bias and applies a non-linear
+  activation. Neurons are arranged in layers; hidden layers transform the input into progressively
+  more useful features, and the output layer produces the prediction.</p>
+
+  <h2>Training</h2>
+  <p>Training uses gradient descent. Backpropagation computes how a small change in each weight
+  affects the loss, and the optimiser nudges every weight in the direction that reduces error.
+  This repeats over many batches of examples.</p>
+
+  <h2>Where they fit</h2>
+  <p>Neural networks excel at perception tasks — vision, speech, language — where hand-designed
+  features are hard to specify. For small, tabular problems, simpler models are often competitive
+  and easier to explain.</p>
+
+  <h2>Implications</h2>
+  <p>Adopting neural networks means investing in data pipelines, evaluation discipline, and
+  monitoring. Model quality is only as good as the data and the objective it was trained on.</p>
+
+  <ul class="key-points">
+    <li>A network is many simple weighted units combined non-linearly.</li>
+    <li>Depth enables feature composition.</li>
+    <li>Training minimises a loss via gradient descent and backpropagation.</li>
+    <li>Data quality bounds model quality.</li>
+    <li>Interpretability and monitoring are ongoing costs.</li>
+  </ul>
+</div>

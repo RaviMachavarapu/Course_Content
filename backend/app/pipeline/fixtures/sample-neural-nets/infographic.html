@@ -1,0 +1,26 @@
+<div class="studio-artifact" data-type="infographic">
+  <div class="node central" data-id="nn">
+    <span class="label">Neural Network</span>
+    <span class="desc">Layers of weighted units that learn from data</span>
+  </div>
+  <div class="node" data-id="neuron" data-parent="nn" data-rel="part-of">
+    <span class="label">Neuron</span>
+    <span class="desc">Weighted sum + bias, then activation</span>
+  </div>
+  <div class="node" data-id="activation" data-parent="neuron" data-rel="uses">
+    <span class="label">Activation</span>
+    <span class="desc">Non-linearity such as ReLU or sigmoid</span>
+  </div>
+  <div class="node" data-id="layers" data-parent="nn" data-rel="part-of">
+    <span class="label">Layers</span>
+    <span class="desc">Input, hidden, output</span>
+  </div>
+  <div class="node" data-id="training" data-parent="nn" data-rel="requires">
+    <span class="label">Training</span>
+    <span class="desc">Gradient descent + backpropagation</span>
+  </div>
+  <div class="node" data-id="loss" data-parent="training" data-rel="minimises">
+    <span class="label">Loss</span>
+    <span class="desc">Scalar measure of prediction error</span>
+  </div>
+</div>

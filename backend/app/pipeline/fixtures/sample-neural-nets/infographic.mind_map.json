@@ -1,0 +1,26 @@
+{
+  "id": "nn",
+  "label": "Neural Network",
+  "desc": "Layers of weighted units that learn from data",
+  "children": [
+    {
+      "id": "neuron",
+      "label": "Neuron",
+      "desc": "Weighted sum + bias, then activation",
+      "rel": "part-of",
+      "children": [
+        { "id": "activation", "label": "Activation", "desc": "Non-linearity such as ReLU or sigmoid", "rel": "uses", "children": [] }
+      ]
+    },
+    { "id": "layers", "label": "Layers", "desc": "Input, hidden, output", "rel": "part-of", "children": [] },
+    {
+      "id": "training",
+      "label": "Training",
+      "desc": "Gradient descent + backpropagation",
+      "rel": "requires",
+      "children": [
+        { "id": "loss", "label": "Loss", "desc": "Scalar measure of prediction error", "rel": "minimises", "children": [] }
+      ]
+    }
+  ]
+}
