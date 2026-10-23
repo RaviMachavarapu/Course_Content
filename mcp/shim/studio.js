@@ -311,7 +311,30 @@ export async function download(url) {
     if (type.startsWith("text/html")) {
       throw new StudioError("media download returned a web page, not a file (session rejected?)", { auth: true });
     }
+    const size = Number(res.headers.get("content-length"));
+    if (/\.googlevideo\.com$/.test(current.hostname) && size > 0) {
+      await res.body?.cancel();
+      return { type, data: await rangedDownload(current, headers, size) };
+    }
     return { type, data: Buffer.from(await res.arrayBuffer()) };
   }
   throw new StudioError("too many redirects downloading media");
+}
+
+const RANGE_CHUNK = 1024 * 1024;
+
+// googlevideo throttles a plain GET to playback speed (~32 KB/s: a 22 MB Audio
+// Overview took 11+ minutes), but serves byte ranges at full speed (1 MB in
+// ~0.3s, measured live 2026-10-23).
+async function rangedDownload(url, headers, size) {
+  const parts = [];
+  for (let start = 0; start < size; start += RANGE_CHUNK) {
+    const end = Math.min(start + RANGE_CHUNK, size) - 1;
+    const res = await fetch(url, { headers: { ...headers, Range: `bytes=${start}-${end}` } });
+    if (res.status !== 206) throw new StudioError(`media range download failed (HTTP ${res.status})`);
+    parts.push(Buffer.from(await res.arrayBuffer()));
+  }
+  const data = Buffer.concat(parts);
+  if (data.length !== size) throw new StudioError(`media download incomplete (${data.length} of ${size} bytes)`);
+  return data;
 }
