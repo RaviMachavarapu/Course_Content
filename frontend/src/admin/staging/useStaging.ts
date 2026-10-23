@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { stagingApi } from "./api";
+import type { OptionValues } from "../generationOptions";
 
 const PENDING = new Set(["queued", "processing", "running"]);
 
@@ -23,11 +24,25 @@ export function useRedo(moduleId: string) {
       artifactId,
       note,
       options,
+      customPrompt,
     }: {
       artifactId: string;
       note: string | null;
-      options?: Record<string, string>;
-    }) => stagingApi.redo(artifactId, note, options),
+      options?: OptionValues;
+      customPrompt?: string;
+    }) => stagingApi.redo(artifactId, note, options, customPrompt),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] }),
+  });
+}
+
+/** Outline review: feedback revises the draft outline; without, builds the deck. */
+export function useOutlineAction(moduleId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ artifactId, feedback }: { artifactId: string; feedback: string | null }) =>
+      feedback
+        ? stagingApi.outlineFeedback(artifactId, feedback)
+        : stagingApi.outlineProceed(artifactId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] }),
   });
 }

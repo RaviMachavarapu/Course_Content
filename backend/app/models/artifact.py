@@ -39,6 +39,14 @@ class Artifact(Base, TimestampMixin):
     #: format/length, infographic orientation — app/schemas/content_options.py).
     #: Forwarded verbatim to `ContentProvider.generate`'s `options` dict.
     generation_options: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    #: Admin-written focus text for this artifact. When set, it is sent to
+    #: NotebookLM *instead of* the type's Settings prompt template (owner
+    #: decision 2026-10-20); `None` means "use the template".
+    custom_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: While `status` is `outline_review`: NotebookLM's draft slide outline
+    #: ({"style": str, "slides": [str]}) and the NotebookLM artifact it belongs to.
+    outline_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    notebooklm_studio_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     module: Mapped[Module] = relationship(back_populates="artifacts")
     versions: Mapped[list[ArtifactVersion]] = relationship(

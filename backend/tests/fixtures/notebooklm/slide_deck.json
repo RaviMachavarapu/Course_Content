@@ -1,0 +1,92 @@
+[
+ "2a63c851-de66-4dd2-b1a5-04886df84bcc",
+ "The Blueprint of Thought",
+ 8,
+ [
+  [
+   [
+    "SOURCE_ID"
+   ],
+   null,
+   9
+  ]
+ ],
+ 3,
+ null,
+ null,
+ null,
+ null,
+ null,
+ [
+  1792699053,
+  488410000
+ ],
+ null,
+ null,
+ null,
+ null,
+ [
+  1792698699,
+  253243000
+ ],
+ [
+  [
+   null,
+   "en",
+   2,
+   2
+  ],
+  "The Blueprint of Thought",
+  [
+   [
+    [
+     "https://lh3.googleusercontent.com/TEST-1",
+     1376,
+     768
+    ],
+    "Title slide for \"The Blueprint of Thought: An Introduction to Artificial Intelligence (MIT 6.034)\" by Patrick Winston.",
+    "THE BLUEPRINT OF THOUGHT\n\nAn Introduction to Artificial Intelligence (MIT 6.034)\n\nPatrick Winston\n\n\n[Abstract geometric network of connected nodes and lines radiating outwards on the right side of the slide.]"
+   ],
+   [
+    [
+     "https://lh3.googleusercontent.com/TEST-2",
+     1376,
+     768
+    ],
+    "Flowchart showing how representations expose constraints, enabling algorithms to build cognitive models.",
+    "[Flowchart showing four sequential steps from left to right:]\n\n- Representations\n- [Arrow labeled \"Expose\"]\n- Constraints [Highlighted in red]\n- [Arrow labeled \"Enable\"]\n- Algorithms\n- [Arrow labeled \"To Build\"]\n- Models\n\n\n[Text box connected below Models:]\nAt MIT, we build models using differential equations, probabilities, and simulations. In this course, we build models targeted at Thinking, Perception, and Action.\n\n\nYou will get smarter because you will have better models of your own thinking."
+   ]
+  ],
+  "https://contribution.usercontent.google.com/TEST-3",
+  "https://contribution.usercontent.google.com/TEST-4"
+ ],
+ [
+  null,
+  null,
+  null,
+  null,
+  true
+ ],
+ null,
+ 1,
+ null,
+ "MTc5MjY5OTA1My00ODg0MTAwMDA=",
+ null,
+ null,
+ null,
+ null,
+ 5,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ [
+  true
+ ]
+]

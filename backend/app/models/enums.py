@@ -29,6 +29,9 @@ class ArtifactStatus(_StrEnum):
     ready = "ready"  # generated + parsed, awaiting review/publish
     error = "error"  # generation or parsing failed
     published = "published"  # visible to students (BR2/BR3)
+    #: NotebookLM drafted a slide outline and waits for the admin to refine
+    #: it or proceed ("Review slide outline"); not publishable.
+    outline_review = "outline_review"
 
 
 class ModuleStatus(_StrEnum):
@@ -77,6 +80,8 @@ class MediaFileKind(_StrEnum):
     infographic_png = "infographic_png"
     infographic_svg = "infographic_svg"
     audio_mp3 = "audio_mp3"
+    #: NotebookLM's Audio Overview download is audio/mp4 (AAC), not mp3.
+    audio_m4a = "audio_m4a"
     cover = "cover"
     hero = "hero"
 

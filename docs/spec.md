@@ -147,7 +147,13 @@ Layout per `admin_staging_review_dashboard/`.
   - **[BTN-SR5] Inspect** → `/admin/artifacts/{id}` read-only viewer.
   - Type-specific download when a version exists: **[BTN-SR9]** Audio `.mp3`,
     **[BTN-SR10]** Slides `.pptx`, **[BTN-SR11]** Infographic `.png`,
-    **[BTN-SR12]** Report `.pdf`.
+    **[BTN-SR12]** Report `.pdf`. (Audio from NotebookLM is `.m4a`.)
+  - **Outline review** (slide deck generated with *Review slide outline* on):
+    NotebookLM drafts an outline and waits. The card shows the outline,
+    a feedback box with **[BTN-SR14] Send feedback** (NotebookLM revises the
+    outline) and **[BTN-SR15] Proceed** (NotebookLM builds the deck):
+    `POST /api/admin/artifacts/{id}/outline/feedback` `{ feedback }` /
+    `POST /api/admin/artifacts/{id}/outline/proceed`. Owner decision 2026-10-22.
 - While any card is `queued`/`processing`, poll
   `GET /api/admin/modules/{id}/staging` every 2–3s; stop when all resolved.
 - Acceptance:
@@ -454,7 +460,9 @@ All requests/responses JSON unless noted. Auth via session cookie. Errors use
 | BTN-SR5 | Staging | Inspect (×6) | route to inspect |
 | BTN-SR6 | Staging | Retry (error card) | retry job |
 | BTN-SR7/8 | Redo modal | Start regeneration / Cancel | redo POST / close |
-| BTN-SR9..12 | Staging | Download mp3 / pptx / png / pdf | media stream |
+| BTN-SR9..12 | Staging | Download mp3 (m4a) / pptx / png / pdf | media stream |
+| BTN-SR14 | Staging (outline review) | Send feedback | outline feedback POST |
+| BTN-SR15 | Staging (outline review) | Proceed | outline proceed POST |
 | BTN-AI1 | Inspect | Version history | switch version preview |
 | BTN-AI2 | Inspect | Back to staging | route |
 | BTN-CE1 | Editor | Add New Video Source | scoped ingestion form |

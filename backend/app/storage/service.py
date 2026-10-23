@@ -29,6 +29,7 @@ STORAGE_EXTS: dict[MediaFileKind, str] = {
     MediaFileKind.infographic_png: "png",
     MediaFileKind.infographic_svg: "svg",
     MediaFileKind.audio_mp3: "mp3",
+    MediaFileKind.audio_m4a: "m4a",
     MediaFileKind.cover: "png",
     MediaFileKind.hero: "png",
 }

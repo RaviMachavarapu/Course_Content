@@ -2,10 +2,8 @@
 
 These exercise the provider's translation of `ContentProvider` calls into
 HTTP calls against the mcp shim, using `httpx.MockTransport` — no live MCP
-session or Google account involved. They prove the provider *shape* is
-correct; they cannot prove the upstream tool argument/response shapes
-assumed here match the real server (see `docs/spikes/O1-infographic.md` /
-`docs/spikes/O2-audio.md` for what still needs a live check).
+session or Google account involved. The shim's own request building is tested
+against the recorded web-app requests in `mcp/shim/test/`.
 """
 
 from __future__ import annotations
@@ -68,97 +66,103 @@ def test_create_notebook_and_add_source() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    ("kind", "tool"),
-    [
-        (ArtifactType.slide_deck, "slide_deck_create"),
-        (ArtifactType.flashcards, "flashcards_create"),
-        (ArtifactType.quiz, "quiz_create"),
-        (ArtifactType.report, "report_create"),
-        (ArtifactType.infographic, "infographic_create"),
-        (ArtifactType.audio_overview, "audio_overview_create"),
-    ],
-)
-def test_generate_dispatches_to_the_right_create_tool(kind: ArtifactType, tool: str) -> None:
+@pytest.mark.parametrize("kind", list(ArtifactType))
+def test_generate_posts_kind_focus_and_options_to_studio_create(kind: ArtifactType) -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        assert body["tool"] == tool
-        assert body["args"]["notebook_id"] == "nb-1"
-        assert body["args"]["focus_prompt"] == "make it good"
-        return _ok({"status": "ok", "artifact": {"artifact_id": "art-1", "type": kind.value}})
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"artifact_id": "art-1"})
 
     provider = _provider(handler)
-    job = provider.generate(NotebookRef(notebook_id="nb-1"), kind, "make it good", {})
+    job = provider.generate(NotebookRef(notebook_id="nb-1"), kind, "make it good", {"a": "b"})
     assert job == StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=kind)
+    assert seen == [
+        (
+            "/studio/create",
+            {
+                "notebook_id": "nb-1",
+                "kind": kind.value,
+                "focus_prompt": "make it good",
+                "options": {"a": "b"},
+            },
+        )
+    ]
 
 
 def test_generate_raises_when_no_artifact_id_returned() -> None:
-    provider = _provider(lambda _r: _ok({"status": "ok", "artifact": {}}))
-    with pytest.raises(ProviderError, match="did not return an artifact_id"):
+    provider = _provider(lambda _r: httpx.Response(200, json={}))
+    with pytest.raises(ProviderError, match="returned no artifact_id"):
         provider.generate(NotebookRef(notebook_id="nb-1"), ArtifactType.report, "x", {})
 
 
+def test_a_request_notebooklm_rejects_is_not_retried() -> None:
+    # The shim answers 422 when NotebookLM rejects the request itself.
+    provider = _provider(lambda _r: httpx.Response(422, json={"error": "rejected [3]"}))
+    with pytest.raises(ProviderError) as info:
+        provider.generate(NotebookRef(notebook_id="nb-1"), ArtifactType.report, "x", {})
+    assert not isinstance(info.value, TransientProviderError)
+
+
 @pytest.mark.parametrize(
-    ("status", "expected"),
+    ("code", "expected"),
     [
-        ("completed", StudioStatus.ready),
-        ("pending", StudioStatus.pending),
-        ("in_progress", StudioStatus.pending),
-        ("failed", StudioStatus.failed),
-        ("unknown", StudioStatus.failed),
+        (3, StudioStatus.ready),
+        (6, StudioStatus.awaiting_review),
+        (4, StudioStatus.failed),
+        (1, StudioStatus.pending),
+        (2, StudioStatus.pending),
+        (None, StudioStatus.pending),
     ],
 )
-def test_poll_maps_studio_status(status: str, expected: StudioStatus) -> None:
+def test_poll_maps_notebooklm_status_codes(code: int | None, expected: StudioStatus) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return _ok({"artifacts": [{"artifact_id": "art-1", "status": status}]})
+        assert request.url.path == "/studio/artifact"
+        assert dict(request.url.params) == {"notebook_id": "nb-1", "artifact_id": "art-1"}
+        return httpx.Response(200, json={"status": code, "raw": None, "html": None})
 
     provider = _provider(handler)
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.report)
     assert provider.poll(job) is expected
 
 
-def test_poll_missing_artifact_is_pending() -> None:
-    provider = _provider(lambda _r: _ok({"artifacts": []}))
-    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.report)
-    assert provider.poll(job) is StudioStatus.pending
-
-
-def test_fetch_content_carries_mind_map_tree_when_present() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        assert body == {
-            "tool": "artifact_content_get",
-            "args": {"notebook_id": "nb-1", "artifact_id": "art-1"},
-        }
-        return _ok({"artifact_id": "art-1", "html": "<div>hi</div>", "mind_map_tree": {"a": 1}})
-
-    provider = _provider(handler)
+def test_fetch_content_carries_the_artifact_row_and_html() -> None:
+    row = ["art-1", "Title", 7]
+    provider = _provider(
+        lambda _r: httpx.Response(200, json={"status": 3, "raw": row, "html": "<div>hi</div>"})
+    )
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.infographic)
     raw = provider.fetch_content(job)
     assert raw.html == "<div>hi</div>"
-    assert raw.extras == {"artifact_id": "art-1", "mind_map_tree": {"a": 1}}
+    assert raw.extras == {"artifact_id": "art-1", "source": "notebooklm", "row": row}
 
 
-def test_fetch_binary_only_calls_media_for_audio() -> None:
-    calls = []
+def test_download_returns_bytes_and_content_type() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/studio/download"
+        assert request.url.params["url"] == "https://lh3.googleusercontent.com/x"
+        return httpx.Response(200, content=b"\x89PNG", headers={"content-type": "image/png"})
+
+    data, mime = _provider(handler).download("https://lh3.googleusercontent.com/x")
+    assert (data, mime) == (b"\x89PNG", "image/png")
+
+
+@pytest.mark.parametrize("feedback", ["Fewer slides", None])
+def test_outline_action_posts_feedback_or_proceed(feedback: str | None) -> None:
+    seen: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.url.path)
-        return httpx.Response(200, content=b"id3-ish-bytes", headers={"content-type": "audio/mpeg"})
+        assert request.url.path == "/studio/outline"
+        seen.append(json.loads(request.content))
+        return httpx.Response(204)
 
-    provider = _provider(handler)
-    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.infographic)
-    assert provider.fetch_binary(job, ArtifactType.infographic) is None
-    assert calls == []  # D15: infographic image is never fetched from the MCP
-
-    audio_job = StudioJobRef(job_id="art-2", notebook_id="nb-1", kind=ArtifactType.audio_overview)
-    data = provider.fetch_binary(audio_job, ArtifactType.audio_overview)
-    assert data == b"id3-ish-bytes"
-    assert calls == ["/media"]
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    _provider(handler).outline_action(job, feedback)
+    assert seen == [{"notebook_id": "nb-1", "artifact_id": "art-1", "feedback": feedback}]
 
 
-def test_fetch_binary_missing_media_returns_none() -> None:
-    provider = _provider(lambda _r: httpx.Response(404, json={"error": "no media_url"}))
+def test_fetch_binary_is_unused_for_notebooklm() -> None:
+    provider = _provider(lambda _r: pytest.fail("no request expected"))
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.audio_overview)
     assert provider.fetch_binary(job, ArtifactType.audio_overview) is None
 

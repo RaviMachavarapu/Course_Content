@@ -23,6 +23,12 @@ from sqlalchemy import Connection, Engine, create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+# Tests must never reach live NotebookLM, even when the shell or a local
+# docker-compose.override.yml sets CONTENT_PROVIDER=notebooklm — set before any
+# app import reads the settings. (A run with the override once created ~100
+# test notebooks in the signed-in Google account, 2026-10-22.)
+os.environ["CONTENT_PROVIDER"] = "fixture"
+
 from app.api.deps import get_redis as app_get_redis
 from app.config import get_settings
 from app.db.session import get_db as app_get_db
@@ -122,7 +128,13 @@ def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
 def redis_client() -> Iterator[redis.Redis[str]]:
     """A flushed, isolated Redis DB (index 15) for the duration of one test."""
     url = os.environ.get("TEST_REDIS_URL") or get_settings().redis_url
-    client: redis.Redis[str] = redis.Redis.from_url(url, decode_responses=True, db=15)
+    # A db in the URL path (redis://host:6379/0) overrides a `db=` kwarg to
+    # from_url, which made this flush the app's real db0 (every session and
+    # rate limit) on each run. Take host/auth from the URL, force db 15.
+    base = redis.Redis.from_url(url, decode_responses=True)
+    client: redis.Redis[str] = redis.Redis(**{**base.connection_pool.connection_kwargs, "db": 15})
+    base.close()
+    assert client.connection_pool.connection_kwargs["db"] == 15
     client.flushdb()
     try:
         yield client

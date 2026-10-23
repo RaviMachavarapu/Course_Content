@@ -26,6 +26,7 @@
 import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StudioError, createArtifact, download, outlineAction } from "./studio.js";
 
 const PORT = process.env.PORT || 7332;
 const MCP_PACKAGE = process.env.NOTEBOOKLM_MCP_PACKAGE || "notebooklm-mcp-server@4.0.2";
@@ -168,6 +169,80 @@ app.get("/media", async (req, res) => {
     res.send(buf);
   } catch (err) {
     res.status(502).json({ error: String(err?.message ?? err) });
+  }
+});
+
+// -- Studio, in the web app's current request format (studio.js) -------------
+
+// 401 = the Google session needs attention; 422 = NotebookLM rejected the
+// request itself (retrying won't help); 502 = anything else (worth a retry).
+function studioFail(res, err) {
+  lastError = String(err?.message ?? err);
+  const status = err instanceof StudioError ? (err.auth ? 401 : 422) : 502;
+  res.status(status).json({ error: lastError });
+}
+
+// studio_poll's status strings → NotebookLM's codes (connector's mapping).
+const STATUS_CODES = { pending: 1, in_progress: 2, completed: 3, failed: 4 };
+
+async function sourceIds(notebookId) {
+  const nb = await callTool("notebook_get", { notebook_id: notebookId });
+  const ids = (nb.sources ?? []).map((s) => s.id).filter(Boolean);
+  if (!ids.length) throw new StudioError(`notebook ${notebookId} has no sources`);
+  return ids;
+}
+
+app.post("/studio/create", async (req, res) => {
+  const { notebook_id: notebookId, kind, focus_prompt: focus, options } = req.body ?? {};
+  try {
+    const ids = await sourceIds(notebookId);
+    const artifactId = await createArtifact(notebookId, ids, kind, focus ?? "", options ?? {});
+    lastOkAt = new Date().toISOString();
+    res.json({ artifact_id: artifactId });
+  } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+// Slide outline review: {feedback} revises the outline, no feedback builds the deck.
+app.post("/studio/outline", async (req, res) => {
+  const { notebook_id: notebookId, artifact_id: artifactId, feedback } = req.body ?? {};
+  try {
+    await outlineAction(notebookId, artifactId, feedback || null);
+    res.status(204).end();
+  } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+// Status + content of one artifact: {status, raw, html}. status is NotebookLM's
+// code (3 = completed, 6 = outline waiting for review), or null if not found.
+app.get("/studio/artifact", async (req, res) => {
+  const { notebook_id: notebookId, artifact_id: artifactId } = req.query;
+  try {
+    const data = await callTool("artifact_content_get", { notebook_id: notebookId, artifact_id: artifactId });
+    const row = Array.isArray(data?.raw) ? data.raw[0] : null;
+    let status = row ? row[4] ?? null : null;
+    if (status === null) {
+      // Flashcards/quiz come back as html with no row; studio_poll has their status.
+      const poll = await callTool("studio_poll", { notebook_id: notebookId });
+      const listed = (poll.artifacts ?? []).find((a) => a.artifact_id === artifactId);
+      status = listed ? (STATUS_CODES[listed.status] ?? null) : null;
+    }
+    res.json({ status, raw: row, html: data?.html ?? null });
+  } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+// Media behind NotebookLM URLs (slide PNG/PDF/PPTX, infographic PNG, audio).
+app.get("/studio/download", async (req, res) => {
+  try {
+    const { type, data } = await download(String(req.query.url ?? ""));
+    res.setHeader("Content-Type", type);
+    res.send(data);
+  } catch (err) {
+    studioFail(res, err);
   }
 });
 

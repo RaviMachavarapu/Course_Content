@@ -95,7 +95,10 @@ export function InspectPage(): JSX.Element {
                 <MetaRow label="Revision" value={v.revision} />
                 <MetaRow label="Created" value={new Date(v.created_at).toLocaleString()} />
                 <MetaRow label="Job id" value={v.generation_job_id ?? "—"} />
-                <MetaRow label="Prompt version" value={v.prompt_template_version ?? "—"} />
+                <MetaRow
+                  label="Prompt version"
+                  value={v.prompt_template_version ?? "Custom prompt (template replaced)"}
+                />
                 <MetaRow label="Redo note" value={v.redo_note ?? "—"} />
                 <MetaRow label="NotebookLM notebook" value={data?.notebooklm_notebook_id ?? "—"} />
                 <MetaRow label="NotebookLM artifact" value={v.notebooklm_artifact_id ?? "—"} />

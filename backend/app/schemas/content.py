@@ -6,7 +6,7 @@ them. All are strict Pydantic models so a malformed parse fails loudly.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # -- slide_deck ---------------------------------------------------------------
@@ -39,6 +39,7 @@ class QuizQuestion(BaseModel):
     options: list[str] = Field(min_length=4, max_length=4)
     correct_index: int = Field(ge=0, le=3)
     explanation: str = ""
+    hint: str | None = None
 
     @field_validator("options")
     @classmethod
@@ -68,9 +69,20 @@ class ReportContent(BaseModel):
 
 # -- infographic ---------------------------------------------------------
 class InfographicContent(BaseModel):
+    """Either NotebookLM's own image (owner decision 2026-10-22: stored as
+    `infographic_png` media, with its alt text as `caption` and its full text
+    `description`) or, for the fixture provider, a diagram we render (D15)."""
+
     caption: str = ""
-    diagram_kind: str = Field(pattern="^(mermaid|graphviz)$")
-    diagram_source: str = Field(min_length=1)
+    description: str | None = None
+    diagram_kind: str | None = Field(default=None, pattern="^(mermaid|graphviz)$")
+    diagram_source: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _diagram_fields_together(self) -> InfographicContent:
+        if (self.diagram_kind is None) != (self.diagram_source is None):
+            raise ValueError("diagram_kind and diagram_source go together")
+        return self
 
 
 # -- audio_overview ------------------------------------------------------

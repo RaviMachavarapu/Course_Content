@@ -12,7 +12,7 @@ from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
-from app.models.enums import ARTIFACT_TYPES, GenerationJobState
+from app.models.enums import ARTIFACT_TYPES, ArtifactStatus, GenerationJobState
 from app.models.generation_job import GenerationJob
 from app.models.module import Module
 from app.pipeline.preview import content_preview
@@ -20,6 +20,7 @@ from app.schemas.jobs import JobListResponse, JobOut, RecentJobOut, RecentJobsRe
 from app.schemas.staging import (
     CurrentVersionOut,
     MediaOut,
+    OutlineOut,
     StagingArtifactOut,
     StagingModuleOut,
     StagingResponse,
@@ -132,6 +133,15 @@ def module_staging(module_id: uuid.UUID, db: DbDep) -> StagingResponse:
                 current_version=current,
                 job={"state": latest_job.state if latest_job else None},
                 generation_options=artifact.generation_options,
+                custom_prompt=artifact.custom_prompt,
+                outline=(
+                    OutlineOut(
+                        style=str(artifact.outline_json.get("style") or ""),
+                        slides=[str(x) for x in artifact.outline_json.get("slides") or []],
+                    )
+                    if artifact.status is ArtifactStatus.outline_review and artifact.outline_json
+                    else None
+                ),
             )
         )
 

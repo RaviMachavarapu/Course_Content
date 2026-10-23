@@ -37,6 +37,8 @@ export function InfographicViewer({
   const content = (data.content_json ?? {}) as InfographicContent;
   const svgUrl = data.media.find((m) => m.kind === "infographic_svg")?.url;
   const pngUrl = data.media.find((m) => m.kind === "infographic_png")?.url;
+  // NotebookLM supplies its own PNG; fixture content is our rendered SVG.
+  const imageUrl = svgUrl ?? pngUrl;
 
   const toggleFullscreen = () => {
     const el = frameRef.current;
@@ -88,9 +90,9 @@ export function InfographicViewer({
         data-testid="infographic-viewport"
         className="max-h-[32rem] overflow-auto rounded-xl border border-outline-variant bg-surface-container-lowest p-6"
       >
-        {svgUrl && (
+        {imageUrl && (
           <img
-            src={svgUrl}
+            src={imageUrl}
             alt={content.caption || "Infographic"}
             data-testid="infographic-image"
             style={{ width: `${zoom * 100}%`, transition: "width 150ms" }}
