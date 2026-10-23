@@ -54,14 +54,29 @@ def generate_artifact_task(
     artifact_id: str,
     job_id: str | None = None,
     redo_note: str | None = None,
+    resume: bool = False,
 ) -> str:
     provider = get_content_provider()
+    failure: Exception | None = None
     with session_scope() as session:
-        version = run_artifact_generation(
-            session,
-            provider,
-            uuid.UUID(artifact_id),
-            job_id=uuid.UUID(job_id) if job_id else None,
-            redo_note=redo_note,
-        )
-        return str(version.id)
+        try:
+            version = run_artifact_generation(
+                session,
+                provider,
+                uuid.UUID(artifact_id),
+                job_id=uuid.UUID(job_id) if job_id else None,
+                redo_note=redo_note,
+                resume=resume,
+            )
+            # None: NotebookLM drafted a slide outline and waits for review.
+            return str(version.id) if version else "outline_review"
+        except TransientProviderError as exc:
+            if self.request.retries < _MAX_RETRIES:
+                raise  # rolled back, so the artifact stays processing until the retry
+            failure = exc
+        except Exception as exc:
+            failure = exc
+    # The orchestrator marked the artifact/job failed before raising; leaving
+    # the `with` normally commits that, instead of rolling it back and leaving
+    # the card on "Generating…" forever. Re-raise so Celery records the failure.
+    raise failure

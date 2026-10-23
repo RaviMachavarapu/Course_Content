@@ -7,13 +7,14 @@ import { StatusChip } from "../AdminStatus";
 import { ArtifactCard } from "./ArtifactCard";
 import { PublishModal } from "./PublishModal";
 import { usePublish } from "./publish";
-import { useRedo, useRetry, useStaging } from "./useStaging";
+import { useOutlineAction, useRedo, useRetry, useStaging } from "./useStaging";
 
 export function StagingPage(): JSX.Element {
   const { moduleId = "" } = useParams();
   const { data, isPending, isError, refetch } = useStaging(moduleId);
   const redo = useRedo(moduleId);
   const retry = useRetry(moduleId);
+  const outline = useOutlineAction(moduleId);
   const publish = usePublish(moduleId);
   const { toast } = useToast();
   const [publishScope, setPublishScope] = useState<"module" | "course" | null>(null);
@@ -77,11 +78,12 @@ export function StagingPage(): JSX.Element {
                 <ArtifactCard
                   key={t}
                   artifact={artifact}
-                  busy={redo.isPending || retry.isPending}
-                  onRedo={(note, options) =>
-                    redo.mutate({ artifactId: artifact.id, note, options })
+                  busy={redo.isPending || retry.isPending || outline.isPending}
+                  onRedo={(note, options, customPrompt) =>
+                    redo.mutate({ artifactId: artifact.id, note, options, customPrompt })
                   }
                   onRetry={() => retry.mutate(artifact.id)}
+                  onOutline={(feedback) => outline.mutate({ artifactId: artifact.id, feedback })}
                 />
               );
             })}

@@ -37,6 +37,8 @@ class StudioStatus(str, enum.Enum):
     pending = "pending"
     ready = "ready"
     failed = "failed"
+    #: a slide outline is drafted and waits for review ("Review slide outline")
+    awaiting_review = "awaiting_review"
 
 
 class ProviderError(Exception):
@@ -91,6 +93,14 @@ class ContentProvider(Protocol):
     def fetch_content(self, job: StudioJobRef) -> RawArtifact: ...
 
     def fetch_binary(self, job: StudioJobRef, kind: ArtifactType) -> bytes | None: ...
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        """Fetch a media URL the provider returned; (data, content type)."""
+        ...
+
+    def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
+        """Revise a drafted slide outline (feedback) or build the deck (None)."""
+        ...
 
     def health(self) -> ProviderHealth: ...
 

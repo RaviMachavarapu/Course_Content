@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/api";
 import type { ArtifactType } from "../api";
+import type { OptionValues } from "../generationOptions";
 
 export interface MediaOut {
   kind: string;
@@ -17,6 +18,11 @@ export interface CurrentVersion {
   preview: Record<string, unknown>;
 }
 
+export interface StagingOutline {
+  style: string;
+  slides: string[];
+}
+
 export interface StagingArtifact {
   id: string;
   type: ArtifactType;
@@ -24,7 +30,10 @@ export interface StagingArtifact {
   last_error: string | null;
   current_version: CurrentVersion | null;
   job: { state: string | null };
-  generation_options: Record<string, string>;
+  generation_options: OptionValues;
+  /** NotebookLM's draft slide outline while status is "outline_review". */
+  outline?: StagingOutline | null;
+  custom_prompt: string | null;
 }
 
 export interface StagingResponse {
@@ -77,11 +86,23 @@ export interface InspectResponse {
 export const stagingApi = {
   get: (moduleId: string) => apiFetch<StagingResponse>(`/api/admin/modules/${moduleId}/staging`),
 
-  redo: (artifactId: string, note: string | null, options?: Record<string, string>) =>
+  redo: (artifactId: string, note: string | null, options?: OptionValues, customPrompt?: string) =>
     apiFetch<{ job: { id: string; state: string } }>(`/api/admin/artifacts/${artifactId}/redo`, {
       method: "POST",
-      body: { note, options },
+      body: { note, options, custom_prompt: customPrompt },
     }),
+
+  outlineFeedback: (artifactId: string, feedback: string) =>
+    apiFetch<{ job: { id: string; state: string } }>(
+      `/api/admin/artifacts/${artifactId}/outline/feedback`,
+      { method: "POST", body: { feedback } },
+    ),
+
+  outlineProceed: (artifactId: string) =>
+    apiFetch<{ job: { id: string; state: string } }>(
+      `/api/admin/artifacts/${artifactId}/outline/proceed`,
+      { method: "POST" },
+    ),
 
   retry: (artifactId: string) =>
     apiFetch<{ job: { id: string; state: string } }>(`/api/admin/artifacts/${artifactId}/retry`, {

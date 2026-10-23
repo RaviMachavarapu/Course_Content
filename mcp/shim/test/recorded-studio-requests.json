@@ -1,0 +1,2341 @@
+[
+ {
+  "label": "audio-A",
+  "kind": "audio_overview",
+  "focus": "",
+  "options": {
+   "format": "deep_dive",
+   "length": "default",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    1,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    [
+     null,
+     [
+      null,
+      2,
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      null,
+      1
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "audio-B",
+  "kind": "audio_overview",
+  "focus": "test audio",
+  "options": {
+   "format": "debate",
+   "length": "short",
+   "language": "hi"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    1,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    [
+     null,
+     [
+      "test audio",
+      1,
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "hi",
+      null,
+      4
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "audio-brief",
+  "kind": "audio_overview",
+  "focus": "",
+  "options": {
+   "format": "brief",
+   "length": "default",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    1,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    [
+     null,
+     [
+      null,
+      null,
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      null,
+      2
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "audio-critique",
+  "kind": "audio_overview",
+  "focus": "",
+  "options": {
+   "format": "critique",
+   "length": "short",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    1,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    [
+     null,
+     [
+      null,
+      1,
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      null,
+      3
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "audio-long",
+  "kind": "audio_overview",
+  "focus": "",
+  "options": {
+   "format": "deep_dive",
+   "length": "long",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    1,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    [
+     null,
+     [
+      null,
+      3,
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      null,
+      1
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "slides-A",
+  "kind": "slide_deck",
+  "focus": "",
+  "options": {
+   "format": "detailed",
+   "length": "default",
+   "language": "en",
+   "review_outline": false
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    8,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      1,
+      3
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "slides-B",
+  "kind": "slide_deck",
+  "focus": "test slides",
+  "options": {
+   "format": "presenter",
+   "length": "short",
+   "language": "te",
+   "review_outline": true
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    8,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      "test slides",
+      "te",
+      2,
+      2
+     ]
+    ]
+   ],
+   null,
+   null,
+   [
+    1
+   ]
+  ]
+ },
+ {
+  "label": "report-A",
+  "kind": "report",
+  "focus": "",
+  "options": {
+   "format": "interactive",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    11,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      null,
+      "en"
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "report-B-Briefing doc",
+  "kind": "report",
+  "focus": "",
+  "options": {
+   "format": "document",
+   "template": "briefing_doc",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    2,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      "Briefing Doc",
+      "Key insights and important quotes",
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      "Create a comprehensive briefing document that synthesizes the main themes and ideas from the sources. Start with a concise Executive Summary that presents the most critical takeaways upfront. The body of the document must provide a detailed and thorough examination of the main themes, evidence, and conclusions found in the sources. This analysis should be structured logically with headings and bullet points to ensure clarity. The tone must be objective and incisive."
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "report-B-Study guide",
+  "kind": "report",
+  "focus": "",
+  "options": {
+   "format": "document",
+   "template": "study_guide",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    2,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      "Study Guide",
+      "Quiz with answer key plus glossary",
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      "You are a highly capable research assistant and tutor. Create a detailed study guide designed to review understanding of the sources. Create a quiz with ten short-answer questions (2-3 sentences each) and include a separate answer key. Suggest five essay format questions, but do not supply answers. Also conclude with a comprehensive glossary of key terms with definitions."
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "report-B-Blog post",
+  "kind": "report",
+  "focus": "",
+  "options": {
+   "format": "document",
+   "template": "blog_post",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    2,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      "Blog Post",
+      "Informational article in the style of a blog post",
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "en",
+      "Act as a thoughtful writer and synthesizer of ideas, tasked with creating an engaging and readable blog post for a popular online publishing platform known for its clean aesthetic and insightful content. Your goal is to distill the top most surprising, counter-intuitive, or impactful takeaways from the provided source materials into a compelling listicle. The writing style should be clean, accessible, and highly scannable, employing a conversational yet intelligent tone. Craft a compelling, click-worthy headline. Begin the article with a short introduction that hooks the reader by establishing a relatable problem or curiosity, then present each of the takeaway points as a distinct section with a clear, bolded subheading. Within each section, use short paragraphs to explain the concept clearly, and don't just summarize; offer a brief analysis or a reflection on why this point is so interesting or important, and if a powerful quote exists in the sources, feature it in a blockquote for emphasis. Conclude the post with a brief, forward-looking summary that leaves the reader with a final thought-provoking question or a powerful takeaway to ponder."
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "report-B-custom",
+  "kind": "report",
+  "focus": "test report",
+  "options": {
+   "format": "document",
+   "template": "custom",
+   "language": "hi"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    2,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      "Create your own",
+      "Craft reports your way by specifying structure, style, tone and more",
+      null,
+      [
+       [
+        "SOURCE_ID"
+       ]
+      ],
+      "hi",
+      "test report",
+      2
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "fc-A",
+  "kind": "flashcards",
+  "focus": "",
+  "options": {
+   "quantity": "standard",
+   "difficulty": "medium",
+   "images": "include",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    4,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      1,
+      null,
+      null,
+      "en",
+      null,
+      null,
+      [
+       2,
+       2,
+       []
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "fc-B",
+  "kind": "flashcards",
+  "focus": "test flashcards",
+  "options": {
+   "quantity": "more",
+   "difficulty": "hard",
+   "images": "text_only",
+   "language": "ta"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    4,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      1,
+      null,
+      "test flashcards",
+      "ta",
+      null,
+      null,
+      [
+       3,
+       3,
+       [
+        1
+       ]
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "fc-C",
+  "kind": "flashcards",
+  "focus": "",
+  "options": {
+   "quantity": "fewer",
+   "difficulty": "easy",
+   "images": "include",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    4,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      1,
+      null,
+      null,
+      "en",
+      null,
+      null,
+      [
+       1,
+       1,
+       []
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "quiz-A",
+  "kind": "quiz",
+  "focus": "",
+  "options": {
+   "quantity": "standard",
+   "difficulty": "medium",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    4,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      2,
+      null,
+      null,
+      "en",
+      null,
+      null,
+      null,
+      [
+       2,
+       2
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "quiz-B",
+  "kind": "quiz",
+  "focus": "test quiz",
+  "options": {
+   "quantity": "more",
+   "difficulty": "hard",
+   "language": "kn"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    4,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      2,
+      null,
+      "test quiz",
+      "kn",
+      null,
+      null,
+      null,
+      [
+       3,
+       3
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "quiz-C",
+  "kind": "quiz",
+  "focus": "",
+  "options": {
+   "quantity": "fewer",
+   "difficulty": "easy",
+   "language": "en"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    4,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     null,
+     [
+      2,
+      null,
+      null,
+      "en",
+      null,
+      null,
+      null,
+      [
+       1,
+       1
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-A",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "auto"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      1
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-B",
+  "kind": "infographic",
+  "focus": "test infographic",
+  "options": {
+   "language": "mr",
+   "orientation": "square",
+   "detail": "detailed",
+   "style": "kawaii"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      "test infographic",
+      "mr",
+      null,
+      3,
+      3,
+      10
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-C",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "portrait",
+   "detail": "concise",
+   "style": "auto"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      2,
+      1,
+      1
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Clay",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "clay"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      8
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Sketch note",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "sketch_note"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      2
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Anime",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "anime"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      9
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Editorial",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "editorial"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      5
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Instructional",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "instructional"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      6
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Bento grid",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "bento_grid"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      4
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Bricks",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "bricks"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      7
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Scientific",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "scientific"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      11
+     ]
+    ]
+   ]
+  ]
+ },
+ {
+  "label": "ig-style-Professional",
+  "kind": "infographic",
+  "focus": "",
+  "options": {
+   "language": "en",
+   "orientation": "landscape",
+   "detail": "standard",
+   "style": "professional"
+  },
+  "expected": [
+   [
+    2,
+    null,
+    null,
+    [
+     1,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     [
+      1
+     ]
+    ],
+    [
+     [
+      1,
+      4,
+      8,
+      10,
+      14,
+      2,
+      3,
+      6
+     ]
+    ]
+   ],
+   "NOTEBOOK_ID",
+   [
+    null,
+    null,
+    7,
+    [
+     [
+      [
+       "SOURCE_ID"
+      ]
+     ]
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+     [
+      null,
+      "en",
+      null,
+      1,
+      2,
+      3
+     ]
+    ]
+   ]
+  ]
+ }
+]

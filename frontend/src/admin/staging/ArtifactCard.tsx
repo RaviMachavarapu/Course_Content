@@ -2,9 +2,11 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Card, CardBody, Chip, Icon } from "@/components";
 import { ARTIFACT_LABELS, type ArtifactType } from "../api";
-import { toChipStatus } from "../statusMap";
+import { STATUS_LABELS, toChipStatus } from "../statusMap";
 import type { StagingArtifact } from "./api";
+import { OutlineReview } from "./OutlineReview";
 import { RedoModal } from "./RedoModal";
+import type { OptionValues } from "../generationOptions";
 
 const ICON: Record<ArtifactType, string> = {
   slide_deck: "slideshow",
@@ -17,6 +19,7 @@ const ICON: Record<ArtifactType, string> = {
 
 const DOWNLOAD: Partial<Record<string, { label: string; testid: string }>> = {
   audio_mp3: { label: ".mp3", testid: "btn-sr9" },
+  audio_m4a: { label: ".m4a", testid: "btn-sr9" },
   pptx: { label: ".pptx", testid: "btn-sr10" },
   infographic_png: { label: ".png", testid: "btn-sr11" },
   report_pdf: { label: ".pdf", testid: "btn-sr12" },
@@ -37,7 +40,9 @@ function previewText(type: ArtifactType, p: Record<string, unknown>): string {
     case "report":
       return `${n(p.read_minutes)} min read · ${n(p.section_count)} sections`;
     case "infographic":
-      return `${s(p.diagram_kind, "diagram")} · ${n(p.line_count)} lines`;
+      return p.image
+        ? "NotebookLM image"
+        : `${s(p.diagram_kind, "diagram")} · ${n(p.line_count)} lines`;
     case "audio_overview": {
       const secs = typeof p.duration_seconds === "number" ? p.duration_seconds : 0;
       return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
@@ -48,11 +53,12 @@ function previewText(type: ArtifactType, p: Record<string, unknown>): string {
 interface Props {
   artifact: StagingArtifact;
   busy: boolean;
-  onRedo: (note: string | null, options: Record<string, string>) => void;
+  onRedo: (note: string | null, options: OptionValues, customPrompt: string) => void;
   onRetry: () => void;
+  onOutline: (feedback: string | null) => void;
 }
 
-export function ArtifactCard({ artifact, busy, onRedo, onRetry }: Props): JSX.Element {
+export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Props): JSX.Element {
   const [modalOpen, setModalOpen] = useState(false);
   const label = ARTIFACT_LABELS[artifact.type];
   const isGenerating = ["queued", "processing", "running"].includes(artifact.status);
@@ -73,7 +79,9 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry }: Props): JSX.El
               Generating…
             </span>
           ) : (
-            <Chip status={toChipStatus(artifact.status)} />
+            <Chip status={toChipStatus(artifact.status)}>
+              {STATUS_LABELS[artifact.status] ?? undefined}
+            </Chip>
           )}
         </div>
 
@@ -81,6 +89,13 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry }: Props): JSX.El
           <div className="rounded-lg bg-error-container/40 px-3 py-2 text-label-sm text-on-error-container">
             {artifact.last_error ?? "Generation failed."}
           </div>
+        ) : artifact.status === "outline_review" && artifact.outline ? (
+          <OutlineReview
+            outline={artifact.outline}
+            busy={busy}
+            onFeedback={(text) => onOutline(text)}
+            onProceed={() => onOutline(null)}
+          />
         ) : (
           <p className="text-body-md text-on-surface-variant">
             {cv ? previewText(artifact.type, cv.preview) : "Not generated yet."}
@@ -145,10 +160,11 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry }: Props): JSX.El
         typeLabel={label}
         pending={busy}
         initialOptions={artifact.generation_options}
+        initialPrompt={artifact.custom_prompt ?? ""}
         onCancel={() => setModalOpen(false)}
-        onStart={(note, options) => {
+        onStart={(note, options, customPrompt) => {
           setModalOpen(false);
-          onRedo(note, options);
+          onRedo(note, options, customPrompt);
         }}
       />
     </Card>

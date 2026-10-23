@@ -101,16 +101,20 @@ export function ContentView({
     return (
       <div className="flex flex-col gap-2">
         <p className="text-body-md text-on-surface-variant">{str(c.caption)}</p>
-        <pre className="overflow-x-auto rounded-lg bg-surface-container p-4 text-label-sm">
-          {str(c.diagram_source)}
-        </pre>
+        {c.diagram_source ? (
+          <pre className="overflow-x-auto rounded-lg bg-surface-container p-4 text-label-sm">
+            {str(c.diagram_source)}
+          </pre>
+        ) : (
+          <p className="whitespace-pre-line text-body-md">{str(c.description)}</p>
+        )}
       </div>
     );
   }
 
   // audio_overview
   const transcript = (c.transcript ?? []) as { t: number; text: string }[];
-  const mp3 = version.media.find((m) => m.kind === "audio_mp3");
+  const mp3 = version.media.find((m) => m.kind === "audio_mp3" || m.kind === "audio_m4a");
   return (
     <div className="flex flex-col gap-3">
       {mp3 && <audio controls src={mp3.url} className="w-full" />}

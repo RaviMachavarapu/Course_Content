@@ -25,10 +25,12 @@ def content_preview(
                 "section_count": len(content_json.get("sections", [])),
             }
         case ArtifactType.infographic:
-            src = content_json.get("diagram_source", "")
+            src = content_json.get("diagram_source") or ""
+            if not src:  # NotebookLM's own image
+                return {"image": True, "caption": content_json.get("caption") or ""}
             return {
                 "diagram_kind": content_json.get("diagram_kind"),
-                "line_count": src.count("\n") + 1 if src else 0,
+                "line_count": src.count("\n") + 1,
             }
         case ArtifactType.audio_overview:
             return {

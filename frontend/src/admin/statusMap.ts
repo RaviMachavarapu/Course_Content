@@ -21,6 +21,7 @@ export function toChipStatus(status: string): ChipStatus {
 }
 
 export const STATUS_LABELS: Record<string, string> = {
+  outline_review: "Outline review",
   pending_review: "Pending Review",
   partially_published: "Partially Published",
   draft: "Draft",

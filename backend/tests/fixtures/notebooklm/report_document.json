@@ -1,0 +1,3562 @@
+[
+ "bc83f439-04e3-4593-96c6-c035738faec4",
+ "Briefing Document: MIT 6034 Artificial Intelligence Scope, Theory, and Historical Evolution",
+ 2,
+ [
+  [
+   [
+    "SOURCE_ID"
+   ],
+   null,
+   9
+  ]
+ ],
+ 3,
+ null,
+ null,
+ [
+  "# Briefing Document: MIT 6034 Artificial Intelligence Scope, Theory, and Historical Evolution\n\n## Executive Summary\n\nArtificial Intelligence (AI) at MIT is approached not merely as a subfield of computer science, but as a discipline centered on model-making, representation, and constraint-based problem solving. Delivered through the foundational framework of MIT's Course 6034 by Professor Patrick Winston, this briefing synthesizes the core definitions, theoretical methods, historical epochs, cognitive insights, and operational structure of AI study.\n\nThe primary objective of AI divides into two motivations: an **engineering goal** to build smarter software tools and an **artistic/scientific goal** to formulate a computational account of human intelligence. A central premise of the course is that intelligence relies on representations that make constraints explicit, enabling algorithms to operate on models of thinking, perception, and action. Furthermore, human intelligence is distinguished from other species by a unique evolutionary breakthrough occurring roughly 50,000 years ago: the recursive capacity to combine concepts without limit via language, enabling storytelling and internal visual simulation.\n\n---\n\n## 1. Theoretical Foundations and Definition of AI\n\n### The Incremental Definition of Artificial Intelligence\nA comprehensive definition of Artificial Intelligence requires a progressive, four-stage build-up that moves beyond philosophical abstractions into an actionable engineering discipline:\n\n1. **Thinking, Perception, and Action:** At its broadest, AI concerns computational processes related to thinking, perceiving, and acting in an environment.\n2. **Model-Building:** In alignment with MIT's core methodology, AI relies on creating *models* targeted at thinking, perception, and action. Models allow engineers to explain the past, predict the future, understand complex domains, and control systems.\n3. **Representations:** Models cannot exist without appropriate representations. AI is fundamentally about representations that support model-making to facilitate the understanding of cognitive and physical processes.\n4. **Constraints and Algorithms:** The formal, complete definition of AI is:\n   > **Artificial Intelligence is about algorithms enabled by constraints exposed by representations that model targeted thinking, perception, and action.**\n\n```\n[Representations]  ──(Expose)──>  [Constraints]  ──(Enable)──>  [Algorithms/Methods]  ──(Model)──>  [Thinking, Perception & Action]\n```\n\n### The Critical Role of Representation\nThe choice of representation determines the tractability of a problem. A superior representation exposes underlying constraints, rendering complex problems straightforward.\n\n* **Physical Simulation Example (The Gyroscope Problem):** Mechanical engineers often struggle to predict the motion of a spinning bicycle wheel under force because they rely on abstract vector mathematics (e.g., the \"right-hand screw rule,\" which yields correct answers only ~50% of the time due to conceptual confusion). By changing the representation—focusing on the linear momentum of a single localized piece of the wheel (marked via duct tape)—the resultant movement becomes immediately obvious.\n* **Combinatorial State Space Example (Farmer, Fox, Goose, and Grain):** A traditional puzzle involves a farmer transporting a fox, goose, and grain across a river with a boat that carries only himself and one item. \n  * Total potential positions for 4 entities across 2 riverbanks equal $2^4 = 16$ states.\n  * Drawing a explicit state graph exposes valid versus invalid constraints (eliminating states where entities get eaten).\n  * The resulting state graph clearly exposes exactly **two valid solutions**, transforming a confusing puzzle into an explicit search path.\n\n---\n",
+  [
+   "Briefing Doc",
+   "Key insights and important quotes",
+   null,
+   [
+    [
+     "SOURCE_ID"
+    ]
+   ],
+   "en",
+   "Create a comprehensive briefing document that synthesizes the main themes and ideas from the sources. Start with a concise Executive Summary that presents the most critical takeaways upfront. The body of the document must provide a detailed and thorough examination of the main themes, evidence, and conclusions found in the sources. This analysis should be structured logically with headings and bullet points to ensure clarity. The tone must be objective and incisive.",
+   null,
+   true
+  ],
+  [
+   [
+    [
+     [
+      0,
+      91,
+      [
+       [
+        [
+         0,
+         91,
+         [
+          "Briefing Document: MIT 6034 Artificial Intelligence Scope, Theory, and Historical Evolution"
+         ]
+        ]
+       ],
+       [
+        null,
+        4
+       ]
+      ]
+     ],
+     [
+      91,
+      108,
+      [
+       [
+        [
+         91,
+         108,
+         [
+          "Executive Summary"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      108,
+      546,
+      [
+       [
+        [
+         108,
+         546,
+         [
+          "Artificial Intelligence (AI) at MIT is approached not merely as a subfield of computer science, but as a discipline centered on model-making, representation, and constraint-based problem solving. Delivered through the foundational framework of MIT's Course 6034 by Professor Patrick Winston, this briefing synthesizes the core definitions, theoretical methods, historical epochs, cognitive insights, and operational structure of AI study."
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      546,
+      1203,
+      [
+       [
+        [
+         546,
+         607,
+         [
+          "The primary objective of AI divides into two motivations: an "
+         ]
+        ],
+        [
+         607,
+         623,
+         [
+          "engineering goal",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         623,
+         663,
+         [
+          " to build smarter software tools and an "
+         ]
+        ],
+        [
+         663,
+         687,
+         [
+          "artistic/scientific goal",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         687,
+         1203,
+         [
+          " to formulate a computational account of human intelligence. A central premise of the course is that intelligence relies on representations that make constraints explicit, enabling algorithms to operate on models of thinking, perception, and action. Furthermore, human intelligence is distinguished from other species by a unique evolutionary breakthrough occurring roughly 50,000 years ago: the recursive capacity to combine concepts without limit via language, enabling storytelling and internal visual simulation."
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      1203,
+      1204,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+     ],
+     [
+      1204,
+      1251,
+      [
+       [
+        [
+         1204,
+         1251,
+         [
+          "1. Theoretical Foundations and Definition of AI"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      1251,
+      1304,
+      [
+       [
+        [
+         1251,
+         1304,
+         [
+          "The Incremental Definition of Artificial Intelligence"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      1304,
+      1489,
+      [
+       [
+        [
+         1304,
+         1489,
+         [
+          "A comprehensive definition of Artificial Intelligence requires a progressive, four-stage build-up that moves beyond philosophical abstractions into an actionable engineering discipline:"
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      1489,
+      1638,
+      [
+       [
+        [
+         1489,
+         1522,
+         [
+          "Thinking, Perception, and Action:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         1522,
+         1638,
+         [
+          " At its broadest, AI concerns computational processes related to thinking, perceiving, and acting in an environment."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "1.",
+         "102": 2,
+         "103": 1,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      1638,
+      1883,
+      [
+       [
+        [
+         1638,
+         1653,
+         [
+          "Model-Building:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         1653,
+         1718,
+         [
+          " In alignment with MIT's core methodology, AI relies on creating "
+         ]
+        ],
+        [
+         1718,
+         1724,
+         [
+          "models",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         1724,
+         1883,
+         [
+          " targeted at thinking, perception, and action. Models allow engineers to explain the past, predict the future, understand complex domains, and control systems."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "2.",
+         "102": 2,
+         "103": 2,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      1883,
+      2093,
+      [
+       [
+        [
+         1883,
+         1899,
+         [
+          "Representations:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         1899,
+         2093,
+         [
+          " Models cannot exist without appropriate representations. AI is fundamentally about representations that support model-making to facilitate the understanding of cognitive and physical processes."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "3.",
+         "102": 2,
+         "103": 3,
+         "104": 3
+        }
+       ]
+      ]
+     ],
+     [
+      2093,
+      2162,
+      [
+       [
+        [
+         2093,
+         2120,
+         [
+          "Constraints and Algorithms:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         2120,
+         2162,
+         [
+          " The formal, complete definition of AI is:"
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "4.",
+         "102": 2,
+         "103": 4,
+         "104": 4
+        }
+       ]
+      ]
+     ],
+     [
+      2162,
+      2309,
+      [
+       [
+        [
+         2162,
+         2309,
+         [
+          "Artificial Intelligence is about algorithms enabled by constraints exposed by representations that model targeted thinking, perception, and action.",
+          [
+           true
+          ]
+         ]
+        ]
+       ],
+       [
+        null,
+        null,
+        true
+       ]
+      ]
+     ],
+     [
+      2309,
+      2441,
+      null,
+      null,
+      null,
+      null,
+      [
+       "[Representations]  ──(Expose)──>  [Constraints]  ──(Enable)──>  [Algorithms/Methods]  ──(Model)──>  [Thinking, Perception & Action]\n",
+       ""
+      ]
+     ],
+     [
+      2441,
+      2476,
+      [
+       [
+        [
+         2441,
+         2476,
+         [
+          "The Critical Role of Representation"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      2476,
+      2648,
+      [
+       [
+        [
+         2476,
+         2648,
+         [
+          "The choice of representation determines the tractability of a problem. A superior representation exposes underlying constraints, rendering complex problems straightforward."
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      2648,
+      3143,
+      [
+       [
+        [
+         2648,
+         2700,
+         [
+          "Physical Simulation Example (The Gyroscope Problem):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         2700,
+         3143,
+         [
+          " Mechanical engineers often struggle to predict the motion of a spinning bicycle wheel under force because they rely on abstract vector mathematics (e.g., the \"right-hand screw rule,\" which yields correct answers only ~50% of the time due to conceptual confusion). By changing the representation—focusing on the linear momentum of a single localized piece of the wheel (marked via duct tape)—the resultant movement becomes immediately obvious."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      3143,
+      3352,
+      [
+       [
+        [
+         3143,
+         3209,
+         [
+          "Combinatorial State Space Example (Farmer, Fox, Goose, and Grain):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         3209,
+         3352,
+         [
+          " A traditional puzzle involves a farmer transporting a fox, goose, and grain across a river with a boat that carries only himself and one item."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      3352,
+      3435,
+      [
+       [
+        [
+         3352,
+         3419,
+         [
+          "Total potential positions for 4 entities across 2 riverbanks equal "
+         ]
+        ],
+        [
+         3419,
+         3427,
+         [
+          "2^4 = 16",
+          [
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           1
+          ]
+         ]
+        ],
+        [
+         3427,
+         3435,
+         [
+          " states."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      3435,
+      3553,
+      [
+       [
+        [
+         3435,
+         3553,
+         [
+          "Drawing a explicit state graph exposes valid versus invalid constraints (eliminating states where entities get eaten)."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      3553,
+      3685,
+      [
+       [
+        [
+         3553,
+         3603,
+         [
+          "The resulting state graph clearly exposes exactly "
+         ]
+        ],
+        [
+         3603,
+         3622,
+         [
+          "two valid solutions",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         3622,
+         3685,
+         [
+          ", transforming a confusing puzzle into an explicit search path."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 3,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      3685,
+      3686,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+     ],
+     [
+      3686,
+      3737,
+      [
+       [
+        [
+         3686,
+         3737,
+         [
+          "2. Problem-Solving Methods and Cognitive Principles"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      3737,
+      3765,
+      [
+       [
+        [
+         3737,
+         3765,
+         [
+          "The Generate and Test Method"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      3765,
+      3843,
+      [
+       [
+        [
+         3765,
+         3825,
+         [
+          "One of the most fundamental AI problem-solving paradigms is "
+         ]
+        ],
+        [
+         3825,
+         3842,
+         [
+          "Generate and Test",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         3842,
+         3843,
+         [
+          "."
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      3843,
+      4001,
+      null,
+      null,
+      null,
+      null,
+      [
+       "[Generator] ──(Possible Solutions)──> [Test Box] ──┬──> [Failures (Majority)]\n                                                  └──> [Successes (Select Few)]\n",
+       ""
+      ]
+     ],
+     [
+      4001,
+      4279,
+      [
+       [
+        [
+         4001,
+         4011,
+         [
+          "Mechanism:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         4011,
+         4220,
+         [
+          " A generator yields potential solutions, which pass into a testing apparatus. The test box filters out failures and yields valid successes (e.g., identifying a tree leaf by systematically turning pages in the "
+         ]
+        ],
+        [
+         4220,
+         4247,
+         [
+          "Audubon Society Field Guide",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         4247,
+         4279,
+         [
+          " until a visual match is found)."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      4279,
+      4309,
+      [
+       [
+        [
+         4279,
+         4309,
+         [
+          "Properties of Good Generators:",
+          [
+           true
+          ]
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      4309,
+      4388,
+      [
+       [
+        [
+         4309,
+         4323,
+         [
+          "Non-redundant:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         4323,
+         4388,
+         [
+          " They must never propose the exact same candidate solution twice."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "1.",
+         "102": 2,
+         "103": 1,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      4388,
+      4501,
+      [
+       [
+        [
+         4388,
+         4399,
+         [
+          "Informable:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         4399,
+         4501,
+         [
+          " They must absorb domain constraints (e.g., \"This is a deciduous leaf, so skip all conifer sections\")."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "2.",
+         "102": 2,
+         "103": 2,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      4501,
+      4541,
+      [
+       [
+        [
+         4501,
+         4541,
+         [
+          "Key Cognitive and Pedagogical Principles"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      4541,
+      4827,
+      [
+       [
+        [
+         4541,
+         4571,
+         [
+          "The Rumpelstiltskin Principle:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         4571,
+         4572,
+         [
+          " "
+         ]
+        ],
+        [
+         4572,
+         4624,
+         [
+          "Once you can name something, you gain power over it.",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         4624,
+         4827,
+         [
+          " Assigning explicit symbolic labels to concepts (e.g., naming \"Generate and Test,\" or naming an \"aglet\"—the tip of a shoelace) provides a structural framework to store, discuss, and manipulate knowledge."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      4827,
+      5147,
+      [
+       [
+        [
+         4827,
+         4864,
+         [
+          "The \"Simple vs. Trivial\" Distinction:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         4864,
+         5147,
+         [
+          " The term \"trivial\" should be purged from technical discourse. While \"trivial\" implies lack of worth, \"simple\" ideas are frequently the most powerful. Gratuitously complicated mathematics does not equal superior intelligence; simple representations are often the most transformative."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      5147,
+      5274,
+      [
+       [
+        [
+         5147,
+         5179,
+         [
+          "Perceptual-Language Integration:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         5179,
+         5274,
+         [
+          " Human problem-solving relies on dynamic loops between symbolic language and visual perception."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 3,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      5274,
+      5548,
+      [
+       [
+        [
+         5274,
+         5307,
+         [
+          "The Africa Equator Demonstration:",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         5307,
+         5535,
+         [
+          " When asked how many African countries the Equator crosses, an individual's symbolic language system commands their visual system to mentally scan a visual map, execute a visual count along the line, and report back the number ("
+         ]
+        ],
+        [
+         5535,
+         5546,
+         [
+          "6 countries",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         5546,
+         5548,
+         [
+          ")."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      5548,
+      5662,
+      [
+       [
+        [
+         5548,
+         5662,
+         [
+          "Understanding this interaction between language and visual perception is essential to fully decoding intelligence."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      5662,
+      5663,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+     ],
+     [
+      5663,
+      5713,
+      [
+       [
+        [
+         5663,
+         5713,
+         [
+          "3. Dual Motivations: Engineering vs. Scientific AI"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      5713,
+      5800,
+      [
+       [
+        [
+         5713,
+         5800,
+         [
+          "AI research operates under two primary motivations depending on the researcher's focus:"
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      5800,
+      6290,
+      null,
+      null,
+      [
+       4,
+       3,
+       [
+        [
+         5800,
+         5834,
+         [
+          [
+           5800,
+           5807,
+           [
+            [
+             5800,
+             5807,
+             [
+              [
+               [
+                5800,
+                5807,
+                [
+                 "Feature"
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           5807,
+           5821,
+           [
+            [
+             5807,
+             5821,
+             [
+              [
+               [
+                5807,
+                5821,
+                [
+                 "Engineering AI"
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           5821,
+           5834,
+           [
+            [
+             5821,
+             5834,
+             [
+              [
+               [
+                5821,
+                5834,
+                [
+                 "Scientific AI"
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ]
+         ]
+        ],
+        [
+         5834,
+         5975,
+         [
+          [
+           5834,
+           5846,
+           [
+            [
+             5834,
+             5846,
+             [
+              [
+               [
+                5834,
+                5846,
+                [
+                 "Primary Goal",
+                 [
+                  true
+                 ]
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           5846,
+           5909,
+           [
+            [
+             5846,
+             5909,
+             [
+              [
+               [
+                5846,
+                5909,
+                [
+                 "Building smarter, highly capable software programs and systems."
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           5909,
+           5975,
+           [
+            [
+             5909,
+             5975,
+             [
+              [
+               [
+                5909,
+                5975,
+                [
+                 "Formulating a precise computational account of human intelligence."
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ]
+         ]
+        ],
+        [
+         5975,
+         6135,
+         [
+          [
+           5975,
+           5986,
+           [
+            [
+             5975,
+             5986,
+             [
+              [
+               [
+                5975,
+                5986,
+                [
+                 "Methodology",
+                 [
+                  true
+                 ]
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           5986,
+           6061,
+           [
+            [
+             5986,
+             6061,
+             [
+              [
+               [
+                5986,
+                6061,
+                [
+                 "Assembling a practical toolkit of representations, algorithms, and methods."
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           6061,
+           6135,
+           [
+            [
+             6061,
+             6135,
+             [
+              [
+               [
+                6061,
+                6135,
+                [
+                 "Analyzing biological, evolutionary, and psychological cognitive processes."
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ]
+         ]
+        ],
+        [
+         6135,
+         6290,
+         [
+          [
+           6135,
+           6149,
+           [
+            [
+             6135,
+             6149,
+             [
+              [
+               [
+                6135,
+                6149,
+                [
+                 "Success Metric",
+                 [
+                  true
+                 ]
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           6149,
+           6222,
+           [
+            [
+             6149,
+             6222,
+             [
+              [
+               [
+                6149,
+                6222,
+                [
+                 "Operational efficiency, system reliability, and performance optimization."
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ],
+          [
+           6222,
+           6290,
+           [
+            [
+             6222,
+             6290,
+             [
+              [
+               [
+                6222,
+                6290,
+                [
+                 "Explanatory power regarding human cognitive uniqueness and behavior."
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      6290,
+      6291,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+     ],
+     [
+      6291,
+      6341,
+      [
+       [
+        [
+         6291,
+         6341,
+         [
+          "4. Historical Evolution of Artificial Intelligence"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      6341,
+      6492,
+      [
+       [
+        [
+         6341,
+         6492,
+         [
+          "The history of AI can be organized into distinct historical epochs, progressing from early philosophical speculation to modern integrated loop systems:"
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      6492,
+      6667,
+      null,
+      null,
+      null,
+      null,
+      [
+       "[Origin & Speculation] ──> [The Dawn Age] ──> [The Bulldozer Age] ──> [Age of the Right Way]\n (1842 - 1950s)             (1960s - 1980s)     (1990s - 2000s)         (Present)\n",
+       ""
+      ]
+     ],
+     [
+      6667,
+      6694,
+      [
+       [
+        [
+         6667,
+         6694,
+         [
+          "Detailed Timeline of Epochs"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      6694,
+      6736,
+      [
+       [
+        [
+         6694,
+         6736,
+         [
+          "1. Origin and Speculation Era (1842–1950s)"
+         ]
+        ]
+       ],
+       [
+        null,
+        7
+       ]
+      ]
+     ],
+     [
+      6736,
+      6849,
+      [
+       [
+        [
+         6736,
+         6757,
+         [
+          "1842 (Lady Lovelace):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         6757,
+         6849,
+         [
+          " The world's first programmer anticipated debates on machine cognition. She famously stated:"
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      6849,
+      6969,
+      [
+       [
+        [
+         6849,
+         6969,
+         [
+          "\"The analytical engine has no pretensions to originate anything. It can do whatever we know how to order it to perform.\"",
+          [
+           null,
+           true
+          ]
+         ]
+        ]
+       ],
+       [
+        null,
+        null,
+        true
+       ]
+      ]
+     ],
+     [
+      6969,
+      7121,
+      [
+       [
+        [
+         6969,
+         6988,
+         [
+          "1950 (Alan Turing):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         6988,
+         7033,
+         [
+          " Published his seminal paper introducing the "
+         ]
+        ],
+        [
+         7033,
+         7044,
+         [
+          "Turing Test",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         7044,
+         7121,
+         [
+          ". (Turing previously broke the German Enigma/Ultra Code during World War II)."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      7121,
+      7156,
+      [
+       [
+        [
+         7121,
+         7156,
+         [
+          "2. The Dawn Age of AI (1960s–1980s)"
+         ]
+        ]
+       ],
+       [
+        null,
+        7
+       ]
+      ]
+     ],
+     [
+      7156,
+      7257,
+      [
+       [
+        [
+         7156,
+         7177,
+         [
+          "1960 (Marvin Minsky):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         7177,
+         7188,
+         [
+          " Published "
+         ]
+        ],
+        [
+         7188,
+         7227,
+         [
+          "\"Steps Toward Artificial Intelligence,\"",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         7227,
+         7257,
+         [
+          " launching modern AI research."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      7257,
+      7471,
+      [
+       [
+        [
+         7257,
+         7291,
+         [
+          "Symbolic Integration (Jim Slagle):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         7291,
+         7471,
+         [
+          " A program created by Slagle (a nearly blind graduate student) performed symbolic integration calculus at high school/freshman college levels, sparking widespread initial optimism."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      7471,
+      7646,
+      [
+       [
+        [
+         7471,
+         7514,
+         [
+          "Early Natural Language & Geometric Analogy:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         7514,
+         7563,
+         [
+          " Development of conversational pattern matching ("
+         ]
+        ],
+        [
+         7563,
+         7568,
+         [
+          "ELIZA",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         7568,
+         7599,
+         [
+          ") and spatial problem solving ("
+         ]
+        ],
+        [
+         7599,
+         7616,
+         [
+          "Geometric Analogy",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         7616,
+         7634,
+         [
+          " programs solving "
+         ]
+        ],
+        [
+         7634,
+         7644,
+         [
+          "A:B :: C:?",
+          [
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           1
+          ]
+         ]
+        ],
+        [
+         7644,
+         7646,
+         [
+          ")."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 3,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      7646,
+      7906,
+      [
+       [
+        [
+         7646,
+         7689,
+         [
+          "Constraint-Based Vision & Concept Learning:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         7689,
+         7906,
+         [
+          " Programs capable of identifying shapes/3D geometry from line drawings and learning structural concepts (e.g., defining an \"arch\" requiring non-touching side pillars and a top cap) from a small set of visual examples."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 4,
+         "104": 3
+        }
+       ]
+      ]
+     ],
+     [
+      7906,
+      7948,
+      [
+       [
+        [
+         7906,
+         7948,
+         [
+          "Rule-Based Expert Systems (Late Dawn Age):",
+          [
+           true
+          ]
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 5,
+         "104": 4
+        }
+       ]
+      ]
+     ],
+     [
+      7948,
+      8045,
+      [
+       [
+        [
+         7948,
+         7965,
+         [
+          "MYCIN (Stanford):",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         7965,
+         8045,
+         [
+          " Diagnosed bacterial blood infections better than general medical practitioners."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      8045,
+      8257,
+      [
+       [
+        [
+         8045,
+         8063,
+         [
+          "Commercial Impact:",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         8063,
+         8228,
+         [
+          " expert systems launched an entire industry. For example, Delta Airlines uses an airport expert system in Atlanta to park aircraft efficiently, saving approximately "
+         ]
+        ],
+        [
+         8228,
+         8256,
+         [
+          "$500,000 per day in jet fuel",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         8256,
+         8257,
+         [
+          "."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      8257,
+      8291,
+      [
+       [
+        [
+         8257,
+         8291,
+         [
+          "3. The Bulldozer Age (1990s–2000s)"
+         ]
+        ]
+       ],
+       [
+        null,
+        7
+       ]
+      ]
+     ],
+     [
+      8291,
+      8455,
+      [
+       [
+        [
+         8291,
+         8455,
+         [
+          "Characterized by massive increases in raw computational power. Researchers realized that high-speed processing could frequently substitute for human-like reasoning."
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      8455,
+      8707,
+      [
+       [
+        [
+         8455,
+         8465,
+         [
+          "Deep Blue:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         8465,
+         8707,
+         [
+          " IBM's chess computer defeated the world chess champion by processing vast arrays of move trees through brute-force computation (\"processing data like a bulldozer processes gravel\") rather than mimicking a human grandmaster's intuitive style."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      8707,
+      8748,
+      [
+       [
+        [
+         8707,
+         8748,
+         [
+          "4. The Age of the Right Way (Present Era)"
+         ]
+        ]
+       ],
+       [
+        null,
+        7
+       ]
+      ]
+     ],
+     [
+      8748,
+      8908,
+      [
+       [
+        [
+         8748,
+         8908,
+         [
+          "Focuses on combining thinking, perception, and action into continuous feedback loops. Systems in this era use multimodal internal imagination to solve problems:"
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      8908,
+      9109,
+      [
+       [
+        [
+         8908,
+         8937,
+         [
+          "Multimodal Mental Simulation:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         8937,
+         9109,
+         [
+          " Advanced programs construct imagined 3D environments from text commands (e.g., \"a ball falls into a bowl,\" \"a man runs into a woman,\" \"a man gives a ball to another man\")."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      9109,
+      9356,
+      [
+       [
+        [
+         9109,
+         9134,
+         [
+          "Perceptual Interrogation:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         9134,
+         9321,
+         [
+          " The program then runs visual inspection tools over its own internally generated visual simulations to answer complex observational questions (e.g., verifying if a recipient successfully "
+         ]
+        ],
+        [
+         9321,
+         9326,
+         [
+          "takes",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         9326,
+         9343,
+         [
+          " a ball during a "
+         ]
+        ],
+        [
+         9343,
+         9347,
+         [
+          "give",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         9347,
+         9356,
+         [
+          " action)."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      9356,
+      9357,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+     ],
+     [
+      9357,
+      9413,
+      [
+       [
+        [
+         9357,
+         9413,
+         [
+          "5. Human Cognitive Evolution and the Language Hypothesis"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      9413,
+      9634,
+      [
+       [
+        [
+         9413,
+         9634,
+         [
+          "To explain why humans differ fundamentally from genetically close species like chimpanzees (with whom humans share approximately 94% of DNA), AI scientists turn to paleoanthropology, cognitive psychology, and linguistics."
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      9634,
+      9668,
+      [
+       [
+        [
+         9634,
+         9668,
+         [
+          "The 50,000-Year Evolutionary Event"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      9668,
+      9828,
+      [
+       [
+        [
+         9668,
+         9689,
+         [
+          "Anatomical Emergence:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         9689,
+         9828,
+         [
+          " Modern human anatomy emerged roughly 200,000 years ago. For the first 150,000 years, human cultural progress remained relatively stagnant."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      9828,
+      10076,
+      [
+       [
+        [
+         9828,
+         9851,
+         [
+          "The Genetic Bottleneck:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         9851,
+         10076,
+         [
+          " Shortly before 50,000 years ago, the human population experienced a sharp bottleneck, \"necking down\" to a few thousand or hundred individuals. This genetic bottleneck allowed an accidental evolutionary mutation to take root."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      10076,
+      10151,
+      [
+       [
+        [
+         10076,
+         10119,
+         [
+          "The Chomsky Concept-Combination Hypothesis:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         10119,
+         10151,
+         [
+          " As linguist Noam Chomsky noted:"
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 3,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      10151,
+      10368,
+      [
+       [
+        [
+         10151,
+         10368,
+         [
+          "\"It seems that shortly before 50,000 years ago, some small group of us acquired the ability to take two concepts, and combine them to make a third concept, without disturbing the original two concepts, without limit.\"",
+          [
+           null,
+           true
+          ]
+         ]
+        ]
+       ],
+       [
+        null,
+        null,
+        true
+       ]
+      ]
+     ],
+     [
+      10368,
+      10397,
+      [
+       [
+        [
+         10368,
+         10397,
+         [
+          "The Two-Way Power of Language"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      10397,
+      10485,
+      [
+       [
+        [
+         10397,
+         10485,
+         [
+          "Language serves two distinct operational functions that drive higher human intelligence:"
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      10485,
+      11109,
+      null,
+      null,
+      null,
+      null,
+      [
+       "                  ┌─────────────────────────────────────────┐\n                  │          LANGUAGE SYSTEM                │\n                  └────┬───────────────────────────────┬────┘\n                       │                               │\n                       ▼                               ▼\n               [UPWARD FUNCTION]               [DOWNWARD FUNCTION]\n         Storytelling & Description      Perceptual Resource Marshalling\n                       │                               │\n                       ▼                               ▼\n       Education & Knowledge Transfer      Internal Mental Simulation\n",
+       ""
+      ]
+     ],
+     [
+      11109,
+      11320,
+      [
+       [
+        [
+         11109,
+         11160,
+         [
+          "Going Up (Storytelling and Knowledge Transmission):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         11160,
+         11320,
+         [
+          " Language enables human beings to construct descriptions and tell stories. Storytelling and story understanding form the core foundation of all human education."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "1.",
+         "102": 2,
+         "103": 1,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      11320,
+      11503,
+      [
+       [
+        [
+         11320,
+         11365,
+         [
+          "Going Down (Perceptual Resource Marshalling):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         11365,
+         11503,
+         [
+          " Language commands internal visual and sensory simulations, enabling humans to predict physical outcomes without physical trial and error:"
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "2.",
+         "102": 2,
+         "103": 2,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      11503,
+      11652,
+      [
+       [
+        [
+         11503,
+         11528,
+         [
+          "Bucket of Water Scenario:",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         11528,
+         11652,
+         [
+          " Imagine running down the street holding a full bucket of water. You instantly realize your legs will get wet from sloshing."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      11652,
+      11813,
+      [
+       [
+        [
+         11652,
+         11679,
+         [
+          "Bucket of Nickels Scenario:",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         11679,
+         11813,
+         [
+          " Imagine running with a full bucket of nickels. You instantly visualize that the heavy weight will cause you to bend over and stagger."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      11813,
+      11971,
+      [
+       [
+        [
+         11813,
+         11824,
+         [
+          "Conclusion:",
+          [
+           null,
+           true
+          ]
+         ]
+        ],
+        [
+         11824,
+         11971,
+         [
+          " Neither fact is explicitly documented on the web, yet human internal imagination simulates physics instantly via language-driven sensory controls."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 3,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      11971,
+      11972,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+     ],
+     [
+      11972,
+      12032,
+      [
+       [
+        [
+         11972,
+         12032,
+         [
+          "6. Course Structure, Logistics, and Administrative Covenants"
+         ]
+        ]
+       ],
+       [
+        null,
+        5
+       ]
+      ]
+     ],
+     [
+      12032,
+      12058,
+      [
+       [
+        [
+         12032,
+         12058,
+         [
+          "The Four Course Components"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      12058,
+      12142,
+      [
+       [
+        [
+         12058,
+         12142,
+         [
+          "The MIT 6034 course separates instruction into four distinct operational activities:"
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      12142,
+      12315,
+      [
+       [
+        [
+         12142,
+         12160,
+         [
+          "Lectures (1 Hour):",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         12160,
+         12315,
+         [
+          " Delivered by faculty; designed to introduce the big picture, powerful ideas, and faculty experience. Focuses on the unique MIT approach to model building."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "1.",
+         "102": 2,
+         "103": 1,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      12315,
+      12429,
+      [
+       [
+        [
+         12315,
+         12327,
+         [
+          "Recitations:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         12327,
+         12429,
+         [
+          " Small group sessions meant for buttressing, expanding, and discussing lecture material interactively."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "2.",
+         "102": 2,
+         "103": 2,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      12429,
+      12580,
+      [
+       [
+        [
+         12429,
+         12446,
+         [
+          "Mega Recitations:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         12446,
+         12580,
+         [
+          " Conducted on Fridays by graduate teaching assistants (e.g., Mark Seifter); specifically structured around solving past quiz problems."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "3.",
+         "102": 2,
+         "103": 3,
+         "104": 3
+        }
+       ]
+      ]
+     ],
+     [
+      12580,
+      12664,
+      [
+       [
+        [
+         12580,
+         12590,
+         [
+          "Tutorials:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         12590,
+         12664,
+         [
+          " Small-group guidance focused directly on supporting homework assignments."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "4.",
+         "102": 2,
+         "103": 4,
+         "104": 4
+        }
+       ]
+      ]
+     ],
+     [
+      12664,
+      12693,
+      [
+       [
+        [
+         12664,
+         12693,
+         [
+          "Course Covenants and Policies"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      12693,
+      12811,
+      [
+       [
+        [
+         12693,
+         12711,
+         [
+          "No Laptops Policy:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         12711,
+         12811,
+         [
+          " Laptops are strictly banned during lectures to enforce engagement with high-level conceptual ideas."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      12811,
+      12972,
+      [
+       [
+        [
+         12811,
+         12834,
+         [
+          "Attendance Correlation:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         12834,
+         12972,
+         [
+          " Internal course data demonstrates a direct positive linear correlation between lecture attendance and overall student performance grades."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "•",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      12972,
+      13300,
+      null,
+      null,
+      null,
+      null,
+      [
+       "Grades (5-Point Scale)\n  5.0 │                                   x (High Attendance)\n      │                             x   x\n  4.0 │                       x   x\n      │                 x   x\n  3.0 │           x   x\n      └───────────────────────────────────────────────\n      Low Attendance                    High Attendance\n",
+       ""
+      ]
+     ],
+     [
+      13300,
+      13343,
+      [
+       [
+        [
+         13300,
+         13343,
+         [
+          "Grading Architecture and Plateau Evaluation"
+         ]
+        ]
+       ],
+       [
+        null,
+        6
+       ]
+      ]
+     ],
+     [
+      13343,
+      13511,
+      [
+       [
+        [
+         13343,
+         13363,
+         [
+          "Evaluation Plateaus:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         13363,
+         13511,
+         [
+          " Raw percentage scores (0–100) are mapped onto a 5-point mastery scale based on specific performance break points rather than curved class averages:"
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "1.",
+         "102": 2,
+         "103": 1,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      13511,
+      13570,
+      [
+       [
+        [
+         13511,
+         13515,
+         [
+          "5.0:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         13515,
+         13570,
+         [
+          " Demonstrates a thorough understanding of the material."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      13570,
+      13625,
+      [
+       [
+        [
+         13570,
+         13574,
+         [
+          "4.0:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         13574,
+         13625,
+         [
+          " Demonstrates a good understanding of the material."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ],
+     [
+      13625,
+      13711,
+      [
+       [
+        [
+         13625,
+         13637,
+         [
+          "3.0 / Lower:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         13637,
+         13711,
+         [
+          " Sharp drop-off indicating insufficient mastery requiring additional work."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 3,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      13711,
+      13909,
+      [
+       [
+        [
+         13711,
+         13747,
+         [
+          "The Dual-Opportunity Grading System:",
+          [
+           true
+          ]
+         ]
+        ],
+        [
+         13747,
+         13841,
+         [
+          " To eliminate single-point exam failures, every student's score for a module is calculated as:"
+         ]
+        ],
+        [
+         13841,
+         13842,
+         [
+          " "
+         ]
+        ],
+        [
+         13842,
+         13909,
+         [
+          "\\text{Module Score} = \\max(\\text{Quiz}_n, \\text{Final Exam Part}_n)",
+          [
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           null,
+           2
+          ]
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        0,
+        {
+         "101": "2.",
+         "102": 2,
+         "103": 2,
+         "104": 2
+        }
+       ]
+      ]
+     ],
+     [
+      13909,
+      14048,
+      [
+       [
+        [
+         13909,
+         14048,
+         [
+          "The final exam consists of five distinct parts corresponding to the four term quizzes plus a fifth section covering late-semester material."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 1,
+         "104": 0
+        }
+       ]
+      ]
+     ],
+     [
+      14048,
+      14178,
+      [
+       [
+        [
+         14048,
+         14178,
+         [
+          "An unfavorable quiz grade is completely erased if the student demonstrates mastery on the corresponding section of the final exam."
+         ]
+        ]
+       ],
+       [
+        null,
+        1
+       ],
+       null,
+       [
+        null,
+        null,
+        1,
+        {
+         "101": "◦",
+         "102": 1,
+         "103": 2,
+         "104": 1
+        }
+       ]
+      ]
+     ]
+    ]
+   ],
+   null,
+   null,
+   null,
+   1
+  ]
+ ],
+ null,
+ null,
+ [
+  1792707283,
+  280695000
+ ],
+ null,
+ null,
+ null,
+ null,
+ [
+  1792707247,
+  912221000
+ ],
+ null,
+ [
+  null,
+  null,
+  null,
+  null,
+  true
+ ],
+ null,
+ 1,
+ null,
+ "MTc5MjcwNzI4My0yODA2OTUwMDA=",
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ null,
+ [
+  true
+ ]
+]
