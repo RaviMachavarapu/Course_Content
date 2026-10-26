@@ -207,3 +207,11 @@ shim is not yet verified.
 **Session sharing**: with the capture browser open, the connector's exported cookies were
 rejected about 40 minutes after each export (`RotateCookies` → 401). Close the browser after
 sign-in and let only the connector use the session.
+
+## Source upload (2026-10-26)
+
+How a module's link and uploaded PDFs reach NotebookLM as sources (resumable file upload
+through the connector shim, automatic page-range splitting of oversized PDFs, source-ready
+polling) is specified in section 3 of
+`docs/superpowers/specs/2026-10-26-pdf-sources-design.md`. The end-to-end check for a
+PDF-only module is `frontend/src/e2e/admin-pdf-ingestion.spec.ts` (fixture provider only).
