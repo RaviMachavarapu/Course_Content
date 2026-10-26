@@ -85,13 +85,15 @@ class NotebookLmMcpProvider:
         return SourceRef(source_id=str(data["source_id"]))
 
     def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
-        # No client timeout: the upload is bounded by Google, not by us.
-        resp = self._locked(
-            lambda: self._http.post(
-                "/source/upload",
-                json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
-                timeout=None,
-            )
+        # No client timeout: the upload is bounded by Google, not by us. Not under the
+        # session lock (same reasoning as `download`): the shim registers and sends the
+        # file over plain HTTPS in one request without the connector's stdio session, and
+        # an upload of up to 190 MB would otherwise block every other job's calls and
+        # could outlive the lock's TTL.
+        resp = self._http.post(
+            "/source/upload",
+            json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
+            timeout=None,
         )
         if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
             # NotebookLM rejected the file: permanent, not worth retrying.

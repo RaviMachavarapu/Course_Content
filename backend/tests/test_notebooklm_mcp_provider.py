@@ -288,6 +288,21 @@ def test_add_file_source_posts_path_and_name() -> None:
     assert seen[0].extensions["timeout"]["read"] is None
 
 
+def test_add_file_source_does_not_hold_the_session_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A long upload must not block other jobs' calls, so it runs outside mcp:session.
+    monkeypatch.setattr("app.pipeline.notebooklm_mcp._LOCK_BLOCKING_TIMEOUT_SEC", 1)
+    provider = _provider(lambda _r: httpx.Response(200, json={"source_id": "src-9"}))
+    other_job = provider._redis.lock("mcp:session", timeout=5)
+    assert other_job.acquire(blocking=True)
+    try:
+        ref = provider.add_file_source(NotebookRef(notebook_id="nb-1"), "/x.pdf", "x.pdf")
+    finally:
+        other_job.release()
+    assert ref.source_id == "src-9"
+
+
 def test_source_statuses_maps_shim_reply() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/source/status"
