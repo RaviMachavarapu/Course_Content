@@ -14,6 +14,7 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -146,6 +147,83 @@ def parse_infographic(row: list[Any]) -> NotebookLmParse:
 _md = MarkdownIt("commonmark", {"html": False}).enable("table")
 
 
+_CODE_RE = re.compile(r"```.*?```|~~~.*?~~~|(`+)(?:(?!\1).)+?\1", re.S)
+
+
+def _math_element(latex: str, display: bool) -> str:
+    cls, tag = ("math-display", "div") if display else ("math-inline", "span")
+    return f'<{tag} class="{cls}">{html_lib.escape(latex)}</{tag}>'
+
+
+def _find_math(text: str, start: int) -> tuple[int, int, str, bool] | None:
+    """The first `$…$` / `$$…$$` formula at or after `start`, else None.
+
+    Pandoc's rule: an opening `$` is followed by a non-space, a closing `$` is
+    preceded by a non-space and not followed by a digit; `\\$` is a literal dollar.
+    """
+    i, n = start, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c != "$":
+            i += 1
+            continue
+        if text.startswith("$$", i):
+            end = text.find("$$", i + 2)
+            if end > i + 2 and text[i + 2 : end].strip():
+                return i, end + 2, text[i + 2 : end].strip(), True
+            i += 2
+            continue
+        if i + 1 < n and not text[i + 1].isspace():
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "\n" and text.startswith("\n", j + 1):
+                    break  # never across a blank line
+                if (
+                    text[j] == "$"
+                    and not text[j - 1].isspace()
+                    and not (j + 1 < n and text[j + 1].isdigit())
+                ):
+                    return i, j + 1, text[i + 1 : j], False
+                j += 1
+        i += 1
+    return None
+
+
+def _render_markdown(markdown: str) -> str:
+    """Markdown → HTML with `$…$` / `$$…$$` formulas kept out of markdown's way."""
+    nonce = uuid.uuid4().hex[:10]
+    maths: list[str] = []
+
+    def protect(chunk: str) -> str:
+        out, pos = [], 0
+        while (m := _find_math(chunk, pos)) is not None:
+            start, end, latex, display = m
+            out += [chunk[pos:start], f"MATHPH{nonce}X{len(maths)}X"]
+            maths.append(_math_element(latex, display))
+            pos = end
+        out.append(chunk[pos:])
+        return "".join(out)
+
+    parts, pos = [], 0
+    for code in _CODE_RE.finditer(markdown):  # leave real code alone
+        parts += [protect(markdown[pos : code.start()]), code.group(0)]
+        pos = code.end()
+    parts.append(protect(markdown[pos:]))
+    rendered: str = _md.render("".join(parts))
+    for k, element in enumerate(maths):
+        token = f"MATHPH{nonce}X{k}X"
+        if element.startswith("<div"):
+            rendered = rendered.replace(f"<p>{token}</p>", element)
+        rendered = rendered.replace(token, element)
+    return rendered
+
+
 def _sections_from_markdown(markdown: str) -> tuple[str | None, list[dict[str, str]]]:
     """Split a Document report on its `##` headings; the `#` line is the title."""
     title: str | None = None
@@ -155,7 +233,7 @@ def _sections_from_markdown(markdown: str) -> tuple[str | None, list[dict[str, s
     def flush() -> None:
         body = "\n".join(buf).strip()
         if body:
-            sections.append({"heading": heading, "html": sanitize_html(_md.render(body))})
+            sections.append({"heading": heading, "html": sanitize_html(_render_markdown(body))})
 
     for line in markdown.splitlines():
         if line.startswith("# ") and title is None:
@@ -177,12 +255,13 @@ def _run_html(run: list[Any]) -> str:
     out = html_lib.escape(text)
     fmt = _at(run, 2, 1)
     if isinstance(fmt, list):
+        # slot 9: 1 = inline formula ("S_N2", "2^4"), 2 = displayed equation
+        if _at(fmt, 9) in (1, 2):
+            out = _math_element(text, display=_at(fmt, 9) == 2)
         if _at(fmt, 0) is True:
             out = f"<strong>{out}</strong>"
         if _at(fmt, 1) is True:
             out = f"<em>{out}</em>"
-        if _at(fmt, 9) == 1:  # observed on "2^4", "A : B :: C : ?" — inline code
-            out = f"<code>{out}</code>"
     return out
 
 
@@ -239,7 +318,7 @@ def _sections_from_blocks(blocks: list[Any]) -> list[dict[str, str]]:
             parts.append(f"<blockquote><p>{inner}</p></blockquote>")
         elif inner:
             close_list()
-            parts.append(f"<p>{inner}</p>")
+            parts.append(inner if 'class="math-display"' in inner else f"<p>{inner}</p>")
     flush()
     return sections
 
