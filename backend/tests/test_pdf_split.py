@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -126,7 +127,7 @@ def test_write_parts_halves_oversize_plan(tmp_path: Path) -> None:
     out = write_parts(pdf, plan, tmp_path / "out", "a", max_bytes=700_000)
     assert len(out) > len(plan)
     assert out[0].first_page == 1 and out[-1].last_page == 4
-    for prev, nxt in zip(out, out[1:], strict=False):
+    for prev, nxt in pairwise(out):
         assert nxt.first_page == prev.last_page + 1
     for i, part in enumerate(out, start=1):
         assert part.path.name == f"a.part{i}.pdf"
