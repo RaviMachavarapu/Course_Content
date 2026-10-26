@@ -114,3 +114,28 @@ def test_staging_shape_covers_all_states(client: TestClient, db_session: Session
     assert report_cv["revision"] == 1
     assert any(m["kind"] == "report_pdf" and m["url"].endswith(".pdf") for m in report_cv["media"])
     assert got["slide_deck"]["current_version"] is None
+
+
+def test_staging_includes_source_files(client: TestClient, db_session: Session) -> None:
+    from app.models.module_source_file import ModuleSourceFile
+
+    _admin(client, db_session)
+    module = _generated_module(db_session)
+    module.source_files.append(
+        ModuleSourceFile(
+            order_index=0,
+            file_name="book.pdf",
+            size_bytes=123,
+            checksum_sha256="a" * 64,
+            storage_key="module-sources/book.pdf",
+            page_count=9,
+            parts=[{"first_page": 1}, {"first_page": 5}, {"first_page": 8}],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/admin/modules/{module.id}/staging").json()
+    assert body["module"]["source_url"] == "https://youtu.be/x"
+    assert body["module"]["source_files"] == [
+        {"file_name": "book.pdf", "size_bytes": 123, "part_count": 3}
+    ]

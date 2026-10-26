@@ -4,6 +4,7 @@ import { Button, ErrorState, Icon, Skeleton } from "@/components";
 import { useToast } from "@/lib/store";
 import { ARTIFACT_TYPES } from "../api";
 import { StatusChip } from "../AdminStatus";
+import { SourceSummary } from "../SourceSummary";
 import { ArtifactCard } from "./ArtifactCard";
 import { PublishModal } from "./PublishModal";
 import { usePublish } from "./publish";
@@ -42,11 +43,22 @@ export function StagingPage(): JSX.Element {
           Back to Ingestion
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="font-headline-lg text-headline-lg">
-              {data?.module.title ?? <Skeleton className="h-7 w-48" />}
-            </h1>
-            {data && <StatusChip status={data.module.status} />}
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="font-headline-lg text-headline-lg">
+                {data?.module.title ?? <Skeleton className="h-7 w-48" />}
+              </h1>
+              {data && <StatusChip status={data.module.status} />}
+            </div>
+            {data && (
+              <div className="mt-1" data-testid="staging-sources">
+                <SourceSummary
+                  sourceUrl={data.module.source_url}
+                  files={data.module.source_files}
+                  detailed
+                />
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <Button

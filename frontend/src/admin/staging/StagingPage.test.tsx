@@ -58,6 +58,8 @@ function stagingBody(over: Record<string, unknown>[] = []) {
       status: "pending_review",
       course_id: "c1",
       course_status: "pending_review",
+      source_url: "https://example.com/nn",
+      source_files: [{ file_name: "book.pdf", size_bytes: 10, part_count: 3 }],
     },
     artifacts: TYPES.map((t) => map.get(t) ?? artifact(t)),
   };
@@ -109,6 +111,13 @@ describe("StagingPage", () => {
     expect(screen.getByTestId("btn-sr9")).toHaveAttribute("href", "/api/media/x.mp3");
     expect(screen.getByTestId("btn-sr10")).toHaveAttribute("href", "/api/media/x.pptx");
     expect(screen.getByTestId("btn-sr11")).toHaveAttribute("href", "/api/media/x.png");
+  });
+
+  it("shows the module's link and PDFs under the title", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    expect(await screen.findByText("https://example.com/nn")).toBeInTheDocument();
+    expect(screen.getByText("book.pdf (split into 3 parts)")).toBeInTheDocument();
   });
 
   it("opens the redo modal and posts the note", async () => {

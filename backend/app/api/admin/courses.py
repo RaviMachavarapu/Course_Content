@@ -49,6 +49,17 @@ router = APIRouter(
 _ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
 
 
+def source_files_out(module: Module) -> list[SourceFileOut]:
+    return [
+        SourceFileOut(
+            file_name=f.file_name,
+            size_bytes=f.size_bytes,
+            part_count=max(1, len(f.parts)),
+        )
+        for f in module.source_files
+    ]
+
+
 def _module_summary(module: Module) -> ModuleSummary:
     arts = sorted(module.artifacts, key=lambda a: _ARTIFACT_ORDER.get(a.type, 99))
     return ModuleSummary(
@@ -56,14 +67,7 @@ def _module_summary(module: Module) -> ModuleSummary:
         order_index=module.order_index,
         title=module.title,
         source_url=module.source_url,
-        source_files=[
-            SourceFileOut(
-                file_name=f.file_name,
-                size_bytes=f.size_bytes,
-                part_count=max(1, len(f.parts)),
-            )
-            for f in module.source_files
-        ],
+        source_files=source_files_out(module),
         source_type=module.source_type.value,
         status=module.status,
         artifacts=[ArtifactSummary(id=a.id, type=a.type, status=a.status) for a in arts],

@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api";
-import type { ArtifactType } from "../api";
+import type { ArtifactType, SourceFile } from "../api";
 import type { OptionValues } from "../generationOptions";
 
 export interface MediaOut {
@@ -43,6 +43,8 @@ export interface StagingResponse {
     status: string;
     course_id: string;
     course_status: string;
+    source_url: string | null;
+    source_files: SourceFile[];
   };
   artifacts: StagingArtifact[];
 }

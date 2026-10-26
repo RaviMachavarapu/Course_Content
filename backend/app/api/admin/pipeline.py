@@ -7,10 +7,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.admin import ADMIN_DEPENDENCIES
+from app.api.admin.courses import source_files_out
 from app.api.deps import DbDep
 from app.models.course import Course
 from app.models.enums import ARTIFACT_TYPES, ModuleStatus
 from app.models.module import Module
+from app.models.module_source_file import ModuleSourceFile
 from app.schemas.pipeline import PipelineDot, PipelineResponse, PipelineRow
 
 router = APIRouter(
@@ -31,13 +33,22 @@ def pipeline(
     stmt = (
         select(Module)
         .join(Course)
-        .options(selectinload(Module.artifacts), selectinload(Module.course))
+        .options(
+            selectinload(Module.artifacts),
+            selectinload(Module.course),
+            selectinload(Module.source_files),
+        )
     )
     if status is not None:
         stmt = stmt.where(Module.status == status)
     if q:
         like = f"%{q.strip()}%"
-        stmt = stmt.where(Module.title.ilike(like) | Module.source_url.ilike(like))
+        pdf_match = (
+            select(ModuleSourceFile.id)
+            .where(ModuleSourceFile.module_id == Module.id, ModuleSourceFile.file_name.ilike(like))
+            .exists()
+        )
+        stmt = stmt.where(Module.title.ilike(like) | Module.source_url.ilike(like) | pdf_match)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
@@ -52,6 +63,7 @@ def pipeline(
                 course_title=m.course.title,
                 module_title=m.title,
                 source_url=m.source_url,
+                source_files=source_files_out(m),
                 created_at=m.created_at,
                 global_status=m.status,
                 dots=[

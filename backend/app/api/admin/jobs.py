@@ -9,6 +9,7 @@ from fastapi import APIRouter, status
 from sqlalchemy import desc, func, select
 
 from app.api.admin import ADMIN_DEPENDENCIES
+from app.api.admin.courses import source_files_out
 from app.api.deps import DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
@@ -152,6 +153,8 @@ def module_staging(module_id: uuid.UUID, db: DbDep) -> StagingResponse:
             status=module.status,
             course_id=module.course_id,
             course_status=module.course.status,
+            source_url=module.source_url,
+            source_files=source_files_out(module),
         ),
         artifacts=artifacts_out,
     )

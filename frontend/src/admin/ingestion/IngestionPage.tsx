@@ -11,6 +11,7 @@ import {
 } from "../generationOptions";
 import { ARTIFACT_LABELS, ARTIFACT_TYPES, type ArtifactType } from "../api";
 import { StatusChip, StatusDot } from "../AdminStatus";
+import { SourceSummary } from "../SourceSummary";
 import { sourceUrlError } from "../sourceValidation";
 import { useCourses, useIngest, useMcpStatus, useRecentPipeline } from "../useAdminApi";
 
@@ -320,9 +321,7 @@ export function IngestionPage(): JSX.Element {
                   <tr key={row.module_id} className="border-b border-outline-variant/60">
                     <td className="px-4 py-3">
                       <div className="font-label-md text-label-md">{row.module_title}</div>
-                      <div className="truncate text-label-sm text-on-surface-variant">
-                        {row.source_url}
-                      </div>
+                      <SourceSummary sourceUrl={row.source_url} files={row.source_files} />
                     </td>
                     <td className="px-4 py-3 text-label-sm text-on-surface-variant">
                       {new Date(row.created_at).toLocaleDateString()}
