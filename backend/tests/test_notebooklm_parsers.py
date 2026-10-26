@@ -226,3 +226,64 @@ def test_real_code_stays_code() -> None:
     out = _doc_html("## S\nCall `print(x)` now and `$a$` too")
     assert "<code>print(x)</code>" in out
     assert "<code>$a$</code>" in out
+
+
+def test_stray_backtick_does_not_unprotect_math_across_paragraphs() -> None:
+    out = _doc_html(
+        "## S\nThe prime ` symbol.\n\nRate $k_1 * [A]_0$ here.\n\nUse `print(x)` now."
+    )
+    assert '<span class="math-inline">k_1 * [A]_0</span>' in out
+    assert "<em>" not in out
+    assert "<code>print(x)</code>" in out
+
+
+def _blocks_sections(blocks: list[list[Any]]) -> list[dict[str, str]]:
+    from app.pipeline.parsers import notebooklm as nb
+
+    return nb._sections_from_blocks(
+        [[None, None, [runs, style]] for runs, style in blocks]  # type: ignore[misc]
+    )
+
+
+def test_heading_keeps_formula_runs_as_dollar_latex() -> None:
+    sections = _blocks_sections(
+        [
+            (
+                [
+                    [0, 7, ["Rate of ", None]],
+                    [7, 11, ["S_N2", _fmt(slot9=1)]],
+                    [11, 16, [" and ", None]],
+                    [16, 20, ["\\alpha", _fmt(slot9=2)]],
+                    [20, 30, [" costs $5 and $10", None]],
+                ],
+                [None, 5],
+            ),
+            ([[0, 4, ["Body", None]]], [None, None]),
+        ]
+    )
+    assert sections[0]["heading"] == "Rate of $S_N2$ and $$\\alpha$$ costs \\$5 and \\$10"
+
+
+def test_heading_plain_run_dollar_math_is_kept() -> None:
+    sections = _blocks_sections(
+        [
+            ([[0, 9, ["$S_N2$ Reactions", None]]], [None, 5]),
+            ([[0, 4, ["Body", None]]], [None, None]),
+        ]
+    )
+    assert sections[0]["heading"] == "$S_N2$ Reactions"
+
+
+def test_plain_run_dollar_math_becomes_math_span() -> None:
+    out = _run_report([0, 20, ["a<b in $S_N2$ here", None]])
+    assert out == '<p>a&lt;b in <span class="math-inline">S_N2</span> here</p>'
+
+
+def test_plain_run_dollar_display_math_and_bold() -> None:
+    out = _run_report([0, 20, ["Rate $$\\alpha_2$$", _fmt(bold=True)]])
+    assert '<strong>Rate <div class="math-display">\\alpha_2</div></strong>' in out
+
+
+def test_plain_run_currency_stays_text() -> None:
+    out = _run_report([0, 20, ["It costs $5 and $10", None]])
+    assert out == "<p>It costs $5 and $10</p>"

@@ -147,7 +147,9 @@ def parse_infographic(row: list[Any]) -> NotebookLmParse:
 _md = MarkdownIt("commonmark", {"html": False}).enable("table")
 
 
-_CODE_RE = re.compile(r"```.*?```|~~~.*?~~~|(`+)(?:(?!\1).)+?\1", re.S)
+# An inline code span never crosses a blank line (a stray backtick mustn't swallow
+# the paragraphs, and their formulas, up to the next one).
+_CODE_RE = re.compile(r"```.*?```|~~~.*?~~~|(`+)(?:(?!\1)(?!\n[ \t]*\n).)+?\1", re.S)
 
 
 def _math_element(latex: str, display: bool) -> str:
@@ -247,12 +249,47 @@ def _sections_from_markdown(markdown: str) -> tuple[str | None, list[dict[str, s
     return title, sections
 
 
+def _plain_html(text: str) -> str:
+    """Escaped text with its `$…$` / `$$…$$` formulas as math elements."""
+    out, pos = [], 0
+    while (m := _find_math(text, pos)) is not None:
+        start, end, latex, display = m
+        out += [html_lib.escape(text[pos:start]), _math_element(latex, display)]
+        pos = end
+    out.append(html_lib.escape(text[pos:]))
+    return "".join(out)
+
+
+def _plain_text(text: str) -> str:
+    """Heading text: `$…$` / `$$…$$` formulas kept, every other `$` as `\\$`."""
+    out, pos = [], 0
+    while (m := _find_math(text, pos)) is not None:
+        start, end = m[0], m[1]
+        out += [text[pos:start].replace("$", "\\$"), text[start:end]]
+        pos = end
+    out.append(text[pos:].replace("$", "\\$"))
+    return "".join(out)
+
+
+def _run_text(run: list[Any]) -> str:
+    """One run as heading text, formula runs written back as `$latex$` / `$$latex$$`."""
+    text = _at(run, 2, 0)
+    if not isinstance(text, str):
+        return ""
+    slot9 = _at(run, 2, 1, 9)
+    if slot9 == 1:
+        return f"${text}$"
+    if slot9 == 2:
+        return f"$${text}$$"
+    return _plain_text(text)
+
+
 def _run_html(run: list[Any]) -> str:
     """One interactive-report text run: [start, end, [text, format?]]."""
     text = _at(run, 2, 0)
     if not isinstance(text, str):
         return ""
-    out = html_lib.escape(text)
+    out = _plain_html(text)
     fmt = _at(run, 2, 1)
     if isinstance(fmt, list):
         # slot 9: 1 = inline formula ("S_N2", "2^4"), 2 = displayed equation
@@ -298,7 +335,7 @@ def _sections_from_blocks(blocks: list[Any]) -> list[dict[str, str]]:
         level = _at(style, 1)
         if style == [None, 5]:
             flush()
-            heading = html_lib.unescape(re.sub("<[^>]+>", "", inner)).strip() or heading
+            heading = "".join(_run_text(r) for r in runs).strip() or heading
             parts = []
         elif style in ([None, 6], [None, 7]):
             close_list()
