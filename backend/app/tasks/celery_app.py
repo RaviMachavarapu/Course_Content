@@ -24,6 +24,9 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_track_started=True,
     broker_connection_retry_on_startup=True,
+    # With acks_late, Redis redelivers a task still unacked after visibility_timeout
+    # (default 1 h). A job can wait up to 2 h on the module source lock, so allow 4 h.
+    broker_transport_options={"visibility_timeout": 4 * 3600},
     timezone="UTC",
     task_default_queue="celery",
     beat_schedule={
