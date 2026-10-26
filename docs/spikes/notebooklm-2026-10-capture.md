@@ -212,6 +212,6 @@ sign-in and let only the connector use the session.
 
 How a module's link and uploaded PDFs reach NotebookLM as sources (resumable file upload
 through the connector shim, automatic page-range splitting of oversized PDFs, source-ready
-polling) is specified in section 3 of
+polling) is specified in sections 3 and 5 (splitting) of
 `docs/superpowers/specs/2026-10-26-pdf-sources-design.md`. The end-to-end check for a
 PDF-only module is `frontend/src/e2e/admin-pdf-ingestion.spec.ts` (fixture provider only).
