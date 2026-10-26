@@ -33,6 +33,19 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "untitled"
 
 
+class _FixtureStates(dict[str, SourceState]):
+    """Source states where any `fixture-` id counts as ready.
+
+    Each job builds a fresh `FixtureProvider`, so a resumed run must still see
+    ids an earlier instance handed out.
+    """
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in self:
+            return self[key]
+        return SourceState.ready if key.startswith("fixture-") else default
+
+
 class FixtureProvider:
     def __init__(
         self,
@@ -65,7 +78,9 @@ class FixtureProvider:
         return ref
 
     def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
-        return {sid: SourceState.ready for sid in self._source_ids.get(nb.notebook_id, [])}
+        return _FixtureStates(
+            {sid: SourceState.ready for sid in self._source_ids.get(nb.notebook_id, [])}
+        )
 
     def generate(
         self,
