@@ -33,12 +33,12 @@ from app.models.generation_job import GenerationJob
 from app.models.module import Module
 from app.models.status import derive_course_status, derive_module_status
 from app.pipeline.media_probe import mp4_duration_seconds
+from app.pipeline.module_sources import SourceStepError, ensure_module_sources
 from app.pipeline.parsers import parse_artifact
 from app.pipeline.parsers.notebooklm import audio_url, parse_notebooklm, parse_outline
 from app.pipeline.provider import (
     ContentProvider,
     GenerationTimeout,
-    NotebookRef,
     ProviderError,
     RawArtifact,
     StudioJobRef,
@@ -293,7 +293,10 @@ def run_artifact_generation(
         )
     except Exception as exc:
         artifact.status = ArtifactStatus.error
-        artifact.last_error = f"{type(exc).__name__}: {exc}"
+        # The source step's messages are written for admins (spec §8): show as-is.
+        artifact.last_error = (
+            str(exc) if isinstance(exc, SourceStepError) else f"{type(exc).__name__}: {exc}"
+        )
         job.state = GenerationJobState.failed
         job.error_detail = artifact.last_error
         job.finished_at = func.now()
@@ -383,11 +386,10 @@ def _generate(
     resume: bool = False,
 ) -> ArtifactVersion | None:
     module = artifact.module
-    nb = NotebookRef(notebook_id=module.notebooklm_notebook_id or "")
-    if not nb.notebook_id:
-        nb = provider.create_notebook(module.title)
-        module.notebooklm_notebook_id = nb.notebook_id
-        provider.add_source(nb, module.source_url)
+    # Once per module: the notebook with the module's link and PDFs, all ready.
+    # It commits in its own session, so pick up what it wrote.
+    nb = ensure_module_sources(provider, module.id, job_created_at=job.created_at)
+    session.refresh(module)
 
     if resume:
         # Finishing a reviewed outline: reuse what the original request sent.

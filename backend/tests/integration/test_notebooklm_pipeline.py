@@ -7,6 +7,7 @@ downloads, and records what the pipeline asked for.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import struct
 import uuid
@@ -124,6 +125,8 @@ def _artifact(db: Session, kind: ArtifactType, options: dict[str, Any] | None = 
         source_url="https://youtu.be/x",
         source_type=ModuleSourceType.youtube,
         notebooklm_notebook_id="nb-1",
+        # sources already in the notebook (as the migration marks existing ones)
+        sources_ready_at=dt.datetime.now(dt.UTC),
     )
     db.add(module)
     db.flush()

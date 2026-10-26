@@ -8,8 +8,10 @@ tests are fully isolated and the dev database is never touched.
 
 from __future__ import annotations
 
+import functools
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -121,9 +123,58 @@ def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
         "app.api.admin.jobs",
         "app.api.admin.uploads",
         "app.api.admin.courses",
+        "app.pipeline.module_sources",
     ):
         monkeypatch.setattr(f"{module}.get_storage", lambda: store, raising=False)
     return store
+
+
+@pytest.fixture
+def source_step_sessions(
+    db_connection: Connection,
+) -> Callable[[], AbstractContextManager[Session]]:
+    """A `session_scope` stand-in for the module source step: each session is
+    bound to the test connection, so its commits are SAVEPOINTs inside the
+    test's outer transaction (and visible to `db_session`)."""
+    factory = sessionmaker(
+        bind=db_connection,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        session = factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    return scope
+
+
+@pytest.fixture(autouse=True)
+def _bind_source_step(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orchestrator's source step opens its own sessions (`session_scope`, the
+    app database) and a Redis lock (db 0). In a DB test, bind both to the test
+    connection and the test Redis db instead."""
+    if "db_session" not in request.fixturenames:
+        return
+    from app.pipeline import module_sources, orchestrator
+
+    monkeypatch.setattr(
+        orchestrator,
+        "ensure_module_sources",
+        functools.partial(
+            module_sources.ensure_module_sources,
+            session_factory=request.getfixturevalue("source_step_sessions"),
+            redis_client=request.getfixturevalue("redis_client"),
+        ),
+    )
 
 
 @pytest.fixture
