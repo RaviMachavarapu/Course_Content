@@ -123,6 +123,9 @@ export function IngestionPage(): JSX.Element {
   const urlErr = sourceUrlError(sourceUrl);
   const sourceErr =
     !sourceUrl.trim() && uploadedIds.length === 0 ? "Add a link or at least one PDF" : null;
+  // A failed PDF must not be dropped silently: the admin retries or removes it first.
+  const failedPdf = pdfs.find((f) => f.state === "error");
+  const pdfErr = failedPdf ? `Retry or remove ${failedPdf.file.name}` : null;
   const moduleTitleErr = moduleTitle.trim() ? null : "Module title is required";
   const courseTitleErr =
     target === "new" && !courseTitle.trim() ? "Course title is required" : null;
@@ -137,6 +140,7 @@ export function IngestionPage(): JSX.Element {
   const isValid =
     !urlErr &&
     !sourceErr &&
+    !pdfErr &&
     !moduleTitleErr &&
     !courseTitleErr &&
     !courseSelectErr &&
@@ -248,6 +252,11 @@ export function IngestionPage(): JSX.Element {
               {submitted && sourceErr && (
                 <p role="alert" className="font-label-sm text-label-sm text-error">
                   {sourceErr}
+                </p>
+              )}
+              {submitted && pdfErr && (
+                <p role="alert" className="font-label-sm text-label-sm text-error">
+                  {pdfErr}
                 </p>
               )}
             </div>

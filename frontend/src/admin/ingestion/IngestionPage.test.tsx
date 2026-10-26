@@ -265,7 +265,7 @@ describe("IngestionPage PDF sources", () => {
     expect(body.source_url).toBeUndefined();
   });
 
-  it("sends only done uploads, in list order", async () => {
+  it("blocks submit while a PDF failed, then sends the rest in list order", async () => {
     vi.mocked(uploadPdf)
       .mockResolvedValueOnce("u1")
       .mockRejectedValueOnce(new Error("b.pdf is not a PDF"))
@@ -277,11 +277,34 @@ describe("IngestionPage PDF sources", () => {
     expect(await screen.findByText("b.pdf is not a PDF")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("btn-ig6")).toHaveTextContent(/Generate/));
     await userEvent.click(screen.getByTestId("btn-ig6"));
+    expect(await screen.findByText("Retry or remove b.pdf")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((c) => (c[1] as RequestInit | undefined)?.method === "POST"),
+    ).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove b.pdf" }));
+    expect(screen.queryByText("Retry or remove b.pdf")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("btn-ig6"));
     await waitFor(() => expect(screen.getByText("STAGING PAGE")).toBeInTheDocument());
     const post = fetchMock.mock.calls.find((c) =>
       String(c[0]).includes("/api/admin/courses/c1/modules"),
     );
     expect(JSON.parse((post![1] as RequestInit).body as string).upload_ids).toEqual(["u1", "u3"]);
+  });
+
+  it("names only the first failed PDF", async () => {
+    vi.mocked(uploadPdf)
+      .mockRejectedValueOnce(new Error("a.pdf is not a PDF"))
+      .mockRejectedValueOnce(new Error("b.pdf is not a PDF"));
+    installFetch([HEALTHY, NO_COURSES, EMPTY_PIPELINE]);
+    renderPage();
+    await userEvent.type(screen.getByLabelText("Link (optional)"), "https://youtu.be/abc");
+    await fillRest();
+    addPdfs("a.pdf", "b.pdf");
+    expect(await screen.findByText("b.pdf is not a PDF")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("btn-ig6"));
+    expect(await screen.findByText("Retry or remove a.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("Retry or remove b.pdf")).not.toBeInTheDocument();
   });
 
   it("shows the empty-sources message and does not POST", async () => {
