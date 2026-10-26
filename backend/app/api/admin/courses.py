@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import unicodedata
 import uuid
@@ -209,7 +210,6 @@ def create_module(
     )
     db.add(module)
     db.flush()
-    _claim_uploads(db, course.id, module, uploads)
 
     provider = get_content_provider()
     jobs = orchestrator.start_module_generation(
@@ -222,6 +222,8 @@ def create_module(
         prompts_by_type=body.prompts,
     )
     db.flush()
+    # last step that can fail: moving files (compensated on error)
+    _claim_uploads(db, course.id, module, uploads)
 
     dispatch = [(str(j.artifact_id), str(j.job_id), j.type.value) for j in jobs]
     background.add_task(_dispatch_all, dispatch)
@@ -269,25 +271,36 @@ def _claim_uploads(
     # read every page count before moving anything, so a damaged file fails the
     # request with nothing half-moved
     page_counts = [_page_count(upload) for upload in uploads]
-    for index, upload in enumerate(uploads):
-        key = source_key(course_id, module.id, index, _safe_stem(upload.file_name))
-        storage.move(upload.storage_key, key)
-        db.add(
-            ModuleSourceFile(
-                module_id=module.id,
-                order_index=index,
-                file_name=upload.file_name,
-                size_bytes=upload.size_bytes,
-                checksum_sha256=storage.sha256(key),
-                storage_key=key,
-                page_count=page_counts[index],
-                parts=[],
+    moved: list[tuple[str, str]] = []  # (original key, new key)
+    try:
+        for index, upload in enumerate(uploads):
+            key = source_key(course_id, module.id, index, _safe_stem(upload.file_name))
+            checksum = storage.sha256(upload.storage_key)
+            storage.move(upload.storage_key, key)
+            moved.append((upload.storage_key, key))
+            db.add(
+                ModuleSourceFile(
+                    module_id=module.id,
+                    order_index=index,
+                    file_name=upload.file_name,
+                    size_bytes=upload.size_bytes,
+                    checksum_sha256=checksum,
+                    storage_key=key,
+                    page_count=page_counts[index],
+                    parts=[],
+                )
             )
-        )
-        upload.status = SourceUploadStatus.claimed
-        upload.storage_key = key
-    db.flush()
-    db.refresh(module)
+            upload.status = SourceUploadStatus.claimed
+            upload.storage_key = key
+        db.flush()
+        db.refresh(module)
+    except BaseException:
+        # the request will roll back the DB; put the files back so the uploads
+        # (which revert to `complete`) are still claimable
+        for original, new in reversed(moved):
+            with contextlib.suppress(Exception):
+                storage.move(new, original)
+        raise
 
 
 def _page_count(upload: SourceUpload) -> int:

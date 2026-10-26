@@ -407,3 +407,62 @@ def test_create_module_makes_no_provider_calls(
     r = _post_module(client, h, cid, source_url="https://example.com/a", upload_ids=[uid])
     assert r.status_code == 201, r.text
     assert calls == []
+
+
+def test_failed_create_leaves_uploads_claimable(client: TestClient, db_session: Session) -> None:
+    from app.models.source_upload import SourceUpload
+    from app.storage.service import get_storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    uid = _upload(client, h, "a.pdf", _pdf_bytes())
+    r = _post_module(
+        client,
+        h,
+        cid,
+        upload_ids=[uid],
+        types=["quiz"],
+        options={"quiz": {"difficulty": "extreme"}},
+    )
+    assert r.status_code == 422
+    db_session.expire_all()
+    row = db_session.get(SourceUpload, uuid.UUID(uid))
+    assert row is not None
+    assert row.status.value == "complete"
+    assert get_storage().exists(row.storage_key)
+    assert row.storage_key == f"uploads/{uid}.pdf"
+    ok = _post_module(client, h, cid, upload_ids=[uid])
+    assert ok.status_code == 201, ok.text
+
+
+def test_move_failure_restores_files(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.storage.service import Storage, get_storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    u1 = _upload(client, h, "a.pdf", _pdf_bytes())
+    u2 = _upload(client, h, "b.pdf", _pdf_bytes())
+    real_move = Storage.move
+    calls = {"n": 0}
+
+    def flaky(self, src, dst):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk gone")
+        return real_move(self, src, dst)
+
+    monkeypatch.setattr(Storage, "move", flaky)
+
+    try:
+        r = _post_module(client, h, cid, upload_ids=[u1, u2])
+        assert r.status_code >= 400
+    except OSError:
+        pass  # the test client re-raises unhandled server errors
+    monkeypatch.setattr(Storage, "move", real_move)
+    assert get_storage().exists(f"uploads/{u1}.pdf")
+    assert get_storage().exists(f"uploads/{u2}.pdf")
+    db_session.expire_all()
+    ok = _post_module(client, h, cid, upload_ids=[u1, u2])
+    assert ok.status_code == 201, ok.text
