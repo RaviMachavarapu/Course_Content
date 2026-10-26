@@ -24,7 +24,7 @@ test("AC4: ingest -> 6 generated -> redo one -> publish module -> publish course
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=ac4${Date.now()}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=ac4${Date.now()}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Module title").fill("AC4 Module");
   // all six ARTIFACT_TYPES checkboxes are checked by default — leave them
@@ -59,7 +59,7 @@ test("AC4: ingest -> 6 generated -> redo one -> publish module -> publish course
   await page.getByTestId("btn-ce1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion\?course=[0-9a-f-]+$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=ac4b${Date.now()}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=ac4b${Date.now()}`);
   await page.getByLabel("Module title").fill("AC4 Module 2");
   for (const t of ["slide_deck", "flashcards", "quiz", "infographic", "audio_overview"]) {
     await page.getByTestId(`type-${t}`).uncheck();

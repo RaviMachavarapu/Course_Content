@@ -19,7 +19,7 @@ test("slide viewer: navigate, notes, complete on last slide", async ({ page }) =
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=sld${marker}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=sld${marker}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Module title").fill("Deck Module");
   for (const t of ["flashcards", "quiz", "infographic", "audio_overview"]) {

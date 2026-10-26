@@ -112,7 +112,8 @@ export const adminApi = {
   createModule: (
     courseId: string,
     body: {
-      source_url: string;
+      source_url?: string;
+      upload_ids?: string[];
       title: string;
       types: ArtifactType[];
       options?: Record<string, OptionValues>;

@@ -23,7 +23,7 @@ export class ApiError extends Error {
 
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function readCookie(name: string): string | undefined {
+export function readCookie(name: string): string | undefined {
   return document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`))

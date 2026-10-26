@@ -21,7 +21,7 @@ test("admin ingests a new source and lands on staging", async ({ page }) => {
   await expect(page.getByText(/NotebookLM: (Connected|Disconnected|Fixture \(dev\))/)).toBeVisible();
 
   const unique = `E2E Course ${Date.now()}`;
-  await page.getByLabel("Source URL").fill("https://www.youtube.com/watch?v=e2e");
+  await page.getByLabel("Link (optional)").fill("https://www.youtube.com/watch?v=e2e");
   await page.getByLabel("Course title").fill(unique);
   await page.getByLabel("Module title").fill("E2E Module");
   // keep all six artifact types checked (default)
@@ -32,7 +32,7 @@ test("admin ingests a new source and lands on staging", async ({ page }) => {
 
 test("invalid source URL blocks submission", async ({ page }) => {
   await login(page);
-  await page.getByLabel("Source URL").fill("not a url");
+  await page.getByLabel("Link (optional)").fill("not a url");
   await page.getByLabel("Course title").fill("x");
   await page.getByLabel("Module title").fill("x");
   await page.getByTestId("btn-ig6").click();

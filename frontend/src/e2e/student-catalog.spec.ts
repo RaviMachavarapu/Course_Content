@@ -19,7 +19,7 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=cat${marker}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=cat${marker}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Category").fill("E2E Topics");
   await page.getByLabel("Module title").fill("Catalog Module");

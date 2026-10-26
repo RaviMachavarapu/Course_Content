@@ -18,7 +18,7 @@ test("redo regenerates only the chosen artifact", async ({ page }) => {
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
   // ingest with only the fast fixture types
-  await page.getByLabel("Source URL").fill("https://www.youtube.com/watch?v=stg");
+  await page.getByLabel("Link (optional)").fill("https://www.youtube.com/watch?v=stg");
   await page.getByLabel("Course title").fill(`Staging E2E ${Date.now()}`);
   await page.getByLabel("Module title").fill("Staging Module");
   for (const t of ["slide_deck", "infographic"]) {

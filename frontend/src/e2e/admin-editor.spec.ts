@@ -19,7 +19,7 @@ test("reorder persists and rename sticks", async ({ page }) => {
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
   // module 1 — new course, report only (fast fixture)
-  await page.getByLabel("Source URL").fill("https://www.youtube.com/watch?v=ed1");
+  await page.getByLabel("Link (optional)").fill("https://www.youtube.com/watch?v=ed1");
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Module title").fill("Alpha");
   for (const t of ["slide_deck", "flashcards", "quiz", "infographic", "audio_overview"]) {
@@ -37,7 +37,7 @@ test("reorder persists and rename sticks", async ({ page }) => {
   await page.getByTestId("btn-ce1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion\?course=[0-9a-f-]+$/);
   await expect(page.getByTestId("scoped-course-hint")).toContainText(courseTitle);
-  await page.getByLabel("Source URL").fill("https://www.youtube.com/watch?v=ed2");
+  await page.getByLabel("Link (optional)").fill("https://www.youtube.com/watch?v=ed2");
   await page.getByLabel("Module title").fill("Beta");
   for (const t of ["slide_deck", "flashcards", "quiz", "infographic", "audio_overview"]) {
     await page.getByTestId(`type-${t}`).uncheck();

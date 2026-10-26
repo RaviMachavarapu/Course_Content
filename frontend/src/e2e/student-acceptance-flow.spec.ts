@@ -27,7 +27,7 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=ac5${marker}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=ac5${marker}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Module title").fill("AC5 Module");
   await page.getByTestId("btn-ig6").click();

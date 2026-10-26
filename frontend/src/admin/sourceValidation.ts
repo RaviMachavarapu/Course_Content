@@ -21,7 +21,7 @@ export function classifySource(url: string): SourceKind | null {
 }
 
 export function sourceUrlError(url: string): string | null {
-  if (!url.trim()) return "Source URL is required";
+  if (!url.trim()) return null; // the link is optional; the page checks for at least one source
   if (classifySource(url) === null) {
     return "Enter a valid http(s) URL — YouTube, Google Drive, a .pdf link, or a web page";
   }

@@ -43,7 +43,8 @@ export interface IngestInput {
   target:
     | { kind: "new"; title: string; description: string; category: string }
     | { kind: "existing"; courseId: string };
-  sourceUrl: string;
+  sourceUrl?: string;
+  uploadIds?: string[];
   moduleTitle: string;
   types: ArtifactType[];
   options?: OptionsByType;
@@ -66,7 +67,8 @@ export function useIngest() {
           : input.target.courseId;
 
       const res = await adminApi.createModule(courseId, {
-        source_url: input.sourceUrl,
+        source_url: input.sourceUrl?.trim() || undefined,
+        upload_ids: input.uploadIds?.length ? input.uploadIds : undefined,
         title: input.moduleTitle,
         types: input.types,
         options: input.options,
