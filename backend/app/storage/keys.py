@@ -51,3 +51,21 @@ def media_key(
         f"/v{revision}/{leaf}.{ext}"
     )
     return validate_key(key)
+
+
+def upload_key(upload_id: uuid.UUID | str) -> str:
+    """In-flight (pre-claim) chunked upload: `uploads/{id}.pdf`."""
+    return validate_key(f"uploads/{upload_id}.pdf")
+
+
+def source_key(
+    course_id: uuid.UUID | str,
+    module_id: uuid.UUID | str,
+    order_index: int,
+    safe_stem: str,
+    part: int | None = None,
+) -> str:
+    """A module's source PDF (or one split part). `safe_stem` must already be
+    sanitized by the caller."""
+    leaf = f"{order_index:02d}-{safe_stem}" + (f".part{part}" if part is not None else "")
+    return validate_key(f"courses/{course_id}/modules/{module_id}/sources/{leaf}.pdf")

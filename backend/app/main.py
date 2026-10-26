@@ -24,6 +24,7 @@ from app.api.admin import prompts as admin_prompts
 from app.api.admin import publish as admin_publish
 from app.api.admin import settings as admin_settings
 from app.api.admin import staging as admin_staging
+from app.api.admin import uploads as admin_uploads
 from app.api.student import artifacts as student_artifacts
 from app.api.student import auth as student_auth
 from app.api.student import courses as student_courses
@@ -127,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_auth.router)
     app.include_router(admin_prompts.router)
     app.include_router(admin_staging.router)
+    app.include_router(admin_uploads.router)
     app.include_router(admin_jobs.router)
     app.include_router(admin_courses.router)
     app.include_router(admin_pipeline.router)

@@ -71,6 +71,30 @@ class Storage:
         log.info("storage.put", key=key, size=stored.size_bytes)
         return stored
 
+    def append(self, key: str, offset: int, data: bytes) -> int:
+        """Append `data` at `offset`, which must equal the current size (a
+        missing file has size 0). Returns the new size."""
+        path = self._path(key)
+        size = path.stat().st_size if path.is_file() else 0
+        if offset != size:
+            raise ValueError(f"offset {offset} != current size {size} for {key!r}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as fh:
+            fh.write(data)
+        return size + len(data)
+
+    def move(self, src_key: str, dst_key: str) -> None:
+        src, dst = self._path(src_key), self._path(dst_key)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.replace(dst)
+
+    def sha256(self, key: str) -> str:
+        digest = hashlib.sha256()
+        with self._path(key).open("rb") as fh:
+            while block := fh.read(1024 * 1024):
+                digest.update(block)
+        return digest.hexdigest()
+
     def path_for(self, key: str) -> Path:
         """Absolute filesystem path for `key` (validated). For FileResponse etc."""
         return self._path(key)

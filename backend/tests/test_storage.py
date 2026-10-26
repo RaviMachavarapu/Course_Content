@@ -150,3 +150,38 @@ def test_gc_keeps_current_published_and_newest_n(tmp_path: Path, db_session: Ses
             ext="pdf",
         )
         assert storage.exists(key)
+
+
+def test_append_and_move(tmp_path: Path) -> None:
+    import hashlib
+
+    store = Storage(tmp_path / "m", "http://x")
+    assert store.append("uploads/a.pdf", 0, b"hello ") == 6
+    assert store.append("uploads/a.pdf", 6, b"world") == 11
+    assert store.sha256("uploads/a.pdf") == hashlib.sha256(b"hello world").hexdigest()
+    store.move("uploads/a.pdf", "courses/c/sources/01-a.pdf")
+    assert not store.exists("uploads/a.pdf")
+    assert store.open("courses/c/sources/01-a.pdf") == b"hello world"
+
+
+def test_append_wrong_offset_raises(tmp_path: Path) -> None:
+    store = Storage(tmp_path / "m", "http://x")
+    store.append("uploads/a.pdf", 0, b"abc")
+    with pytest.raises(ValueError):
+        store.append("uploads/a.pdf", 1, b"zzz")
+    with pytest.raises(ValueError):
+        store.append("uploads/new.pdf", 5, b"zzz")
+    assert store.open("uploads/a.pdf") == b"abc"
+
+
+def test_upload_and_source_keys() -> None:
+    from app.storage.keys import source_key, upload_key
+
+    u = uuid.uuid4()
+    assert upload_key(u) == f"uploads/{u}.pdf"
+    assert source_key(IDS["course"], IDS["module"], 3, "paper") == (
+        f"courses/{IDS['course']}/modules/{IDS['module']}/sources/03-paper.pdf"
+    )
+    assert source_key(IDS["course"], IDS["module"], 3, "paper", part=2).endswith(
+        "/sources/03-paper.part2.pdf"
+    )

@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
+from sqlalchemy import select
+
 from app.api.deps import get_redis
 from app.config import get_settings
 from app.db.session import session_scope
 from app.logging import get_logger
+from app.models.enums import SourceUploadStatus
+from app.models.source_upload import SourceUpload
 from app.pipeline.factory import get_content_provider
 from app.services.metrics import record_mcp_healthcheck
 from app.storage.service import get_storage
@@ -37,4 +43,25 @@ def media_gc() -> int:
     with session_scope() as session:
         removed = storage.gc_superseded_media(session, keep_last_n=settings.media_gc_keep_versions)
     log.info("media_gc.done", removed=removed)
+    return removed
+
+
+@celery_app.task(name="app.tasks.purge_abandoned_uploads")
+def purge_abandoned_uploads() -> int:
+    """Delete non-claimed chunked uploads older than 24 h, with their files."""
+    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)
+    storage = get_storage()
+    with session_scope() as session:
+        stale = session.scalars(
+            select(SourceUpload).where(
+                SourceUpload.status != SourceUploadStatus.claimed,
+                SourceUpload.created_at < cutoff,
+            )
+        ).all()
+        for upload in stale:
+            storage.delete(upload.storage_key)
+            session.delete(upload)
+        session.flush()
+        removed = len(stale)
+    log.info("purge_abandoned_uploads.done", removed=removed)
     return removed

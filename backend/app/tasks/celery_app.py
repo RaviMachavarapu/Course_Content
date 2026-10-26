@@ -31,6 +31,10 @@ celery_app.conf.update(
             "task": "app.tasks.media_gc",
             "schedule": crontab(hour=3, minute=30),
         },
+        "uploads-purge-hourly": {
+            "task": "app.tasks.purge_abandoned_uploads",
+            "schedule": crontab(minute=15),
+        },
         "mcp-healthcheck": {
             "task": "app.tasks.mcp_healthcheck",
             "schedule": crontab(minute="*/5"),
