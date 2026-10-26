@@ -90,3 +90,9 @@ class FlashcardRatingValue(_StrEnum):
     hard = "hard"
     good = "good"
     easy = "easy"
+
+
+class SourceUploadStatus(_StrEnum):
+    receiving = "receiving"
+    complete = "complete"
+    claimed = "claimed"

@@ -20,14 +20,17 @@ from app.models.enums import (
     MediaFileKind,
     ModuleSourceType,
     ModuleStatus,
+    SourceUploadStatus,
 )
 from app.models.flashcard_rating import FlashcardRating
 from app.models.generation_job import GenerationJob
 from app.models.media_file import MediaFile
 from app.models.module import Module
+from app.models.module_source_file import ModuleSourceFile
 from app.models.progress import ArtifactProgress, CourseProgress
 from app.models.prompt_template import PromptTemplate
 from app.models.quiz_attempt import QuizAttempt
+from app.models.source_upload import SourceUpload
 from app.models.status import derive_course_status, derive_module_status
 from app.models.user import User, UserRole, normalize_email
 
@@ -51,10 +54,13 @@ __all__ = [
     "MediaFile",
     "MediaFileKind",
     "Module",
+    "ModuleSourceFile",
     "ModuleSourceType",
     "ModuleStatus",
     "PromptTemplate",
     "QuizAttempt",
+    "SourceUpload",
+    "SourceUploadStatus",
     "User",
     "UserRole",
     "derive_course_status",

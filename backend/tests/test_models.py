@@ -13,8 +13,13 @@ from app.models import (
     ArtifactType,
     Course,
     Module,
+    ModuleSourceFile,
     ModuleSourceType,
     PromptTemplate,
+    SourceUpload,
+    SourceUploadStatus,
+    User,
+    UserRole,
 )
 
 
@@ -75,3 +80,82 @@ def test_inactive_prompt_templates_do_not_conflict(db_session: Session) -> None:
         ]
     )
     db_session.flush()  # no error
+
+
+def test_module_without_link_with_source_files(db_session: Session) -> None:
+    course = Course(title="PDFs", slug=f"pdfs-{id(db_session)}", description="d")
+    module = Module(
+        course=course,
+        order_index=0,
+        title="From files",
+        source_url=None,
+        source_type=ModuleSourceType.pdf,
+    )
+    module.source_files.append(
+        ModuleSourceFile(
+            order_index=1,
+            file_name="b.pdf",
+            size_bytes=5_000_000_000,
+            checksum_sha256="b" * 64,
+            storage_key="module-sources/b.pdf",
+            page_count=3,
+        )
+    )
+    module.source_files.append(
+        ModuleSourceFile(
+            order_index=0,
+            file_name="a.pdf",
+            size_bytes=10,
+            checksum_sha256="a" * 64,
+            storage_key="module-sources/a.pdf",
+            page_count=1,
+            parts=[
+                {
+                    "first_page": 1,
+                    "last_page": 1,
+                    "storage_key": "module-sources/a.part1.pdf",
+                    "notebooklm_source_id": None,
+                }
+            ],
+        )
+    )
+    db_session.add(course)
+    db_session.flush()
+    db_session.expire_all()
+
+    reloaded = db_session.get(Module, module.id)
+    assert reloaded is not None
+    assert reloaded.source_url is None
+    assert reloaded.notebooklm_link_source_id is None
+    assert reloaded.sources_ready_at is None
+    assert reloaded.sources_error is None
+    assert reloaded.sources_failed_at is None
+    assert [f.file_name for f in reloaded.source_files] == ["a.pdf", "b.pdf"]
+    assert reloaded.source_files[0].parts[0]["last_page"] == 1
+    assert reloaded.source_files[1].parts == []
+    assert reloaded.source_files[1].size_bytes == 5_000_000_000
+    assert reloaded.source_files[1].created_at is not None
+
+    db_session.delete(reloaded)
+    db_session.flush()
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(ModuleSourceFile)) == 0
+
+
+def test_source_upload_defaults(db_session: Session) -> None:
+    admin = User(
+        email=f"up-{id(db_session)}@example.com",
+        password_hash="x",
+        role=UserRole.admin,
+        display_name="Admin",
+    )
+    db_session.add(admin)
+    db_session.flush()
+    upload = SourceUpload(
+        admin_id=admin.id, file_name="big.pdf", size_bytes=123, storage_key="tmp/uploads/x"
+    )
+    db_session.add(upload)
+    db_session.flush()
+    db_session.refresh(upload)
+    assert upload.received_bytes == 0
+    assert upload.status is SourceUploadStatus.receiving
+    assert upload.created_at is not None
