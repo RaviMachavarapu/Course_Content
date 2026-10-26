@@ -183,7 +183,7 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
     for sf in files:
         n = len(sf.parts)
         for i, part in enumerate(sf.parts):
-            name = sf.file_name if n == 1 else f"{sf.file_name} (part {i + 1} of {n})"
+            name = part_display_name(sf.file_name, i + 1, n)
             existing: str | None = part.get("notebooklm_source_id")
             if existing:
                 waiting[existing] = (name, None, _forget_part(sf, i))
@@ -197,6 +197,18 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
     # 6. wait until NotebookLM has processed every source
     _wait_ready(provider, nb, waiting)
     return nb
+
+
+def part_display_name(file_name: str, i: int, n: int) -> str:
+    """The source name NotebookLM shows for part i of n of a PDF.
+
+    NotebookLM refuses an upload (HTTP 400) whose name doesn't end in `.pdf`, so
+    the part label goes before the extension: "book.pdf" -> "book (part 1 of 3).pdf".
+    A file that isn't split keeps its own name."""
+    if n == 1:
+        return file_name
+    stem = file_name[:-4] if file_name.lower().endswith(".pdf") else file_name
+    return f"{stem} (part {i} of {n}).pdf"
 
 
 def _upload(name: str, call: Callable[[], SourceRef]) -> str:

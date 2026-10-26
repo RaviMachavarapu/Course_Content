@@ -29,7 +29,11 @@ from app.models.module import Module
 from app.models.module_source_file import ModuleSourceFile
 from app.pipeline import module_sources, orchestrator
 from app.pipeline.fixture import FixtureProvider
-from app.pipeline.module_sources import SourceStepError, ensure_module_sources
+from app.pipeline.module_sources import (
+    SourceStepError,
+    ensure_module_sources,
+    part_display_name,
+)
 from app.pipeline.provider import (
     NotebookRef,
     ProviderError,
@@ -312,7 +316,7 @@ def test_oversize_pdf_uploaded_as_named_parts(
 
     run(provider, module)
 
-    assert provider.uploads == ["book.pdf (part 1 of 2)", "book.pdf (part 2 of 2)"]
+    assert provider.uploads == ["book (part 1 of 2).pdf", "book (part 2 of 2).pdf"]
     module = db_session.get(Module, module.id)
     sf = module.source_files[0]
     assert [(p["first_page"], p["last_page"]) for p in sf.parts] == [(1, 2), (3, 4)]
@@ -330,6 +334,32 @@ def test_oversize_pdf_uploaded_as_named_parts(
     )
 
 
+def test_upper_case_pdf_parts_end_in_pdf(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # NotebookLM refuses (HTTP 400) a source name that doesn't end in .pdf
+    monkeypatch.setattr(get_settings(), "source_part_max_words", 250)
+    data = _text_pdf(tmp_path / "notes.pdf", pages=4, words=100)
+    module = _module(db_session, media_storage, tmp_path, link=None, pdfs=[("Notes.PDF", data)])
+
+    run(provider, module)
+
+    assert provider.uploads == ["Notes (part 1 of 2).pdf", "Notes (part 2 of 2).pdf"]
+
+
+def test_part_display_name() -> None:
+    assert part_display_name("book.pdf", 1, 1) == "book.pdf"
+    assert part_display_name("Notes.PDF", 1, 1) == "Notes.PDF"
+    assert part_display_name("book.pdf", 2, 3) == "book (part 2 of 3).pdf"
+    assert part_display_name("Notes.PDF", 1, 2) == "Notes (part 1 of 2).pdf"
+    assert part_display_name("scan", 1, 2) == "scan (part 1 of 2).pdf"
+
+
 def test_retry_resumes_incomplete_sources(
     db_session: Session,
     media_storage: Storage,
@@ -341,11 +371,11 @@ def test_retry_resumes_incomplete_sources(
     monkeypatch.setattr(get_settings(), "source_part_max_words", 250)
     data = _text_pdf(tmp_path / "book.pdf", pages=4, words=100)
     module = _module(db_session, media_storage, tmp_path, pdfs=[("book.pdf", data)])
-    provider.reject["book.pdf (part 2 of 2)"] = "Unsupported file"
+    provider.reject["book (part 2 of 2).pdf"] = "Unsupported file"
 
     with pytest.raises(SourceStepError) as err:
         run(provider, module)
-    message = "NotebookLM couldn't read book.pdf (part 2 of 2): Unsupported file"
+    message = "NotebookLM couldn't read book (part 2 of 2).pdf: Unsupported file"
     assert str(err.value) == message
     module = db_session.get(Module, module.id)
     assert module.sources_error == message
@@ -358,7 +388,7 @@ def test_retry_resumes_incomplete_sources(
     before = len(provider.uploads)
     nb = run(provider, module)  # the Retry: a job queued after the failure
 
-    assert provider.uploads[before:] == ["book.pdf (part 2 of 2)"]
+    assert provider.uploads[before:] == ["book (part 2 of 2).pdf"]
     assert len(provider.notebooks) == 1 and provider.links == [LINK]
     module = db_session.get(Module, module.id)
     assert module.notebooklm_notebook_id == nb.notebook_id
