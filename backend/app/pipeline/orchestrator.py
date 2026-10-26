@@ -203,7 +203,7 @@ def start_module_generation(
     options_by_type: dict[ArtifactType, dict[str, Any]] | None = None,
     prompts_by_type: dict[ArtifactType, str] | None = None,
 ) -> list[ArtifactJob]:
-    """Create the notebook + source and enqueue one `generate_artifact` job per
+    """Reset the module's notebook state and enqueue one `generate_artifact` job per
     requested type. Returns the (artifact, job) pairs for the caller to dispatch.
     `options_by_type` (if given) sets each artifact's stored generation
     options; any type not present gets that type's defaults.
@@ -218,9 +218,16 @@ def start_module_generation(
 
     artifacts = ensure_artifacts(session, module)
     requested = list(dict.fromkeys(types)) or list(ARTIFACT_TYPES)
-    nb = provider.create_notebook(module.title)
-    module.notebooklm_notebook_id = nb.notebook_id
-    provider.add_source(nb, module.source_url)
+    # No provider calls here: the background source step (re)builds the
+    # notebook and adds the sources. Clearing these makes it start fresh.
+    module.notebooklm_notebook_id = None
+    module.notebooklm_link_source_id = None
+    module.sources_ready_at = None
+    module.sources_error = None
+    module.sources_failed_at = None
+    for sf in module.source_files:
+        # reassign (not mutate) so the JSONB column registers the change
+        sf.parts = [{**part, "notebooklm_source_id": None} for part in sf.parts]
 
     jobs: list[ArtifactJob] = []
     for artifact_type in requested:

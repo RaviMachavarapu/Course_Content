@@ -120,6 +120,7 @@ def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
         "app.api.admin.artifacts",
         "app.api.admin.jobs",
         "app.api.admin.uploads",
+        "app.api.admin.courses",
     ):
         monkeypatch.setattr(f"{module}.get_storage", lambda: store, raising=False)
     return store

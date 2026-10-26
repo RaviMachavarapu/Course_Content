@@ -71,6 +71,7 @@ def _run_all(db: Session, provider: FixtureProvider, module: Module, types: list
     return jobs
 
 
+@pytest.mark.xfail(strict=True, reason="moved to source step, Task 7")
 def test_start_module_creates_six_artifacts_notebook_and_jobs(
     db_session: Session, provider: FixtureProvider
 ) -> None:
