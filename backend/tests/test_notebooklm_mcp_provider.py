@@ -22,6 +22,7 @@ from app.pipeline.provider import (
     GenerationTimeout,
     NotebookRef,
     ProviderError,
+    SourceState,
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
@@ -262,3 +263,58 @@ def test_lock_is_released_even_when_the_call_raises() -> None:
     lock = provider._redis.lock("mcp:session", timeout=5, blocking_timeout=1)
     assert lock.acquire(blocking=True)
     lock.release()
+
+
+def test_add_file_source_posts_path_and_name() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"source_id": "src-9"})
+
+    provider = _provider(handler)
+    ref = provider.add_file_source(
+        NotebookRef(notebook_id="nb-1"), "/data/media/uploads/a.pdf", "a.pdf"
+    )
+    assert ref.source_id == "src-9"
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/source/upload"
+    assert json.loads(seen[0].content) == {
+        "notebook_id": "nb-1",
+        "path": "/data/media/uploads/a.pdf",
+        "name": "a.pdf",
+    }
+    assert seen[0].extensions["timeout"]["read"] is None
+
+
+def test_source_statuses_maps_shim_reply() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/source/status"
+        assert request.url.params["notebook_id"] == "nb-1"
+        return httpx.Response(
+            200,
+            json={
+                "sources": [
+                    {"id": "s1", "title": "A", "status": "pending"},
+                    {"id": "s2", "title": "B", "status": "ready"},
+                    {"id": "s3", "title": "C", "status": "failed"},
+                ]
+            },
+        )
+
+    out = _provider(handler).source_statuses(NotebookRef(notebook_id="nb-1"))
+    assert out == {
+        "s1": SourceState.pending,
+        "s2": SourceState.ready,
+        "s3": SourceState.failed,
+    }
+
+
+def test_add_file_source_422_is_provider_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"error": "unsupported file"})
+
+    with pytest.raises(ProviderError) as exc:
+        _provider(handler).add_file_source(NotebookRef(notebook_id="nb-1"), "/x.pdf", "x.pdf")
+    assert not isinstance(exc.value, TransientProviderError)
+    assert str(exc.value) == "unsupported file"

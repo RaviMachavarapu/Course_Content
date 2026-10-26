@@ -80,3 +80,20 @@ def test_factory_selects_notebooklm_mcp_provider() -> None:
 
     provider = get_content_provider(Settings(content_provider="notebooklm"))
     assert isinstance(provider, NotebookLmMcpProvider)
+
+
+def test_fixture_file_sources_are_ready(provider: FixtureProvider) -> None:
+    from app.pipeline.provider import SourceState
+
+    nb = provider.create_notebook("Mixed")
+    link = provider.add_source(nb, "https://youtu.be/abc")
+    f = provider.add_file_source(nb, "/data/media/u/a.pdf", "My File.pdf")
+    assert f.source_id == "fixture-file-my-file-pdf"
+    assert provider.calls == [
+        ("add_file_source", nb.notebook_id, "/data/media/u/a.pdf", "My File.pdf")
+    ]
+    assert provider.source_statuses(nb) == {
+        link.source_id: SourceState.ready,
+        f.source_id: SourceState.ready,
+    }
+    assert provider.source_statuses(provider.create_notebook("Other")) == {}

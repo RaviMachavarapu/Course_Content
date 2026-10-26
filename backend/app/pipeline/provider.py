@@ -41,6 +41,12 @@ class StudioStatus(str, enum.Enum):
     awaiting_review = "awaiting_review"
 
 
+class SourceState(str, enum.Enum):
+    pending = "pending"
+    ready = "ready"
+    failed = "failed"
+
+
 class ProviderError(Exception):
     """A content provider failed a call."""
 
@@ -79,6 +85,14 @@ class ContentProvider(Protocol):
     def create_notebook(self, title: str) -> NotebookRef: ...
 
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef: ...
+
+    def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        """Upload a local file (absolute path, same in the mcp container) as a source."""
+        ...
+
+    def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        """Processing state of every source in the notebook, by source id."""
+        ...
 
     def generate(
         self,

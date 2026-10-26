@@ -36,6 +36,7 @@ from app.pipeline.provider import (
     ProviderHealth,
     RawArtifact,
     SourceRef,
+    SourceState,
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
@@ -81,6 +82,28 @@ class NotebookLmMcpProvider:
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef:
         data = self._call("notebook_add_url", {"notebook_id": nb.notebook_id, "url": url})
         return SourceRef(source_id=str(data["source_id"]))
+
+    def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        # No client timeout: the upload is bounded by Google, not by us.
+        resp = self._locked(
+            lambda: self._http.post(
+                "/source/upload",
+                json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
+                timeout=None,
+            )
+        )
+        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+            # NotebookLM rejected the file: permanent, not worth retrying.
+            raise ProviderError(self._error_message(resp))
+        self._raise_for_status(resp)
+        source_id = resp.json().get("source_id")
+        if not source_id:
+            raise ProviderError(f"/source/upload returned no source_id: {resp.text}")
+        return SourceRef(source_id=str(source_id))
+
+    def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        data = self._studio("GET", "/source/status", params={"notebook_id": nb.notebook_id})
+        return {str(s["id"]): SourceState(s["status"]) for s in data.get("sources", [])}
 
     def generate(
         self,
@@ -216,6 +239,14 @@ class NotebookLmMcpProvider:
             return request()
         finally:
             lock.release()
+
+    @staticmethod
+    def _error_message(resp: httpx.Response) -> str:
+        try:
+            body = resp.json()
+        except ValueError:
+            return resp.text
+        return str(body.get("error", resp.text)) if isinstance(body, dict) else resp.text
 
     def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.status_code == 502:

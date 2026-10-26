@@ -20,6 +20,7 @@ from app.pipeline.provider import (
     ProviderHealth,
     RawArtifact,
     SourceRef,
+    SourceState,
     StudioJobRef,
     StudioStatus,
 )
@@ -43,6 +44,9 @@ class FixtureProvider:
         self._dir = (fixtures_dir or _FIXTURES_DIR) / fixture_id
         if not self._dir.is_dir():
             raise FileNotFoundError(f"fixture set not found: {self._dir}")
+        #: calls tests may assert on, e.g. ("add_file_source", notebook_id, path, name)
+        self.calls: list[tuple[Any, ...]] = []
+        self._source_ids: dict[str, list[str]] = {}
 
     # -- ContentProvider ---------------------------------------------------
 
@@ -50,7 +54,18 @@ class FixtureProvider:
         return NotebookRef(notebook_id=f"fixture-nb-{_slug(title)}")
 
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef:
-        return SourceRef(source_id=f"fixture-src-{_slug(url)[:40]}")
+        ref = SourceRef(source_id=f"fixture-src-{_slug(url)[:40]}")
+        self._remember(nb, ref)
+        return ref
+
+    def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        self.calls.append(("add_file_source", nb.notebook_id, path, display_name))
+        ref = SourceRef(source_id=f"fixture-file-{_slug(display_name)}")
+        self._remember(nb, ref)
+        return ref
+
+    def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        return {sid: SourceState.ready for sid in self._source_ids.get(nb.notebook_id, [])}
 
     def generate(
         self,
@@ -101,6 +116,11 @@ class FixtureProvider:
         return None
 
     # -- helpers ---------------------------------------------------------
+
+    def _remember(self, nb: NotebookRef, ref: SourceRef) -> None:
+        ids = self._source_ids.setdefault(nb.notebook_id, [])
+        if ref.source_id not in ids:
+            ids.append(ref.source_id)
 
     def _read_text(self, name: str) -> str:
         path = self._dir / name
