@@ -40,6 +40,7 @@ from app.pipeline.provider import (
     SourceRef,
     SourceState,
     StudioJobRef,
+    TransientProviderError,
 )
 from app.storage.keys import source_key
 from app.storage.service import Storage
@@ -67,6 +68,10 @@ class SpyProvider(FixtureProvider):
         #: display names whose source NotebookLM reports as failed / never ready
         self.fail_state: set[str] = set()
         self.never_ready: set[str] = set()
+        #: display names whose source NotebookLM stops listing (for this many polls; -1 = always)
+        self.unlisted: dict[str, int] = {}
+        #: called once just before the named provider method runs (e.g. a concurrent Re-run all)
+        self.before: dict[str, Callable[[], None]] = {}
         self._names: dict[str, str] = {}  # source id -> display name
         self.create_delay = 0.0
         self.generated: list[ArtifactType] = []
@@ -82,6 +87,8 @@ class SpyProvider(FixtureProvider):
         return super().add_source(nb, url)
 
     def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        if hook := self.before.pop("add_file_source", None):
+            hook()
         if display_name in self.reject:
             raise ProviderError(self.reject[display_name])
         ref = super().add_file_source(nb, path, display_name)
@@ -89,6 +96,8 @@ class SpyProvider(FixtureProvider):
         return ref
 
     def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        if hook := self.before.pop("source_statuses", None):
+            hook()
         self.status_polls += 1
         states = super().source_statuses(nb)
         for sid in states:
@@ -97,6 +106,15 @@ class SpyProvider(FixtureProvider):
                 states[sid] = SourceState.failed
             elif name in self.never_ready:
                 states[sid] = SourceState.pending
+        hidden = set()
+        for sid in list(states):
+            name = self._names.get(sid)
+            if name in self.unlisted and self.unlisted[name] != 0:
+                self.unlisted[name] -= 1
+                hidden.add(sid)
+        if hidden:
+            # a plain dict: an id NotebookLM doesn't list is simply absent
+            return {sid: st for sid, st in states.items() if sid not in hidden}
         return states
 
     def generate(
@@ -580,6 +598,126 @@ def test_rerun_all_rebuilds_notebook(
     assert provider.uploads == ["a.pdf", "a.pdf"]
     module = db_session.get(Module, module.id)
     assert module.notebooklm_notebook_id == second.notebook_id
+    assert module.sources_ready_at is not None
+
+
+def test_source_no_longer_listed_is_reuploaded_on_retry(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+    clock: list[float],
+) -> None:
+    module = _module(
+        db_session,
+        media_storage,
+        tmp_path,
+        link=None,
+        pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))],
+    )
+    provider.never_ready.add("a.pdf")
+    with pytest.raises(SourceStepError, match="still processing"):
+        run(provider, module)  # the id is kept for the Retry
+    provider.never_ready.clear()
+    provider.unlisted["a.pdf"] = -1  # NotebookLM dropped it
+
+    start = clock[0]
+    with pytest.raises(SourceStepError) as err:
+        run(provider, module)
+    assert str(err.value) == "NotebookLM couldn't read a.pdf"
+    assert clock[0] - start < 10  # no 10-minute wait for an id from an earlier run
+    module = db_session.get(Module, module.id)
+    assert _parts(module)[0]["notebooklm_source_id"] is None  # forgotten → re-upload
+
+    provider.unlisted.clear()
+    run(provider, module)
+    assert provider.uploads == ["a.pdf", "a.pdf"]
+    assert db_session.get(Module, module.id).sources_ready_at is not None
+
+
+def test_new_source_not_yet_listed_is_pending_for_30_seconds(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+) -> None:
+    module = _module(
+        db_session,
+        media_storage,
+        tmp_path,
+        link=None,
+        pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))],
+    )
+    provider.unlisted["a.pdf"] = 5  # listed from the 6th poll (~15 s)
+    run(provider, module)
+    assert provider.uploads == ["a.pdf"]
+    assert db_session.get(Module, module.id).sources_ready_at is not None
+
+
+def test_new_source_never_listed_fails_after_30_seconds(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+    clock: list[float],
+) -> None:
+    module = _module(
+        db_session,
+        media_storage,
+        tmp_path,
+        link=None,
+        pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))],
+    )
+    provider.unlisted["a.pdf"] = -1
+    start = clock[0]
+    with pytest.raises(SourceStepError) as err:
+        run(provider, module)
+    assert str(err.value) == "NotebookLM couldn't read a.pdf"
+    assert 30 <= clock[0] - start < 40
+    assert _parts(db_session.get(Module, module.id))[0]["notebooklm_source_id"] is None
+
+
+@pytest.mark.parametrize("during", ["add_file_source", "source_statuses"])
+def test_rerun_all_during_source_step_aborts_the_step(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+    source_step_sessions: Sessions,
+    during: str,
+) -> None:
+    module = _module(
+        db_session,
+        media_storage,
+        tmp_path,
+        link=None,
+        pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))],
+    )
+
+    def rerun_all() -> None:
+        with source_step_sessions() as other:
+            orchestrator.start_module_generation(
+                other, provider, module.id, [ArtifactType.flashcards]
+            )
+
+    provider.before[during] = rerun_all
+    with pytest.raises(TransientProviderError):
+        run(provider, module)
+
+    module = db_session.get(Module, module.id)
+    # Re-run all's reset stands: the stale step committed nothing over it
+    assert module.notebooklm_notebook_id is None
+    assert module.sources_ready_at is None
+    assert _parts(module)[0]["notebooklm_source_id"] is None
+
+    nb = run(provider, module)  # the Re-run all job builds a fresh notebook
+    module = db_session.get(Module, module.id)
+    assert module.notebooklm_notebook_id == nb.notebook_id
+    assert len(provider.notebooks) == 2
     assert module.sources_ready_at is not None
 
 

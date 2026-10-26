@@ -31,7 +31,7 @@ from typing import Any
 
 import redis
 from redis.exceptions import LockError
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -57,6 +57,8 @@ log = get_logger("module_sources")
 _LOCK_TIMEOUT_SEC = 7200
 _POLL_INTERVAL_SEC = 3.0
 _SOURCE_READY_TIMEOUT_SEC = 600.0
+# NotebookLM may not list a brand-new source straight away
+_UNLISTED_GRACE_SEC = 30.0
 
 # Injected in tests (fake clock) so the source-ready waits run instantly.
 _sleep: Callable[[float], None] = time.sleep
@@ -134,6 +136,7 @@ def _run(
         log.warning("module_sources.failed", module_id=str(module_id), error=str(exc))
         raise
 
+    _check_not_reset(session, module, nb)
     module.sources_ready_at = func.now()
     session.commit()
     log.info("module_sources.ready", module_id=str(module_id), notebook=nb.notebook_id)
@@ -158,6 +161,7 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
     if link:
         if not module.notebooklm_link_source_id:
             sid = _upload(link, functools.partial(provider.add_source, nb, link))
+            _check_not_reset(session, module, nb)
             module.notebooklm_link_source_id = sid
             session.commit()
             waiting[sid] = (link, _now() + _SOURCE_READY_TIMEOUT_SEC, _forget_link(module))
@@ -190,6 +194,7 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
                 continue
             path = str(storage.path_for(part["storage_key"]))
             sid = _upload(name, functools.partial(provider.add_file_source, nb, path, name))
+            _check_not_reset(session, module, nb)
             _set_part_id(sf, i, sid)
             session.commit()
             waiting[sid] = (name, _now() + _SOURCE_READY_TIMEOUT_SEC, _forget_part(sf, i))
@@ -224,6 +229,19 @@ def _upload(name: str, call: Callable[[], SourceRef]) -> str:
         ) from exc
 
 
+def _check_not_reset(session: Session, module: Module, nb: NotebookRef) -> None:
+    """Abort if Re-run all reset the module's notebook while this step was running.
+
+    Committing now would write this (stale) notebook's ids over the reset; the
+    Re-run all job, waiting on the module lock, rebuilds everything instead."""
+    with session.no_autoflush:
+        current = session.execute(
+            select(Module.notebooklm_notebook_id).where(Module.id == module.id)
+        ).scalar_one_or_none()
+    if current != nb.notebook_id:
+        raise TransientProviderError("this module's sources were reset while being added")
+
+
 def _wait_ready(
     provider: ContentProvider,
     nb: NotebookRef,
@@ -232,13 +250,21 @@ def _wait_ready(
     # sources added by an earlier run get their 10 minutes from now
     start = _now() + _SOURCE_READY_TIMEOUT_SEC
     pending = {sid: (name, dl or start, forget) for sid, (name, dl, forget) in waiting.items()}
+    # an id added in this run may go unlisted for its first seconds; any other is gone
+    unlisted_until = {
+        sid: dl - _SOURCE_READY_TIMEOUT_SEC + _UNLISTED_GRACE_SEC
+        for sid, (_name, dl, _forget) in waiting.items()
+        if dl is not None
+    }
     while pending:
         states = provider.source_statuses(nb)
         for sid, (name, _deadline, forget) in list(pending.items()):
-            state = states.get(sid, SourceState.pending)
+            state = states.get(sid)
+            if state is None and _now() < unlisted_until.get(sid, float("-inf")):
+                state = SourceState.pending
             if state is SourceState.ready:
                 del pending[sid]
-            elif state is SourceState.failed:
+            elif state is SourceState.failed or state is None:
                 forget()  # a Retry uploads it again
                 raise SourceStepError(f"NotebookLM couldn't read {name}")
         if not pending:
