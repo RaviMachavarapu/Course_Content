@@ -27,7 +27,7 @@ import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StudioError, createArtifact, download, outlineAction } from "./studio.js";
-import { sourceStatuses, uploadSource } from "./sources.js";
+import { readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
 
 const PORT = process.env.PORT || 7332;
 const MCP_PACKAGE = process.env.NOTEBOOKLM_MCP_PACKAGE || "notebooklm-mcp-server@4.0.2";
@@ -186,17 +186,10 @@ function studioFail(res, err) {
 // studio_poll's status strings → NotebookLM's codes (connector's mapping).
 const STATUS_CODES = { pending: 1, in_progress: 2, completed: 3, failed: 4 };
 
-async function sourceIds(notebookId) {
-  const nb = await callTool("notebook_get", { notebook_id: notebookId });
-  const ids = (nb.sources ?? []).map((s) => s.id).filter(Boolean);
-  if (!ids.length) throw new StudioError(`notebook ${notebookId} has no sources`);
-  return ids;
-}
-
 app.post("/studio/create", async (req, res) => {
   const { notebook_id: notebookId, kind, focus_prompt: focus, options } = req.body ?? {};
   try {
-    const ids = await sourceIds(notebookId);
+    const ids = await readySourceIds(notebookId);
     const artifactId = await createArtifact(notebookId, ids, kind, focus ?? "", options ?? {});
     lastOkAt = new Date().toISOString();
     res.json({ artifact_id: artifactId });

@@ -12,9 +12,9 @@ fs.mkdirSync(path.join(home, ".notebooklm-mcp"));
 fs.writeFileSync(path.join(home, ".notebooklm-mcp", "auth.json"), JSON.stringify({ cookies: "SID=x; OSID=y" }));
 process.env.HOME = home;
 
-let uploadSource, sourceStatuses, StudioError;
+let uploadSource, sourceStatuses, readySourceIds, StudioError;
 before(async () => {
-  ({ uploadSource, sourceStatuses } = await import("../sources.js"));
+  ({ uploadSource, sourceStatuses, readySourceIds } = await import("../sources.js"));
   ({ StudioError } = await import("../studio.js"));
 });
 
@@ -129,4 +129,22 @@ test("maps source status codes", async () => {
     { id: "c", title: "tc", status: "ready" },
     { id: "d", title: "td", status: "failed" },
   ]);
+});
+
+const src = (id, code) => [[id], `t${id}`, [null, null, [1, 2]], [null, code]];
+
+test("Studio generation gets only ready source ids", async () => {
+  fakeNotebookLm({ batchBody: batchReply("rLM1Ne", [["nb", [src("orphan", 5), src("good", 2)]]]) });
+  assert.deepEqual(await readySourceIds("NB"), ["good"]);
+});
+
+test("no ready sources is a StudioError", async () => {
+  fakeNotebookLm({ batchBody: batchReply("rLM1Ne", [["nb", [src("a", 5), src("b", 1)]]]) });
+  await assert.rejects(readySourceIds("NB"), (e) => e instanceof StudioError && /no ready sources/.test(e.message));
+});
+
+test("a missing file fails before any source is registered", async () => {
+  const calls = fakeNotebookLm();
+  await assert.rejects(uploadSource("NB", path.join(home, "nope.pdf"), "nope.pdf"), StudioError);
+  assert.equal(calls.length, 0);
 });

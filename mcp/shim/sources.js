@@ -34,12 +34,19 @@ function failUpload(step, res) {
 }
 
 export async function uploadSource(notebookId, filePath, name) {
-  const registered = await rpc("o4cbdc", [[[name, 3]], notebookId, SOURCE_OPTIONS], `/notebook/${notebookId}`);
-  const sourceId = registered?.[0]?.[0]?.[0]?.[0];
-  if (!sourceId) throw new StudioError("NotebookLM did not return a source id for the upload");
-
-  const file = await fs.promises.open(filePath, "r");
+  // Open first: a missing or unreadable file must fail before a source is
+  // registered, or NotebookLM keeps an orphan stuck in "pending".
+  let file;
   try {
+    file = await fs.promises.open(filePath, "r");
+  } catch (err) {
+    throw new StudioError(`cannot read ${filePath}: ${err.code ?? err.message}`);
+  }
+  let sourceId;
+  try {
+    const registered = await rpc("o4cbdc", [[[name, 3]], notebookId, SOURCE_OPTIONS], `/notebook/${notebookId}`);
+    sourceId = registered?.[0]?.[0]?.[0]?.[0];
+    if (!sourceId) throw new StudioError("NotebookLM did not return a source id for the upload");
     const size = (await file.stat()).size;
 
     const started = await fetch(UPLOAD_URL, {
@@ -103,4 +110,11 @@ export async function sourceStatuses(notebookId) {
     `/notebook/${notebookId}`,
   );
   return (result?.[0]?.[1] ?? []).map((s) => ({ id: s[0]?.[0], title: s[1], status: statusOf(s[3]?.[1]) }));
+}
+
+/** Ids of the sources NotebookLM has finished processing; Studio may use only these. */
+export async function readySourceIds(notebookId) {
+  const ids = (await sourceStatuses(notebookId)).filter((s) => s.status === "ready").map((s) => s.id);
+  if (!ids.length) throw new StudioError(`notebook ${notebookId} has no ready sources`);
+  return ids;
 }
