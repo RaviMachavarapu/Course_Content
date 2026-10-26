@@ -2,6 +2,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MathText } from "./MathText";
 import { renderMathInHtml } from "./renderMathInHtml";
+import { splitMath } from "./segments";
 
 describe("MathText", () => {
   it("renders inline formula", () => {
@@ -38,6 +39,11 @@ describe("MathText", () => {
   it("html in formula is not injected", () => {
     const { container } = render(<MathText text="$<img src=x onerror=alert(1)>$" />);
     expect(container.querySelector("img")).toBeNull();
+  });
+  it("a missing text (old rows) renders nothing instead of crashing", () => {
+    const { container } = render(<MathText text={undefined as unknown as string} />);
+    expect(container.textContent).toBe("");
+    expect(splitMath(null as unknown as string)).toEqual([]);
   });
   it("mhchem works", () => {
     const { container } = render(<MathText text="$\ce{H2O}$" />);

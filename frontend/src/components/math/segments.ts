@@ -10,7 +10,9 @@ const isDigit = (c: string | undefined) => c !== undefined && /[0-9]/.test(c);
  * `$…$` inline (opening `$` followed by a non-space, closing `$` preceded by a
  * non-space and not followed by a digit); `\$` is a literal dollar.
  */
-export function splitMath(input: string): Segment[] {
+export function splitMath(text: string): Segment[] {
+  // old rows may lack the field: treat anything that isn't a string as empty
+  const input = typeof text === "string" ? text : "";
   const out: Segment[] = [];
   let buf = "";
   const flush = () => {
