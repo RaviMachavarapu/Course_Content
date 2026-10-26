@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     mcp_timeout_audio_sec: int = 1200
     max_module_fanout: int = 2
 
+    # ---- PDF sources (NotebookLM rejects >200 MB or >500,000 words per source) ----
+    source_part_max_bytes: int = 190 * 1024 * 1024
+    source_part_max_words: int = 450_000
+    notebook_max_sources: int = 300
+
     # ---- auth ----
     admin_session_ttl_hours: int = 8
     student_session_ttl_days: int = 30

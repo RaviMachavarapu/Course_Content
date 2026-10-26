@@ -25,6 +25,7 @@ dependencies = [
     "markdown-it-py>=3.0,<4",
     "python-pptx>=1.0,<2",
     "weasyprint>=63,<64",
+    "pypdf>=5.0,<6",
     "structlog>=24.4,<25",
     "sentry-sdk[fastapi,celery]>=2.17,<3",
 ]
