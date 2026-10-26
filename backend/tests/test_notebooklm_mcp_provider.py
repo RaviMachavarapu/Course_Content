@@ -21,6 +21,7 @@ from app.pipeline.notebooklm_mcp import NotebookLmMcpProvider
 from app.pipeline.provider import (
     GenerationTimeout,
     NotebookRef,
+    ProviderAuthError,
     ProviderError,
     SourceState,
     StudioJobRef,
@@ -318,3 +319,35 @@ def test_add_file_source_422_is_provider_error() -> None:
         _provider(handler).add_file_source(NotebookRef(notebook_id="nb-1"), "/x.pdf", "x.pdf")
     assert not isinstance(exc.value, TransientProviderError)
     assert str(exc.value) == "unsupported file"
+
+
+@pytest.mark.parametrize("route", ["upload", "status"])
+def test_source_routes_401_is_provider_auth_error(route: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "Google session needs attention"})
+
+    provider = _provider(handler)
+    nb = NotebookRef(notebook_id="nb-1")
+    with pytest.raises(ProviderAuthError) as exc:
+        if route == "upload":
+            provider.add_file_source(nb, "/x.pdf", "x.pdf")
+        else:
+            provider.source_statuses(nb)
+    assert not isinstance(exc.value, TransientProviderError)
+    assert str(exc.value) == "Google session needs attention"
+
+
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        ({"id": "s1", "status": "weird"}, "unexpected source status from the connector: 'weird'"),
+        ({"id": "s1"}, "unexpected source status from the connector: None"),
+        ({"status": "ready"}, "source without an id"),
+    ],
+)
+def test_source_statuses_bad_items_are_provider_errors(item: dict[str, Any], message: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"sources": [item]})
+
+    with pytest.raises(ProviderError, match=message):
+        _provider(handler).source_statuses(NotebookRef(notebook_id="nb-1"))

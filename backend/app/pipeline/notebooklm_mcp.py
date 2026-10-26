@@ -32,6 +32,7 @@ from app.models.enums import ArtifactType
 from app.pipeline.provider import (
     GenerationTimeout,
     NotebookRef,
+    ProviderAuthError,
     ProviderError,
     ProviderHealth,
     RawArtifact,
@@ -95,6 +96,7 @@ class NotebookLmMcpProvider:
         if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
             # NotebookLM rejected the file: permanent, not worth retrying.
             raise ProviderError(self._error_message(resp))
+        self._raise_for_source_auth(resp)
         self._raise_for_status(resp)
         source_id = resp.json().get("source_id")
         if not source_id:
@@ -102,8 +104,27 @@ class NotebookLmMcpProvider:
         return SourceRef(source_id=str(source_id))
 
     def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
-        data = self._studio("GET", "/source/status", params={"notebook_id": nb.notebook_id})
-        return {str(s["id"]): SourceState(s["status"]) for s in data.get("sources", [])}
+        resp = self._locked(
+            lambda: self._http.get("/source/status", params={"notebook_id": nb.notebook_id})
+        )
+        self._raise_for_source_auth(resp)
+        self._raise_for_status(resp)
+        body = resp.json()
+        items = body.get("sources") if isinstance(body, dict) else None
+        if not isinstance(items, list):
+            raise ProviderError(f"/source/status returned an unexpected result: {body!r}")
+        out: dict[str, SourceState] = {}
+        for item in items:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise ProviderError(f"source without an id from the connector: {item!r}")
+            value = item.get("status")
+            try:
+                out[str(item["id"])] = SourceState(value)
+            except ValueError:
+                raise ProviderError(
+                    f"unexpected source status from the connector: {value!r}"
+                ) from None
+        return out
 
     def generate(
         self,
@@ -239,6 +260,10 @@ class NotebookLmMcpProvider:
             return request()
         finally:
             lock.release()
+
+    def _raise_for_source_auth(self, resp: httpx.Response) -> None:
+        if resp.status_code == httpx.codes.UNAUTHORIZED:
+            raise ProviderAuthError(self._error_message(resp))
 
     @staticmethod
     def _error_message(resp: httpx.Response) -> str:

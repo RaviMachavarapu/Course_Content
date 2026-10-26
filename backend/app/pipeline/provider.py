@@ -51,6 +51,10 @@ class ProviderError(Exception):
     """A content provider failed a call."""
 
 
+class ProviderAuthError(ProviderError):
+    """The NotebookLM Google session needs signing in again."""
+
+
 class TransientProviderError(ProviderError):
     """A provider failure that is worth retrying (timeout, 5xx, locked session)."""
 
