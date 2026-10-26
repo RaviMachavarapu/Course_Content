@@ -10,6 +10,8 @@
   Google/MCP session needed), one fully published and one left in review so
   both the ingest→review→publish and the student-facing flows are visible
   immediately.
+- ``refresh-report-math`` — one-time: re-read every stored report from
+  NotebookLM and rebuild its text/HTML with the formula-aware parser, in place.
 """
 
 from __future__ import annotations
@@ -25,12 +27,16 @@ from sqlalchemy.orm import Session
 
 from app.auth.hashing import hash_password
 from app.db.session import session_scope
+from app.models.artifact import Artifact
+from app.models.artifact_version import ArtifactVersion
 from app.models.course import Course
 from app.models.enums import ArtifactType
 from app.models.module import Module
 from app.models.user import User, UserRole, normalize_email
 from app.pipeline import orchestrator
+from app.pipeline.factory import get_content_provider
 from app.pipeline.fixture import FixtureProvider
+from app.pipeline.provider import ContentProvider, ProviderError, StudioJobRef
 from app.services.ingestion import detect_source_type
 from app.services.progress import record_artifact_progress
 from app.services.prompts import seed_prompt_templates
@@ -295,6 +301,93 @@ def _cmd_seed_prompts(_: argparse.Namespace) -> int:
     return 0
 
 
+def refresh_report_math(
+    session: Session, provider: ContentProvider, *, dry_run: bool = False
+) -> list[tuple[str, str]]:
+    """Rebuild every report version's content from its NotebookLM artifact.
+
+    Updates ``content_json``/``content_html`` in place (same revision, same
+    media). Returns ``(label, outcome)`` per version, outcome being ``updated``,
+    ``unchanged`` or ``skipped (<reason>)``. Any fetch/parse error skips the
+    version and leaves its row untouched. With ``dry_run`` nothing is written
+    (``updated`` then means "would be updated").
+    """
+    versions = session.scalars(
+        select(ArtifactVersion)
+        .join(Artifact, Artifact.id == ArtifactVersion.artifact_id)
+        .where(
+            Artifact.type == ArtifactType.report,
+            ArtifactVersion.notebooklm_artifact_id.is_not(None),
+        )
+        .order_by(ArtifactVersion.created_at)
+    ).all()
+
+    results: list[tuple[str, str]] = []
+    for version in versions:
+        module = version.artifact.module
+        label = (
+            f"{module.title} / report r{version.revision} " f"[{version.notebooklm_artifact_id}]"
+        )
+        notebook_id = module.notebooklm_notebook_id
+        if not notebook_id or not version.notebooklm_artifact_id:
+            results.append((label, "skipped (module has no NotebookLM notebook)"))
+            continue
+        job = StudioJobRef(
+            job_id=version.notebooklm_artifact_id,
+            notebook_id=notebook_id,
+            kind=ArtifactType.report,
+        )
+        try:
+            raw = provider.fetch_content(job)
+        except ProviderError as exc:
+            text = str(exc)
+            if "404" in text or "not found" in text.lower():
+                reason = "not found in the module's notebook"
+            else:
+                reason = f"fetch failed: {text[:200]}"
+            results.append((label, f"skipped ({reason})"))
+            continue
+        except Exception as exc:
+            results.append((label, f"skipped (fetch failed: {exc!s:.200})"))
+            continue
+        try:
+            content_json, _blobs, content_html = orchestrator._content_and_media(
+                provider, ArtifactType.report, raw, job
+            )
+        except Exception as exc:
+            results.append((label, f"skipped (parse failed: {exc!s:.200})"))
+            continue
+        if not content_json or not content_html:
+            results.append((label, "skipped (rebuilt content is empty)"))
+            continue
+        if content_json == version.content_json and content_html == version.content_html:
+            results.append((label, "unchanged"))
+            continue
+        if not dry_run:
+            version.content_json = content_json
+            version.content_html = content_html
+            session.flush()
+        results.append((label, "updated"))
+    return results
+
+
+def _cmd_refresh_report_math(args: argparse.Namespace) -> int:
+    provider = get_content_provider()
+    with session_scope() as session:
+        results = refresh_report_math(session, provider, dry_run=args.dry_run)
+    for label, outcome in results:
+        print(f"{label}: {outcome}")
+    counts = {"updated": 0, "unchanged": 0, "skipped": 0}
+    for _, outcome in results:
+        counts[outcome.split(" ")[0]] += 1
+    prefix = "DRY RUN - nothing written. " if args.dry_run else ""
+    print(
+        f"{prefix}refresh-report-math: {counts['updated']} updated, "
+        f"{counts['unchanged']} unchanged, {counts['skipped']} skipped"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app.cli", description="Shikshak Dp admin CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -318,6 +411,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="build a reviewable demo: admin + student + two courses via FixtureProvider",
     )
     demo.set_defaults(func=_cmd_seed_demo)
+
+    refresh = sub.add_parser(
+        "refresh-report-math",
+        help="re-read existing reports from NotebookLM and rebuild them (formula-aware)",
+    )
+    refresh.add_argument(
+        "--dry-run", action="store_true", help="report what would change without writing"
+    )
+    refresh.set_defaults(func=_cmd_refresh_report_math)
 
     return parser
 

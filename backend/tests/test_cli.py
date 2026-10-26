@@ -6,11 +6,15 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.auth.hashing import verify_password
-from app.cli import build_parser, seed_admin, seed_demo
+from app.cli import build_parser, refresh_report_math, seed_admin, seed_demo
+from app.models.artifact_version import ArtifactVersion
 from app.models.course import Course
 from app.models.enums import ArtifactType, CourseStatus, ModuleStatus
 from app.models.progress import ArtifactProgress
 from app.models.user import User, UserRole
+from app.pipeline import orchestrator
+from app.pipeline.provider import ProviderError, RawArtifact, StudioJobRef
+from tests.integration.test_notebooklm_pipeline import FakeNotebookLm, _artifact, _row
 
 
 def _count_users(session: Session) -> int:
@@ -109,3 +113,91 @@ def test_seed_demo_is_idempotent_for_courses(db_session: Session) -> None:
         .where(Course.title == "Neural Networks Crash Course")
     )
     assert count == 1
+
+
+STALE_HTML = "<p>old <code>E = mc^2</code></p>"
+
+
+def _stored_report(db: Session, provider: FakeNotebookLm) -> ArtifactVersion:
+    artifact = _artifact(db, ArtifactType.report)
+    version = orchestrator.run_artifact_generation(db, provider, artifact.id)
+    assert version is not None
+    return version
+
+
+def _make_stale(version: ArtifactVersion) -> dict[str, object]:
+    fresh = dict(version.content_json or {})
+    version.content_json = {**fresh, "title": "stale title"}
+    version.content_html = STALE_HTML
+    return fresh
+
+
+def test_refresh_updates_report_html_in_place(db_session: Session) -> None:
+    provider = FakeNotebookLm(_row("report_interactive.json"))
+    version = _stored_report(db_session, provider)
+    version_id, revision = version.id, version.revision
+    fresh = _make_stale(version)
+    db_session.flush()
+
+    results = refresh_report_math(db_session, provider)
+
+    assert [outcome for _, outcome in results] == ["updated"]
+    db_session.refresh(version)
+    assert version.id == version_id and version.revision == revision
+    assert version.content_json == fresh
+    assert version.content_html != STALE_HTML and "<h2" in (version.content_html or "")
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(ArtifactVersion)) == 1
+
+    assert [o for _, o in refresh_report_math(db_session, provider)] == ["unchanged"]
+
+
+class _MissingArtifact(FakeNotebookLm):
+    def fetch_content(self, job: StudioJobRef) -> RawArtifact:
+        raise ProviderError("MCP shim error 404: artifact not found")
+
+
+def test_missing_artifact_is_skipped_and_listed(db_session: Session) -> None:
+    version = _stored_report(db_session, FakeNotebookLm(_row("report_interactive.json")))
+    _make_stale(version)
+    db_session.flush()
+
+    results = refresh_report_math(db_session, _MissingArtifact(None))
+
+    assert len(results) == 1
+    label, outcome = results[0]
+    assert version.notebooklm_artifact_id in label
+    assert outcome == "skipped (not found in the module's notebook)"
+    db_session.refresh(version)
+    assert version.content_html == STALE_HTML  # untouched
+    assert version.content_json is not None and version.content_json["title"] == "stale title"
+
+
+def test_unparseable_row_is_skipped_not_blanked(db_session: Session) -> None:
+    version = _stored_report(db_session, FakeNotebookLm(_row("report_interactive.json")))
+    _make_stale(version)
+    db_session.flush()
+
+    results = refresh_report_math(db_session, FakeNotebookLm([None]))
+
+    assert results[0][1].startswith("skipped (")
+    db_session.refresh(version)
+    assert version.content_html == STALE_HTML
+
+
+def test_dry_run_changes_nothing(db_session: Session) -> None:
+    provider = FakeNotebookLm(_row("report_interactive.json"))
+    version = _stored_report(db_session, provider)
+    _make_stale(version)
+    db_session.flush()
+
+    results = refresh_report_math(db_session, provider, dry_run=True)
+
+    assert [outcome for _, outcome in results] == ["updated"]
+    db_session.refresh(version)
+    assert version.content_html == STALE_HTML
+    assert version.content_json is not None and version.content_json["title"] == "stale title"
+
+
+def test_refresh_command_is_registered() -> None:
+    ns = build_parser().parse_args(["refresh-report-math", "--dry-run"])
+    assert ns.dry_run is True
