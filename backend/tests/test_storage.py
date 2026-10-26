@@ -168,10 +168,17 @@ def test_append_wrong_offset_raises(tmp_path: Path) -> None:
     store = Storage(tmp_path / "m", "http://x")
     store.append("uploads/a.pdf", 0, b"abc")
     with pytest.raises(ValueError):
-        store.append("uploads/a.pdf", 1, b"zzz")
+        store.append("uploads/a.pdf", 5, b"zzz")  # beyond the end
     with pytest.raises(ValueError):
         store.append("uploads/new.pdf", 5, b"zzz")
     assert store.open("uploads/a.pdf") == b"abc"
+
+
+def test_append_truncates_unrecorded_tail(tmp_path: Path) -> None:
+    store = Storage(tmp_path / "m", "http://x")
+    store.append("uploads/a.pdf", 0, b"abc")
+    assert store.append("uploads/a.pdf", 2, b"XY") == 4
+    assert store.open("uploads/a.pdf") == b"abXY"
 
 
 def test_upload_and_source_keys() -> None:

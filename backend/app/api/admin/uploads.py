@@ -5,14 +5,17 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Query, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import CurrentAdmin, DbDep
 from app.errors import APIError
 from app.models.enums import SourceUploadStatus
 from app.models.source_upload import SourceUpload
+from app.models.user import User
 from app.schemas.uploads import (
     CHUNK_SIZE,
     MAX_CHUNK_BYTES,
@@ -59,14 +62,11 @@ def create_upload(body: UploadCreate, db: DbDep, admin: CurrentAdmin) -> UploadC
     return UploadCreated(upload_id=upload_id, chunk_size=CHUNK_SIZE)
 
 
-@router.put("/uploads/{upload_id}", response_model=UploadProgress)
-async def put_chunk(
-    upload_id: uuid.UUID,
-    request: Request,
-    db: DbDep,
-    admin: CurrentAdmin,
-    offset: int = Query(ge=0),
-) -> UploadProgress | JSONResponse:
+def _apply_chunk(
+    db: Session, admin: User, upload_id: uuid.UUID, offset: int, data: bytes
+) -> int | JSONResponse:
+    """Sync (runs in a worker thread): lock the row, append, commit. The row
+    lock is taken and released inside this one call, never across an await."""
     upload = _own_upload(db, admin, upload_id, lock=True)
     if upload.status != SourceUploadStatus.receiving:
         raise APIError(status.HTTP_409_CONFLICT, "not_receiving", "Upload is already finished")
@@ -83,9 +83,6 @@ async def put_chunk(
                 },
             },
         )
-    data = await request.body()
-    if len(data) > MAX_CHUNK_BYTES:
-        raise APIError(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Chunk too big")
     if upload.received_bytes + len(data) > upload.size_bytes:
         raise APIError(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -105,8 +102,26 @@ async def put_chunk(
             db.commit()  # the error response must not roll the cleanup back
             raise APIError(status.HTTP_422_UNPROCESSABLE_ENTITY, "not_pdf", message)
         upload.status = SourceUploadStatus.complete
-    db.flush()
-    return UploadProgress(received_bytes=upload.received_bytes)
+    received = upload.received_bytes
+    db.commit()
+    return received
+
+
+@router.put("/uploads/{upload_id}", response_model=UploadProgress)
+async def put_chunk(
+    upload_id: uuid.UUID,
+    request: Request,
+    db: DbDep,
+    admin: CurrentAdmin,
+    offset: int = Query(ge=0),
+) -> UploadProgress | JSONResponse:
+    data = await request.body()  # read first: no lock is held while awaiting
+    if len(data) > MAX_CHUNK_BYTES:
+        raise APIError(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Chunk too big")
+    result = await run_in_threadpool(_apply_chunk, db, admin, upload_id, offset, data)
+    if isinstance(result, JSONResponse):
+        return result
+    return UploadProgress(received_bytes=result)
 
 
 @router.get("/uploads/{upload_id}", response_model=UploadStatusOut)

@@ -72,16 +72,23 @@ class Storage:
         return stored
 
     def append(self, key: str, offset: int, data: bytes) -> int:
-        """Append `data` at `offset`, which must equal the current size (a
-        missing file has size 0). Returns the new size."""
+        """Write `data` at `offset` and return the new size.
+
+        `offset` must not exceed the current size (a missing file has size 0),
+        otherwise `ValueError`. If the file is longer than `offset` (a previous
+        write landed on disk but the caller never recorded it), it is truncated
+        to `offset` first, so a retry at the recorded offset self-heals.
+        """
         path = self._path(key)
         size = path.stat().st_size if path.is_file() else 0
-        if offset != size:
-            raise ValueError(f"offset {offset} != current size {size} for {key!r}")
+        if offset > size:
+            raise ValueError(f"offset {offset} is beyond current size {size} for {key!r}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("ab") as fh:
+        with path.open("r+b" if size else "wb") as fh:
+            fh.truncate(offset)
+            fh.seek(offset)
             fh.write(data)
-        return size + len(data)
+        return offset + len(data)
 
     def move(self, src_key: str, dst_key: str) -> None:
         src, dst = self._path(src_key), self._path(dst_key)

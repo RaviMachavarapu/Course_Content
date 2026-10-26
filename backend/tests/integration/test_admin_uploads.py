@@ -69,6 +69,49 @@ def test_put_wrong_offset_conflict(client: TestClient, db_session: Session) -> N
     assert r.json()["received_bytes"] == 50
 
 
+def test_put_recovers_when_file_is_ahead_of_db(
+    client: TestClient, db_session: Session, media_storage: Storage
+) -> None:
+    h = _login(client, db_session)
+    uid = _create(client, h, len(PDF))
+    _put(client, h, uid, 0, PDF[:30])
+    row = db_session.get(SourceUpload, uuid.UUID(uid))
+    assert row is not None
+    # simulate a write that reached disk but never committed
+    media_storage.append(row.storage_key, 30, b"garbage-tail")
+    r = _put(client, h, uid, 30, PDF[30:])
+    assert r.status_code == 200
+    assert r.json() == {"received_bytes": len(PDF)}
+    assert media_storage.open(row.storage_key) == PDF
+
+
+def test_duplicate_chunk_conflicts_and_file_intact(
+    client: TestClient, db_session: Session, media_storage: Storage
+) -> None:
+    h = _login(client, db_session)
+    uid = _create(client, h, len(PDF))
+    assert _put(client, h, uid, 0, PDF[:50]).status_code == 200
+    r = _put(client, h, uid, 0, PDF[:50])
+    assert r.status_code == status.HTTP_409_CONFLICT
+    assert r.json()["code"] == "offset_mismatch"
+    assert r.json()["received_bytes"] == 50
+    row = db_session.get(SourceUpload, uuid.UUID(uid))
+    assert row is not None
+    assert media_storage.open(row.storage_key) == PDF[:50]
+
+
+def test_put_requires_csrf(client: TestClient, db_session: Session) -> None:
+    h = _login(client, db_session)
+    uid = _create(client, h, len(PDF))
+    r = client.put(
+        f"/api/admin/uploads/{uid}?offset=0",
+        content=PDF,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert r.status_code == status.HTTP_403_FORBIDDEN
+    assert client.get(f"/api/admin/uploads/{uid}").json()["received_bytes"] == 0
+
+
 def test_resume_reports_received_bytes(client: TestClient, db_session: Session) -> None:
     h = _login(client, db_session)
     uid = _create(client, h, len(PDF))
