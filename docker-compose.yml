@@ -121,10 +121,11 @@ services:
       - ./mcp/auth:/root/.notebooklm-mcp
       - media:/data/media:ro
     ports:
-      - "7332:7332"
+      # localhost only: the shim and noVNC carry the Google session.
+      - "127.0.0.1:7332:7332"
       # noVNC — open http://localhost:6080/vnc.html to watch/click through
       # the interactive Google login (see mcp/README.md).
-      - "6080:6080"
+      - "127.0.0.1:6080:6080"
 
 volumes:
   pgdata:

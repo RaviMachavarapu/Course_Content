@@ -27,7 +27,7 @@ import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StudioError, createArtifact, download, outlineAction } from "./studio.js";
-import { readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
+import { PathNotAllowed, readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
 
 const PORT = process.env.PORT || 7332;
 const MCP_PACKAGE = process.env.NOTEBOOKLM_MCP_PACKAGE || "notebooklm-mcp-server@4.0.2";
@@ -251,6 +251,7 @@ app.post("/source/upload", async (req, res) => {
     lastOkAt = new Date().toISOString();
     res.json({ source_id: sourceId });
   } catch (err) {
+    if (err instanceof PathNotAllowed) return res.status(400).json({ error: err.message });
     studioFail(res, err);
   }
 });

@@ -8,10 +8,13 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { ORIGIN, UA, StudioError, cookieHeader, remember, rpc } from "./studio.js";
 
 const PIECE = 1048576;
 const UPLOAD_URL = `${ORIGIN}/upload/_/?authuser=0`;
+// The backend's media volume (mounted read-only here); nothing else may be uploaded.
+const MEDIA_ROOT = "/data/media";
 const SOURCE_OPTIONS = [2, null, [1], [1, null, null, null, null, null, null, null, null, null, [1, 3]]];
 
 function uploadHeaders(extra) {
@@ -33,7 +36,21 @@ function failUpload(step, res) {
   return new StudioError(msg);
 }
 
-export async function uploadSource(notebookId, filePath, name) {
+/** A path outside the media volume or not a .pdf: the route answers 400. */
+export class PathNotAllowed extends Error {
+  constructor() {
+    super("path not allowed");
+  }
+}
+
+export async function uploadSource(notebookId, filePath, name, { root = MEDIA_ROOT } = {}) {
+  // Checked before anything is sent to NotebookLM: the shim's port must not be a
+  // way to upload other files in this container (auth.json holds the session).
+  const resolved = path.resolve(String(filePath));
+  if (!path.isAbsolute(String(filePath)) || !resolved.startsWith(`${root}/`) || !/\.pdf$/i.test(resolved)) {
+    throw new PathNotAllowed();
+  }
+  filePath = resolved;
   // Open first: a missing or unreadable file must fail before a source is
   // registered, or NotebookLM keeps an orphan stuck in "pending".
   let file;
@@ -103,13 +120,21 @@ function statusOf(code) {
   return "failed";
 }
 
+const KNOWN_CODES = new Set([1, 2, 5]);
+
 export async function sourceStatuses(notebookId) {
   const result = await rpc(
     "rLM1Ne",
     [notebookId, null, SOURCE_OPTIONS, null, 1, [[null, null, []]]],
     `/notebook/${notebookId}`,
   );
-  return (result?.[0]?.[1] ?? []).map((s) => ({ id: s[0]?.[0], title: s[1], status: statusOf(s[3]?.[1]) }));
+  const rows = (result?.[0]?.[1] ?? []).map((s) => ({ id: s[0]?.[0], title: s[1], code: s[3]?.[1] }));
+  const unknown = rows.filter((r) => !KNOWN_CODES.has(r.code));
+  if (unknown.length) {
+    // still reported as failed, but a new NotebookLM code should show up in the logs
+    console.warn(`unknown source status codes (treated as failed): ${unknown.map((r) => `${r.id}=${r.code}`).join(", ")}`);
+  }
+  return rows.map(({ id, title, code }) => ({ id, title, status: statusOf(code) }));
 }
 
 /** Ids of the sources NotebookLM has finished processing; Studio may use only these. */

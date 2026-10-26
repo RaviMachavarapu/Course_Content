@@ -12,9 +12,9 @@ fs.mkdirSync(path.join(home, ".notebooklm-mcp"));
 fs.writeFileSync(path.join(home, ".notebooklm-mcp", "auth.json"), JSON.stringify({ cookies: "SID=x; OSID=y" }));
 process.env.HOME = home;
 
-let uploadSource, sourceStatuses, readySourceIds, StudioError;
+let uploadSource, sourceStatuses, readySourceIds, StudioError, PathNotAllowed;
 before(async () => {
-  ({ uploadSource, sourceStatuses, readySourceIds } = await import("../sources.js"));
+  ({ uploadSource, sourceStatuses, readySourceIds, PathNotAllowed } = await import("../sources.js"));
   ({ StudioError } = await import("../studio.js"));
 });
 
@@ -68,7 +68,7 @@ test("registers, starts, then uploads in one finalize for a small file", async (
   const file = tempFile(724);
   const calls = fakeNotebookLm();
 
-  const id = await uploadSource("NB", file, "upload-check.pdf");
+  const id = await uploadSource("NB", file, "upload-check.pdf", { root: home });
 
   assert.equal(id, "SRC");
   assert.equal(calls.length, 3);
@@ -99,7 +99,7 @@ test("uploads a 2.5 MB file in 1 MB pieces", async () => {
   const file = tempFile(2.5 * 1024 * 1024);
   const calls = fakeNotebookLm();
 
-  await uploadSource("NB", file, "big.pdf");
+  await uploadSource("NB", file, "big.pdf", { root: home });
 
   const pieces = calls.filter((c) => c.url === UPLOAD_URL);
   assert.deepEqual(
@@ -116,7 +116,7 @@ test("throws StudioError when the final reply is not x-goog-upload-status: final
   const file = tempFile(724);
   fakeNotebookLm({ finalStatus: "active" });
 
-  await assert.rejects(uploadSource("NB", file, "upload-check.pdf"), StudioError);
+  await assert.rejects(uploadSource("NB", file, "upload-check.pdf", { root: home }), StudioError);
 });
 
 test("maps source status codes", async () => {
@@ -145,6 +145,47 @@ test("no ready sources is a StudioError", async () => {
 
 test("a missing file fails before any source is registered", async () => {
   const calls = fakeNotebookLm();
-  await assert.rejects(uploadSource("NB", path.join(home, "nope.pdf"), "nope.pdf"), StudioError);
+  await assert.rejects(uploadSource("NB", path.join(home, "nope.pdf"), "nope.pdf", { root: home }), StudioError);
   assert.equal(calls.length, 0);
+});
+
+test("only PDFs under /data/media may be uploaded, checked before any request", async () => {
+  const calls = fakeNotebookLm();
+  for (const p of [
+    "/root/.notebooklm-mcp/auth.json",
+    "/data/media/../../root/.notebooklm-mcp/auth.json",
+    "/data/media-evil/a.pdf",
+    "/data/media/uploads/notes.txt",
+    "uploads/a.pdf",
+  ]) {
+    await assert.rejects(
+      uploadSource("NB", p, "a.pdf"),
+      (e) => e instanceof PathNotAllowed && e.message === "path not allowed",
+      p,
+    );
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("a .PDF under the media root is allowed (case-insensitive)", async () => {
+  const file = path.join(home, "UPPER.PDF");
+  fs.writeFileSync(file, "%PDF-1.4");
+  fakeNotebookLm();
+  assert.equal(await uploadSource("NB", file, "upload-check.pdf", { root: home }), "SRC");
+});
+
+test("unknown status codes are failed and logged once per call", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  fakeNotebookLm({ batchBody: batchReply("rLM1Ne", [["nb", [src("a", 9), src("b", 2), src("c", 7)]]]) });
+
+  const out = await sourceStatuses("NB");
+
+  assert.deepEqual(
+    out.map((s) => s.status),
+    ["failed", "ready", "failed"],
+  );
+  assert.equal(warn.mock.callCount(), 1);
+  const msg = warn.mock.calls[0].arguments.join(" ");
+  assert.match(msg, /a.*9/);
+  assert.match(msg, /c.*7/);
 });
