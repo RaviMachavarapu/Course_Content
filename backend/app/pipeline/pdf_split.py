@@ -61,28 +61,72 @@ def _pages_size(reader: PdfReader, first: int, last: int) -> int:
     return buf.tell()
 
 
-def plan_parts(path: Path, *, max_bytes: int, max_words: int) -> list[PartPlan]:
-    reader = _open(path)
-    parts: list[PartPlan] = []
-    start = 1
-    words = 0
-    size = 0
+def _page_words(reader: PdfReader, n: int) -> int:
+    """Words on page n (1-based). A page whose text can't be extracted counts 0, like a scan."""
     try:
-        for n in range(1, len(reader.pages) + 1):
-            page_words = len((reader.pages[n - 1].extract_text() or "").split())
-            page_size = _pages_size(reader, n, n)
-            if page_size > max_bytes or page_words > max_words:
+        return len((reader.pages[n - 1].extract_text() or "").split())
+    except Exception:
+        return 0
+
+
+def _fit_end(reader: PdfReader, start: int, limit: int, max_bytes: int) -> int:
+    """Last page e in start..limit such that pages start..e really serialize to <= max_bytes.
+
+    Grows the range exponentially, then bisects. Returns 0 when page ``start`` alone is too
+    big."""
+    if _pages_size(reader, start, start) > max_bytes:
+        return 0
+    good, step = start, 1
+    bad = limit + 1
+    while good < limit:
+        cand = min(good + step, limit)
+        if _pages_size(reader, start, cand) <= max_bytes:
+            good = cand
+            step *= 2
+        else:
+            bad = cand
+            break
+    while bad - good > 1:
+        mid = (good + bad) // 2
+        if _pages_size(reader, start, mid) <= max_bytes:
+            good = mid
+        else:
+            bad = mid
+    return good
+
+
+def plan_parts(path: Path, *, max_bytes: int, max_words: int) -> list[PartPlan]:
+    """Page ranges that each fit max_words and max_bytes.
+
+    A file already within max_bytes is planned by words only. A bigger file is planned by
+    serializing real page ranges, because summing single-page sizes counts shared resources
+    (fonts, images) once per page."""
+    reader = _open(path)
+    total = len(reader.pages)
+    try:
+        words = [_page_words(reader, n) for n in range(1, total + 1)]
+        for n, page_words in enumerate(words, start=1):
+            if page_words > max_words:
                 raise PageTooLarge(n, path.name)
-            if n > start and (words + page_words > max_words or size + page_size > max_bytes):
-                parts.append(PartPlan(start, n - 1))
-                start, words, size = n, 0, 0
-            words += page_words
-            size += page_size
+        by_size = path.stat().st_size > max_bytes
+        parts: list[PartPlan] = []
+        start = 1
+        while start <= total:
+            end, count = start, words[start - 1]
+            while end < total and count + words[end] <= max_words:
+                count += words[end]
+                end += 1
+            if by_size:
+                fit = _fit_end(reader, start, end, max_bytes)
+                if fit == 0:
+                    raise PageTooLarge(start, path.name)
+                end = fit
+            parts.append(PartPlan(start, end))
+            start = end + 1
     except PageTooLarge:
         raise
     except Exception as exc:
         raise PdfUnreadable(f"{path.name} can't be opened (damaged or password-protected)") from exc
-    parts.append(PartPlan(start, len(reader.pages)))
     return parts
 
 

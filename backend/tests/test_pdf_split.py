@@ -140,3 +140,80 @@ def test_write_parts_single_page_over_limit_raises(tmp_path: Path) -> None:
     with pytest.raises(PageTooLarge) as exc:
         write_parts(pdf, [PartPlan(1, 2)], tmp_path / "out", "a", max_bytes=200_000)
     assert exc.value.page == 2
+
+
+def _make_shared_pdf(path: Path, pages: int, shared_blob: int, own_blob: int = 0) -> Path:
+    """Every page draws one shared image XObject (shared_blob bytes); each page may also
+    draw its own image of own_blob bytes."""
+    w = PdfWriter()
+
+    def _image(size: int) -> DecodedStreamObject:
+        img = DecodedStreamObject()
+        img.set_data(os.urandom(size))
+        img.update(
+            {
+                NameObject("/Type"): NameObject("/XObject"),
+                NameObject("/Subtype"): NameObject("/Image"),
+                NameObject("/Width"): NumberObject(size),
+                NameObject("/Height"): NumberObject(1),
+                NameObject("/ColorSpace"): NameObject("/DeviceGray"),
+                NameObject("/BitsPerComponent"): NumberObject(8),
+            }
+        )
+        return img
+
+    shared = w._add_object(_image(shared_blob))
+    for _ in range(pages):
+        page = w.add_blank_page(width=612, height=792)
+        xobjects = DictionaryObject({NameObject("/Sh"): shared})
+        content = "q 1 0 0 1 0 0 cm /Sh Do Q\n"
+        if own_blob:
+            xobjects[NameObject("/Own")] = w._add_object(_image(own_blob))
+            content += "q 1 0 0 1 0 0 cm /Own Do Q\n"
+        page[NameObject("/Resources")] = DictionaryObject({NameObject("/XObject"): xobjects})
+        stream = DecodedStreamObject()
+        stream.set_data(content.encode())
+        page[NameObject("/Contents")] = w._add_object(stream)
+    with path.open("wb") as fh:
+        w.write(fh)
+    return path
+
+
+def test_shared_resource_small_file_is_one_part(tmp_path: Path) -> None:
+    pdf = _make_shared_pdf(tmp_path / "a.pdf", pages=20, shared_blob=500_000)
+    assert pdf.stat().st_size < 1_000_000
+    assert plan_parts(pdf, max_bytes=1_000_000, max_words=1000) == [PartPlan(1, 20)]
+
+
+def test_shared_resource_large_file_measures_real_ranges(tmp_path: Path) -> None:
+    # 300 KB shared + 20 x 50 KB own: a range of k pages is ~300 KB + 50 KB * k, so a 1 MB
+    # limit fits ~14 pages per part. Summing single pages (~350 KB each) would give 10 parts.
+    pdf = _make_shared_pdf(tmp_path / "a.pdf", pages=20, shared_blob=300_000, own_blob=50_000)
+    assert pdf.stat().st_size > 1_000_000
+    parts = plan_parts(pdf, max_bytes=1_000_000, max_words=1000)
+    assert len(parts) == 2
+    assert parts[0].first_page == 1 and parts[-1].last_page == 20
+    assert parts[1].first_page == parts[0].last_page + 1
+    out = write_parts(pdf, parts, tmp_path / "out", "a", max_bytes=1_000_000)
+    assert len(out) == 2
+    assert all(p.path.stat().st_size <= 1_000_000 for p in out)
+
+
+def test_page_text_extraction_error_counts_zero_words(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pypdf import PageObject
+
+    pdf = _make_pdf(tmp_path / "a.pdf", [(100, 0)] * 3)
+    original = PageObject.extract_text
+    calls = {"n": 0}
+
+    def flaky(self: PageObject, *args: object, **kwargs: object) -> str:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("bad content stream")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PageObject, "extract_text", flaky)
+    # Page 2 counts 0 words: pages 1-2 = 100 words fit a 150-word part, page 3 starts another.
+    assert plan_parts(pdf, max_bytes=10_000_000, max_words=150) == [PartPlan(1, 2), PartPlan(3, 3)]
