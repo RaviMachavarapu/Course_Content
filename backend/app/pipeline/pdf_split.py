@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,13 @@ from app.config import get_settings
 class PartPlan:
     first_page: int  # 1-based, inclusive
     last_page: int  # 1-based, inclusive
+
+
+@dataclass(frozen=True)
+class WrittenPart:
+    first_page: int  # 1-based, inclusive
+    last_page: int
+    path: Path
 
 
 class PdfUnreadable(Exception):
@@ -87,17 +95,20 @@ def _render(reader: PdfReader, first: int, last: int) -> bytes:
     return buf.getvalue()
 
 
-def _render_fitting(reader: PdfReader, part: PartPlan, max_bytes: int, name: str) -> list[bytes]:
-    """Render a part; if its real size is over max_bytes, halve the range and recurse."""
+def _render_fitting(
+    reader: PdfReader, part: PartPlan, max_bytes: int, name: str
+) -> Iterator[tuple[PartPlan, bytes]]:
+    """Yield (range, bytes) in page order; a range over max_bytes is halved and recursed."""
     data = _render(reader, part.first_page, part.last_page)
     if len(data) <= max_bytes:
-        return [data]
+        yield part, data
+        return
     if part.first_page == part.last_page:
         raise PageTooLarge(part.first_page, name)
+    del data
     mid = (part.first_page + part.last_page) // 2
-    return _render_fitting(
-        reader, PartPlan(part.first_page, mid), max_bytes, name
-    ) + _render_fitting(reader, PartPlan(mid + 1, part.last_page), max_bytes, name)
+    yield from _render_fitting(reader, PartPlan(part.first_page, mid), max_bytes, name)
+    yield from _render_fitting(reader, PartPlan(mid + 1, part.last_page), max_bytes, name)
 
 
 def write_parts(
@@ -107,20 +118,20 @@ def write_parts(
     stem: str,
     *,
     max_bytes: int | None = None,
-) -> list[Path]:
-    """Write parts as {stem}.part{i}.pdf (1-based). Because shared resources make plan-time size
-    estimates inexact, any part whose real size exceeds max_bytes (default: the setting) is
-    split in half; a single page still too big raises PageTooLarge. The returned list can
-    therefore be longer than ``parts``."""
+) -> list[WrittenPart]:
+    """Write parts as {stem}.part{i}.pdf (1-based), each to disk as soon as it is rendered.
+
+    Because shared resources make plan-time size estimates inexact, any part whose real size
+    exceeds max_bytes (default: the setting) is split in half; a single page still too big
+    raises PageTooLarge. The result can therefore be longer than ``parts``; each WrittenPart
+    carries its own page range."""
     limit = max_bytes if max_bytes is not None else get_settings().source_part_max_bytes
     reader = _open(path)
-    blobs: list[bytes] = []
-    for part in parts:
-        blobs.extend(_render_fitting(reader, part, limit, path.name))
     out_dir.mkdir(parents=True, exist_ok=True)
-    outputs: list[Path] = []
-    for i, data in enumerate(blobs, start=1):
-        target = out_dir / f"{stem}.part{i}.pdf"
-        target.write_bytes(data)
-        outputs.append(target)
-    return outputs
+    written: list[WrittenPart] = []
+    for part in parts:
+        for rng, data in _render_fitting(reader, part, limit, path.name):
+            target = out_dir / f"{stem}.part{len(written) + 1}.pdf"
+            target.write_bytes(data)
+            written.append(WrittenPart(rng.first_page, rng.last_page, target))
+    return written

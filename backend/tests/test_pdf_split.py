@@ -77,8 +77,8 @@ def test_split_by_bytes(tmp_path: Path) -> None:
     parts = plan_parts(pdf, max_bytes=700_000, max_words=1_000_000)
     assert len(parts) > 1
     out = write_parts(pdf, parts, tmp_path / "out", "a", max_bytes=700_000)
-    assert all(p.stat().st_size <= 700_000 for p in out)
-    covered = [n for part in parts for n in range(part.first_page, part.last_page + 1)]
+    assert all(p.path.stat().st_size <= 700_000 for p in out)
+    covered = [n for part in out for n in range(part.first_page, part.last_page + 1)]
     assert covered == [1, 2, 3, 4]
 
 
@@ -92,14 +92,16 @@ def test_single_page_over_limit_raises(tmp_path: Path) -> None:
     with pytest.raises(PageTooLarge) as exc:
         plan_parts(pdf, max_bytes=200_000, max_words=1_000_000)
     assert exc.value.page == 2
+    assert str(exc.value) == ("a.pdf page 2 is larger than NotebookLM's per-source limit")
 
 
 def test_encrypted_or_corrupt_raises_unreadable(tmp_path: Path) -> None:
     good = _make_pdf(tmp_path / "a.pdf", [(5, 0)] * 2)
     truncated = tmp_path / "t.pdf"
     truncated.write_bytes(good.read_bytes()[:40])
-    with pytest.raises(PdfUnreadable):
+    with pytest.raises(PdfUnreadable) as exc:
         plan_parts(truncated, max_bytes=10_000_000, max_words=1000)
+    assert str(exc.value) == "t.pdf can't be opened (damaged or password-protected)"
 
     w = PdfWriter(clone_from=str(good))
     w.encrypt("secret", algorithm="AES-128")
@@ -114,5 +116,26 @@ def test_write_parts_preserves_page_count(tmp_path: Path) -> None:
     pdf = _make_pdf(tmp_path / "a.pdf", [(100, 0)] * 5)
     parts = plan_parts(pdf, max_bytes=10_000_000, max_words=250)
     out = write_parts(pdf, parts, tmp_path / "out", "a")
-    assert [p.name for p in out] == ["a.part1.pdf", "a.part2.pdf", "a.part3.pdf"]
-    assert sum(len(PdfReader(p).pages) for p in out) == 5
+    assert [p.path.name for p in out] == ["a.part1.pdf", "a.part2.pdf", "a.part3.pdf"]
+    assert sum(len(PdfReader(p.path).pages) for p in out) == 5
+
+
+def test_write_parts_halves_oversize_plan(tmp_path: Path) -> None:
+    pdf = _make_pdf(tmp_path / "a.pdf", [(5, 300_000)] * 4)
+    plan = [PartPlan(1, 4)]
+    out = write_parts(pdf, plan, tmp_path / "out", "a", max_bytes=700_000)
+    assert len(out) > len(plan)
+    assert out[0].first_page == 1 and out[-1].last_page == 4
+    for prev, nxt in zip(out, out[1:], strict=False):
+        assert nxt.first_page == prev.last_page + 1
+    for i, part in enumerate(out, start=1):
+        assert part.path.name == f"a.part{i}.pdf"
+        assert part.path.stat().st_size <= 700_000
+        assert len(PdfReader(part.path).pages) == part.last_page - part.first_page + 1
+
+
+def test_write_parts_single_page_over_limit_raises(tmp_path: Path) -> None:
+    pdf = _make_pdf(tmp_path / "a.pdf", [(5, 1000), (5, 500_000)])
+    with pytest.raises(PageTooLarge) as exc:
+        write_parts(pdf, [PartPlan(1, 2)], tmp_path / "out", "a", max_bytes=200_000)
+    assert exc.value.page == 2
