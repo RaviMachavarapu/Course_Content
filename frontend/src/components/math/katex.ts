@@ -1,0 +1,23 @@
+import katex from "katex";
+import "katex/contrib/mhchem";
+
+/**
+ * Single place that configures KaTeX. Returns the rendered HTML, or null when
+ * KaTeX cannot render the formula (callers then show the original text).
+ */
+export function renderLatex(latex: string, displayMode: boolean): string | null {
+  try {
+    const html = katex.renderToString(latex, {
+      throwOnError: false,
+      strict: "ignore",
+      trust: false,
+      output: "htmlAndMathml",
+      displayMode,
+    });
+    // throwOnError:false renders errors as a red span instead of throwing.
+    if (html.includes('class="katex-error"')) return null;
+    return html;
+  } catch {
+    return null;
+  }
+}
