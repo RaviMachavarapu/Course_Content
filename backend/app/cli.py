@@ -10,6 +10,8 @@
   Google/MCP session needed), one fully published and one left in review so
   both the ingest→review→publish and the student-facing flows are visible
   immediately.
+- ``add-math-prompt-line`` — append the LaTeX instruction to the active
+  Flashcards, Quiz and Report templates (new version each; idempotent).
 - ``refresh-report-math`` — one-time: re-read every stored report from
   NotebookLM and rebuild its text/HTML with the formula-aware parser, in place.
 """
@@ -39,7 +41,11 @@ from app.pipeline.fixture import FixtureProvider
 from app.pipeline.provider import ContentProvider, ProviderError, StudioJobRef
 from app.services.ingestion import detect_source_type
 from app.services.progress import record_artifact_progress
-from app.services.prompts import seed_prompt_templates
+from app.services.prompts import (
+    get_active_body,
+    seed_prompt_templates,
+    update_prompt,
+)
 from app.services.publish import publish_course, publish_module
 from app.services.slugs import unique_course_slug
 
@@ -301,6 +307,36 @@ def _cmd_seed_prompts(_: argparse.Namespace) -> int:
     return 0
 
 
+MATH_PROMPT_LINE = (
+    "Write every mathematical expression, equation, chemical formula and scientific symbol "
+    "in LaTeX between $ signs (e.g. $S_N2$, $\\frac{1}{2}mv^2$, $\\ce{H2O}$), copied exactly "
+    "from the source, never paraphrased or invented."
+)
+_MATH_PROMPT_TYPES = (ArtifactType.flashcards, ArtifactType.quiz, ArtifactType.report)
+
+
+def add_math_prompt_line(session: Session) -> dict[ArtifactType, str]:
+    """Append the LaTeX instruction to each active template as a new version,
+    unless it is already there."""
+    result: dict[ArtifactType, str] = {}
+    for artifact_type in _MATH_PROMPT_TYPES:
+        body = get_active_body(session, artifact_type)
+        if MATH_PROMPT_LINE in body:
+            result[artifact_type] = "already present"
+            continue
+        row = update_prompt(session, artifact_type, f"{body.rstrip()}\n\n{MATH_PROMPT_LINE}")
+        result[artifact_type] = f"added v{row.version}"
+    return result
+
+
+def _cmd_add_math_prompt_line(_: argparse.Namespace) -> int:
+    with session_scope() as session:
+        result = add_math_prompt_line(session)
+    for artifact_type, status in result.items():
+        print(f"{artifact_type.value}: {status}")
+    return 0
+
+
 def refresh_report_math(
     session: Session, provider: ContentProvider, *, dry_run: bool = False
 ) -> list[tuple[str, str]]:
@@ -405,6 +441,12 @@ def build_parser() -> argparse.ArgumentParser:
         "seed-prompts", help="insert the default prompt template for any artifact type missing one"
     )
     prompts.set_defaults(func=_cmd_seed_prompts)
+
+    math_line = sub.add_parser(
+        "add-math-prompt-line",
+        help="append the LaTeX-formula instruction to the flashcards, quiz and report prompts",
+    )
+    math_line.set_defaults(func=_cmd_add_math_prompt_line)
 
     demo = sub.add_parser(
         "seed-demo",

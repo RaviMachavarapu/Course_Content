@@ -5,3 +5,5 @@ has exactly four options with exactly one correct answer. Distractors must be
 plausible and drawn from the same topic. After each question give a one- to
 two-sentence explanation of why the correct answer is correct. Range across
 recall, application, and interpretation. No "all/none of the above".
+
+Write every mathematical expression, equation, chemical formula and scientific symbol in LaTeX between $ signs (e.g. $S_N2$, $\frac{1}{2}mv^2$, $\ce{H2O}$), copied exactly from the source, never paraphrased or invented.

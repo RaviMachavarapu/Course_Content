@@ -201,3 +201,39 @@ def test_dry_run_changes_nothing(db_session: Session) -> None:
 def test_refresh_command_is_registered() -> None:
     ns = build_parser().parse_args(["refresh-report-math", "--dry-run"])
     assert ns.dry_run is True
+
+
+MATH_LINE = (
+    "Write every mathematical expression, equation, chemical formula and scientific symbol "
+    "in LaTeX between $ signs (e.g. $S_N2$, $\\frac{1}{2}mv^2$, $\\ce{H2O}$), copied exactly "
+    "from the source, never paraphrased or invented."
+)
+
+
+def test_math_line_appended_once(db_session: Session) -> None:
+    from app.cli import add_math_prompt_line
+    from app.services.prompts import get_active_body, seed_body, update_prompt, version_history
+
+    types = (ArtifactType.flashcards, ArtifactType.quiz, ArtifactType.report)
+    for t in types:  # simulate a dev DB seeded before the line existed
+        update_prompt(db_session, t, seed_body(t).replace(MATH_LINE, "").strip())
+    first = add_math_prompt_line(db_session)
+    assert all(first[t].startswith("added v") for t in types)
+    second = add_math_prompt_line(db_session)
+    assert all(second[t] == "already present" for t in types)
+    for t in types:
+        body = get_active_body(db_session, t)
+        assert body.count(MATH_LINE) == 1
+        assert body.endswith("\n\n" + MATH_LINE)
+        assert len(version_history(db_session, t)) == 3
+
+
+def test_seed_prompt_files_contain_math_line() -> None:
+    from app.services.prompts import seed_body
+
+    for t in (ArtifactType.flashcards, ArtifactType.quiz, ArtifactType.report):
+        assert MATH_LINE in seed_body(t)
+
+
+def test_add_math_prompt_line_command_is_registered() -> None:
+    assert build_parser().parse_args(["add-math-prompt-line"]).func is not None
