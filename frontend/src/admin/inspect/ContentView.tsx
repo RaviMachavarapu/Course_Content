@@ -1,3 +1,6 @@
+import { useMemo } from "react";
+import { MathText } from "@/components/math/MathText";
+import { renderMathInHtml } from "@/components/math/renderMathInHtml";
 import type { ArtifactType } from "../api";
 import type { InspectVersion } from "../staging/api";
 
@@ -15,10 +18,7 @@ export function ContentView({
 
   if (type === "report") {
     return (
-      <div
-        className="prose max-w-none text-body-md [&_h1]:font-display [&_h1]:text-primary [&_h2]:font-display [&_h2]:text-primary"
-        dangerouslySetInnerHTML={{ __html: version.content_html ?? "" }}
-      />
+      <ReportHtml html={version.content_html ?? ""} />
     );
   }
 
@@ -51,10 +51,12 @@ export function ContentView({
         {cards.map((card, i) => (
           <div key={i} className="rounded-lg border border-outline-variant p-3">
             {card.category && (
-              <p className="font-label-sm text-label-sm text-outline">{card.category}</p>
+              <p className="font-label-sm text-label-sm text-outline">
+                <MathText text={card.category} />
+              </p>
             )}
-            <p className="font-label-md text-label-md font-semibold">{card.front}</p>
-            <p className="mt-1 text-body-md text-on-surface-variant">{card.back}</p>
+            <p className="font-label-md text-label-md font-semibold"><MathText text={card.front} /></p>
+            <p className="mt-1 text-body-md text-on-surface-variant"><MathText text={card.back} /></p>
           </div>
         ))}
       </div>
@@ -73,7 +75,7 @@ export function ContentView({
         {qs.map((q, i) => (
           <li key={i} className="rounded-lg border border-outline-variant p-4">
             <p className="font-label-md text-label-md font-semibold">
-              {i + 1}. {q.question}
+              {i + 1}. <MathText text={q.question} />
             </p>
             <ul className="mt-2 flex flex-col gap-1">
               {q.options.map((opt, j) => (
@@ -85,12 +87,12 @@ export function ContentView({
                       : "px-2 py-1"
                   }
                 >
-                  {opt}
+                  <MathText text={opt} />
                   {j === q.correct_index && " ✓"}
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-label-sm text-on-surface-variant">{q.explanation}</p>
+            <p className="mt-2 text-label-sm text-on-surface-variant"><MathText text={q.explanation} /></p>
           </li>
         ))}
       </ol>
@@ -115,7 +117,9 @@ export function ContentView({
             </a>
             <details className="text-body-md">
               <summary className="cursor-pointer text-on-surface-variant">Text description</summary>
-              <p className="mt-2 whitespace-pre-line">{str(c.description)}</p>
+              <p className="mt-2 whitespace-pre-line">
+                <MathText text={str(c.description)} />
+              </p>
             </details>
           </>
         ) : c.diagram_source ? (
@@ -123,7 +127,9 @@ export function ContentView({
             {str(c.diagram_source)}
           </pre>
         ) : (
-          <p className="whitespace-pre-line text-body-md">{str(c.description)}</p>
+          <p className="whitespace-pre-line text-body-md">
+            <MathText text={str(c.description)} />
+          </p>
         )}
       </div>
     );
@@ -146,5 +152,16 @@ export function ContentView({
         ))}
       </ol>
     </div>
+  );
+}
+
+function ReportHtml({ html }: { html: string }): JSX.Element {
+  // renderMathInHtml is not idempotent: always run it on the stored html.
+  const rendered = useMemo(() => renderMathInHtml(html), [html]);
+  return (
+    <div
+      className="prose max-w-none text-body-md [&_h1]:font-display [&_h1]:text-primary [&_h2]:font-display [&_h2]:text-primary"
+      dangerouslySetInnerHTML={{ __html: rendered }}
+    />
   );
 }

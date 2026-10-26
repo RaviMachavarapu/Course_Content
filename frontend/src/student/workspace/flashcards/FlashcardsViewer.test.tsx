@@ -66,6 +66,20 @@ function renderViewer() {
   );
 }
 
+describe("FlashcardsViewer math", () => {
+  it("draws formulas on both faces", async () => {
+    const art = artifact();
+    art.content_json.cards = [{ front: "Rate of $S_N2$?", back: "Depends on $\\ce{H2O}$", category: "$S_N1$" }];
+    installFetch(art);
+    const { container } = renderViewer();
+    await screen.findByTestId("fc-face");
+    expect(container.querySelectorAll(".katex").length).toBe(2);
+    expect(screen.getByTestId("btn-fc1")).toHaveAttribute("aria-label", "Show answer");
+    await userEvent.click(screen.getByTestId("btn-fc1"));
+    expect(screen.getByTestId("fc-face").querySelector(".katex")).not.toBeNull();
+  });
+});
+
 describe("FlashcardsViewer", () => {
   it("shows the front, flips on click, and gates Prev at the start", async () => {
     installFetch(artifact());

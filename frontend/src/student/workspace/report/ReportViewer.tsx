@@ -1,4 +1,6 @@
-import { useEffect } from "react";
+import { MathText } from "@/components/math/MathText";
+import { renderMathInHtml } from "@/components/math/renderMathInHtml";
+import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
@@ -47,7 +49,7 @@ export function ReportViewer({
           {content.read_minutes ?? "—"} min read
         </div>
         <h1 className="mt-2 font-headline-lg text-headline-lg text-on-background">
-          {content.title ?? "Report"}
+          <MathText text={content.title ?? "Report"} />
         </h1>
       </div>
 
@@ -58,7 +60,9 @@ export function ReportViewer({
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-body-md">
             {content.key_takeaways.map((t, i) => (
-              <li key={i}>{t}</li>
+              <li key={i}>
+                <MathText text={t} />
+              </li>
             ))}
           </ul>
         </aside>
@@ -68,13 +72,9 @@ export function ReportViewer({
         {sections.map((s, i) => (
           <li key={i}>
             <h2 className="font-headline-md text-headline-md">
-              <span className="text-tertiary">{i + 1}.</span> {s.heading}
+              <span className="text-tertiary">{i + 1}.</span> <MathText text={s.heading} />
             </h2>
-            <div
-              className="prose-report mt-2 space-y-3 text-body-md leading-relaxed text-on-surface [&_a]:text-tertiary [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_strong]:font-semibold"
-              // backend renders + sanitises this HTML (nh3 allowlist, T020)
-              dangerouslySetInnerHTML={{ __html: s.html }}
-            />
+            <SectionHtml html={s.html} />
           </li>
         ))}
       </ol>
@@ -114,5 +114,17 @@ export function ReportViewer({
         </a>
       )}
     </div>
+  );
+}
+
+function SectionHtml({ html }: { html: string }): JSX.Element {
+  // renderMathInHtml is not idempotent: always run it on the stored html.
+  const rendered = useMemo(() => renderMathInHtml(html), [html]);
+  return (
+    <div
+      className="prose-report mt-2 space-y-3 text-body-md leading-relaxed text-on-surface [&_a]:text-tertiary [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_strong]:font-semibold"
+      // backend renders + sanitises this HTML (nh3 allowlist, T020); math is drawn by KaTeX
+      dangerouslySetInnerHTML={{ __html: rendered }}
+    />
   );
 }

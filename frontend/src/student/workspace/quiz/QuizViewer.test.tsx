@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { onTestFinished } from "vitest";
 import { QuizViewer } from "./QuizViewer";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -86,6 +87,32 @@ function renderViewer() {
     </QueryClientProvider>,
   );
 }
+
+describe("QuizViewer math", () => {
+  it("draws formulas in question, options and results", async () => {
+    const origQ = ARTIFACT.content_json.questions;
+    const origE = RESULT.results[1]!.explanation;
+    onTestFinished(() => {
+      ARTIFACT.content_json.questions = origQ;
+      RESULT.results[1]!.explanation = origE;
+    });
+    ARTIFACT.content_json.questions = [
+      { question: "Rate of $S_N2$?", options: ["$S_N1$", "$KOH$", "c", "d"] },
+      { question: "Sky colour?", options: ["Green", "Blue", "Red", "Pink"] },
+    ];
+    RESULT.results[1]!.explanation = "Because $S_N2$ is bimolecular.";
+    const { container } = (installFetch(), renderViewer());
+    await screen.findByText("Question 1 of 2");
+    expect(container.querySelectorAll(".katex").length).toBe(3);
+    await userEvent.click(screen.getByTestId("btn-qz1-1"));
+    await userEvent.click(screen.getByTestId("btn-qz3"));
+    await userEvent.click(screen.getByTestId("btn-qz1-0"));
+    await userEvent.click(screen.getByTestId("btn-qz4"));
+    await screen.findByTestId("quiz-score");
+    expect(container.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(2);
+    expect(container.textContent).not.toContain("$");
+  });
+});
 
 describe("QuizViewer", () => {
   it("shows the first question and does not reveal answers", async () => {

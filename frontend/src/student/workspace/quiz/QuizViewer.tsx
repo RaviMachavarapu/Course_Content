@@ -1,3 +1,4 @@
+import { MathText } from "@/components/math/MathText";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
@@ -70,7 +71,7 @@ export function QuizViewer({ artifactId, slug }: { artifactId: string; slug: str
       </div>
 
       <Card className="p-5">
-        <p className="font-headline-md text-headline-md">{q.question}</p>
+        <p className="font-headline-md text-headline-md"><MathText text={q.question} /></p>
         <div className="mt-4 flex flex-col gap-2">
           {q.options.map((opt, oi) => {
             const selected = answers[current] === oi;
@@ -97,7 +98,7 @@ export function QuizViewer({ artifactId, slug }: { artifactId: string; slug: str
                 >
                   {LETTERS[oi]}
                 </span>
-                {opt}
+                <MathText text={opt} />
               </button>
             );
           })}
@@ -188,17 +189,17 @@ function Results({
                   className={row.is_correct ? "text-secondary" : "text-error"}
                 />
                 <div className="flex-1">
-                  <p className="font-label-lg text-label-lg">{q.question}</p>
+                  <p className="font-label-lg text-label-lg"><MathText text={q.question} /></p>
                   <p className="mt-1 text-body-md text-on-surface-variant">
-                    Your answer: {LETTERS[row.selected_index]}. {q.options[row.selected_index]}
+                    Your answer: {LETTERS[row.selected_index]}. <MathText text={q.options[row.selected_index] ?? ""} />
                   </p>
                   {!row.is_correct && (
                     <p className="text-body-md text-secondary">
-                      Correct: {LETTERS[row.correct_index]}. {q.options[row.correct_index]}
+                      Correct: {LETTERS[row.correct_index]}. <MathText text={q.options[row.correct_index] ?? ""} />
                     </p>
                   )}
                   {row.explanation && (
-                    <p className="mt-1 text-body-sm text-on-surface-variant">{row.explanation}</p>
+                    <p className="mt-1 text-body-sm text-on-surface-variant"><MathText text={row.explanation} /></p>
                   )}
                 </div>
               </div>

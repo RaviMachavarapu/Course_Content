@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { onTestFinished } from "vitest";
 import { ReportViewer } from "./ReportViewer";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -70,6 +71,21 @@ function renderViewer() {
     </QueryClientProvider>,
   );
 }
+
+describe("ReportViewer math", () => {
+  it("draws math elements inside section html", async () => {
+    const orig = ARTIFACT.content_json.sections[0]!.html;
+    onTestFinished(() => {
+      ARTIFACT.content_json.sections[0]!.html = orig;
+    });
+    ARTIFACT.content_json.sections[0]!.html = '<p>Rate <span class="math-inline">S_N2</span></p><div class="math-display">\\frac{1}{2}</div>';
+    installFetch();
+    const { container } = renderViewer();
+    await screen.findByRole("heading", { name: "Neural Networks", level: 1 });
+    expect(container.querySelector(".math-inline .katex, .katex")).not.toBeNull();
+    expect(container.querySelector(".katex-display")).not.toBeNull();
+  });
+});
 
 describe("ReportViewer", () => {
   it("renders read time, title, takeaways and numbered sanitized sections", async () => {

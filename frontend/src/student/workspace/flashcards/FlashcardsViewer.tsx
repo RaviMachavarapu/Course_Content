@@ -1,3 +1,4 @@
+import { MathText } from "@/components/math/MathText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, ErrorState, Skeleton } from "@/components";
 import { cn } from "@/lib/cn";
@@ -100,14 +101,14 @@ export function FlashcardsViewer({
       >
         {!flipped && card?.category && (
           <span className="rounded-full bg-tertiary-container/40 px-2 py-0.5 font-label-sm text-label-sm text-tertiary">
-            {card.category}
+            <MathText text={card.category} />
           </span>
         )}
         <p className="text-headline-md font-headline-md" data-testid="fc-face">
-          {flipped ? card?.back : card?.front}
+          <MathText text={(flipped ? card?.back : card?.front) ?? ""} />
         </p>
         {!flipped && card?.hint && (
-          <span className="text-label-sm text-on-surface-variant">Hint: {card.hint}</span>
+          <span className="text-label-sm text-on-surface-variant">Hint: <MathText text={card.hint} /></span>
         )}
         <span className="mt-2 text-label-sm text-on-surface-variant">
           {flipped ? "Click to flip back" : "Click or press Space to flip"}
