@@ -15,10 +15,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const ORIGIN = "https://notebook.google.com";
+export const ORIGIN = "https://notebook.google.com";
 const BATCH_PATH = "/_/LabsTailwindUi/data/batchexecute";
 const AUTH_PATH = path.join(os.homedir(), ".notebooklm-mcp", "auth.json");
-const UA =
+export const UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
 
 // First RPC parameter the web app sends with Studio requests.
@@ -56,7 +56,7 @@ const HOST_ONLY = { OSID: "notebook.google.com", "__Secure-OSID": "notebook.goog
 // new values, so keep them here (in memory only — the connector owns auth.json).
 const refreshed = new Map();
 
-function remember(res) {
+export function remember(res) {
   for (const sc of res.headers.getSetCookie()) {
     const [pair, ...attrs] = sc.split(";").map((part) => part.trim());
     const domain = attrs.find((a) => /^domain=/i.test(a))?.slice(7).replace(/^\./, "");
@@ -66,7 +66,7 @@ function remember(res) {
   }
 }
 
-function cookieHeader(host) {
+export function cookieHeader(host) {
   const jar = savedCookies();
   for (const [k, v] of refreshed) jar.set(k, v);
   return [...jar]

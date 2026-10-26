@@ -119,6 +119,7 @@ services:
     profiles: ["mcp"]
     volumes:
       - ./mcp/auth:/root/.notebooklm-mcp
+      - media:/data/media:ro
     ports:
       - "7332:7332"
       # noVNC — open http://localhost:6080/vnc.html to watch/click through

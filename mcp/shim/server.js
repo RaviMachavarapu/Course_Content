@@ -27,6 +27,7 @@ import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StudioError, createArtifact, download, outlineAction } from "./studio.js";
+import { sourceStatuses, uploadSource } from "./sources.js";
 
 const PORT = process.env.PORT || 7332;
 const MCP_PACKAGE = process.env.NOTEBOOKLM_MCP_PACKAGE || "notebooklm-mcp-server@4.0.2";
@@ -241,6 +242,32 @@ app.get("/studio/download", async (req, res) => {
     const { type, data } = await download(String(req.query.url ?? ""));
     res.setHeader("Content-Type", type);
     res.send(data);
+  } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+// Add a file from the shared media volume as a source: {notebook_id, path, name}.
+app.post("/source/upload", async (req, res) => {
+  const { notebook_id: notebookId, path: filePath, name } = req.body ?? {};
+  if (!notebookId || !filePath || !name) {
+    return res.status(400).json({ error: "missing notebook_id, path or name" });
+  }
+  try {
+    const sourceId = await uploadSource(notebookId, filePath, name);
+    lastOkAt = new Date().toISOString();
+    res.json({ source_id: sourceId });
+  } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+// Per-source readiness: {sources: [{id, title, status: pending | ready | failed}]}.
+app.get("/source/status", async (req, res) => {
+  try {
+    const sources = await sourceStatuses(String(req.query.notebook_id ?? ""));
+    lastOkAt = new Date().toISOString();
+    res.json({ sources });
   } catch (err) {
     studioFail(res, err);
   }
