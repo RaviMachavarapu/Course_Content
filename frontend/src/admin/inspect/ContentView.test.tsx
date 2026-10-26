@@ -28,8 +28,14 @@ describe("ContentView math", () => {
   it("draws formulas for flashcards, quiz, infographic and report", () => {
     const cases: [Parameters<typeof ContentView>[0]["type"], InspectVersion][] = [
       ["flashcards", v({ cards: [{ front: S, back: S, category: S }] })],
-      ["quiz", v({ questions: [{ question: S, options: [S, "b"], correct_index: 0, explanation: S }] })],
+      [
+        "quiz",
+        v({ questions: [{ question: S, options: [S, "b"], correct_index: 0, explanation: S }] }),
+      ],
+      ["infographic", v({ caption: S, description: "d" })],
       ["infographic", v({ caption: "c", description: S })],
+      ["slide_deck", v({ slides: [{ title: S, bullets: [S], notes: S }] })],
+      ["audio_overview", v({ transcript: [{ t: 0, text: S }] })],
       ["report", v({}, '<p><span class="math-inline">S_N2</span></p>')],
     ];
     for (const [type, ver] of cases) {

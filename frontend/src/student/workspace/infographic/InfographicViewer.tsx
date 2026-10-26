@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 const MIN_ZOOM = 0.5;
@@ -49,9 +50,7 @@ export function InfographicViewer({
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
-      {moduleTitle && (
-        <p className="text-label-sm text-on-surface-variant">{moduleTitle}</p>
-      )}
+      {moduleTitle && <p className="text-label-sm text-on-surface-variant">{moduleTitle}</p>}
 
       <div className="flex items-center justify-end gap-1">
         <Button
@@ -102,7 +101,9 @@ export function InfographicViewer({
       </div>
 
       {content.caption && (
-        <p className="text-center text-body-md text-on-surface-variant">{content.caption}</p>
+        <p className="text-center text-body-md text-on-surface-variant">
+          <MathText text={content.caption} />
+        </p>
       )}
 
       <div className="flex flex-wrap items-center justify-center gap-3">

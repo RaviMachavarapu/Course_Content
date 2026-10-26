@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import { MathText } from "@/components/math/MathText";
-import { renderMathInHtml } from "@/components/math/renderMathInHtml";
 import type { ArtifactType } from "../api";
 import type { InspectVersion } from "../staging/api";
+import { MathText } from "@/components/math/MathText";
+import { renderMathInHtml } from "@/components/math/renderMathInHtml";
 
 /** Read-only render of a version's content_json, one branch per type.
  * Deliberately plain — the student-facing renderers land in Phase 4. */
@@ -17,9 +17,7 @@ export function ContentView({
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
   if (type === "report") {
-    return (
-      <ReportHtml html={version.content_html ?? ""} />
-    );
+    return <ReportHtml html={version.content_html ?? ""} />;
   }
 
   if (type === "slide_deck") {
@@ -29,14 +27,20 @@ export function ContentView({
         {slides.map((s, i) => (
           <li key={i} className="rounded-lg border border-outline-variant p-4">
             <p className="font-label-sm text-label-sm text-outline">Slide {i + 1}</p>
-            <p className="font-headline-md text-headline-md">{s.title}</p>
+            <p className="font-headline-md text-headline-md">
+              <MathText text={s.title} />
+            </p>
             <ul className="mt-2 list-disc pl-6 text-body-md">
               {s.bullets.map((b, j) => (
-                <li key={j}>{b}</li>
+                <li key={j}>
+                  <MathText text={b} />
+                </li>
               ))}
             </ul>
             {s.notes && (
-              <p className="mt-2 text-label-sm text-on-surface-variant">Notes: {s.notes}</p>
+              <p className="mt-2 text-label-sm text-on-surface-variant">
+                Notes: <MathText text={s.notes} />
+              </p>
             )}
           </li>
         ))}
@@ -55,8 +59,12 @@ export function ContentView({
                 <MathText text={card.category} />
               </p>
             )}
-            <p className="font-label-md text-label-md font-semibold"><MathText text={card.front} /></p>
-            <p className="mt-1 text-body-md text-on-surface-variant"><MathText text={card.back} /></p>
+            <p className="font-label-md text-label-md font-semibold">
+              <MathText text={card.front} />
+            </p>
+            <p className="mt-1 text-body-md text-on-surface-variant">
+              <MathText text={card.back} />
+            </p>
           </div>
         ))}
       </div>
@@ -92,7 +100,9 @@ export function ContentView({
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-label-sm text-on-surface-variant"><MathText text={q.explanation} /></p>
+            <p className="mt-2 text-label-sm text-on-surface-variant">
+              <MathText text={q.explanation} />
+            </p>
           </li>
         ))}
       </ol>
@@ -105,7 +115,9 @@ export function ContentView({
       version.media.find((m) => m.kind === "infographic_svg");
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-body-md text-on-surface-variant">{str(c.caption)}</p>
+        <p className="text-body-md text-on-surface-variant">
+          <MathText text={str(c.caption)} />
+        </p>
         {image ? (
           <>
             <a href={image.url} target="_blank" rel="noreferrer">
@@ -147,7 +159,7 @@ export function ContentView({
             <span className="mr-2 font-label-sm text-label-sm tabular-nums text-outline">
               {Math.floor(cue.t / 60)}:{String(Math.floor(cue.t % 60)).padStart(2, "0")}
             </span>
-            {cue.text}
+            <MathText text={cue.text} />
           </li>
         ))}
       </ol>

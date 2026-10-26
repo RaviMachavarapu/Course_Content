@@ -1,8 +1,8 @@
-import { MathText } from "@/components/math/MathText";
-import { renderMathInHtml } from "@/components/math/renderMathInHtml";
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { MathText } from "@/components/math/MathText";
+import { renderMathInHtml } from "@/components/math/renderMathInHtml";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface Section {

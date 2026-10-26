@@ -40,7 +40,12 @@ function installFetch(art: unknown) {
     let body: unknown = { error: { code: "x", message: "x" } };
     let status = 404;
     if (url.includes("/progress") && method === "PUT") {
-      body = { completed: true, slide_last_index: 2, audio_position_seconds: null, course_percent_complete: 50 };
+      body = {
+        completed: true,
+        slide_last_index: 2,
+        audio_position_seconds: null,
+        course_percent_complete: 50,
+      };
       status = 200;
     } else if (url.includes("/api/student/artifacts/")) {
       body = art;
@@ -65,6 +70,17 @@ function renderViewer() {
     </QueryClientProvider>,
   );
 }
+
+describe("SlidesViewer math", () => {
+  it("draws a formula in the notes", async () => {
+    const art = artifact();
+    art.content_json.slides[0]!.notes = "Rate of $S_N2$";
+    installFetch(art);
+    const { container } = renderViewer();
+    await screen.findByTestId("slide-image");
+    expect(container.querySelector(".katex")).not.toBeNull();
+  });
+});
 
 describe("SlidesViewer", () => {
   it("shows the first slide, counter, notes, and gates Prev at the start", async () => {

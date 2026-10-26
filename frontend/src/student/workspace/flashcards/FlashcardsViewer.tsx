@@ -1,7 +1,7 @@
-import { MathText } from "@/components/math/MathText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, ErrorState, Skeleton } from "@/components";
 import { cn } from "@/lib/cn";
+import { MathText } from "@/components/math/MathText";
 import type { FlashcardRating } from "../api";
 import { useArtifactProgress, useFlashcardRating, useStudentArtifact } from "../useWorkspace";
 
@@ -70,7 +70,8 @@ export function FlashcardsViewer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+      if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName))
+        return;
       if (e.key === " ") {
         e.preventDefault();
         setFlipped((f) => !f);
@@ -108,7 +109,9 @@ export function FlashcardsViewer({
           <MathText text={(flipped ? card?.back : card?.front) ?? ""} />
         </p>
         {!flipped && card?.hint && (
-          <span className="text-label-sm text-on-surface-variant">Hint: <MathText text={card.hint} /></span>
+          <span className="text-label-sm text-on-surface-variant">
+            Hint: <MathText text={card.hint} />
+          </span>
         )}
         <span className="mt-2 text-label-sm text-on-surface-variant">
           {flipped ? "Click to flip back" : "Click or press Space to flip"}

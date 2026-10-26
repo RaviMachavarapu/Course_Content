@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
+import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface SlideNote {
@@ -8,7 +9,13 @@ interface SlideNote {
   tags?: string[];
 }
 
-export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: string }): JSX.Element {
+export function SlidesViewer({
+  artifactId,
+  slug,
+}: {
+  artifactId: string;
+  slug: string;
+}): JSX.Element {
   const { data, isPending, isError, refetch } = useStudentArtifact(artifactId);
   const progress = useArtifactProgress(artifactId, slug);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -38,7 +45,9 @@ export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: s
   useEffect(() => {
     if (!data || total === 0) return;
     const body =
-      index >= total - 1 ? { completed: true, slide_last_index: index } : { slide_last_index: index };
+      index >= total - 1
+        ? { completed: true, slide_last_index: index }
+        : { slide_last_index: index };
     const t = setTimeout(() => progress.mutate(body), 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,7 +148,7 @@ export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: s
           Instructor Notes
         </h3>
         <p className="mt-2 whitespace-pre-line text-body-md text-on-surface">
-          {note?.notes?.trim() ? note.notes : "No notes for this slide."}
+          {note?.notes?.trim() ? <MathText text={note.notes} /> : "No notes for this slide."}
         </p>
         {note?.tags && note.tags.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1">

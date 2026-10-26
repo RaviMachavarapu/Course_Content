@@ -1,8 +1,8 @@
-import { MathText } from "@/components/math/MathText";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
 import { cn } from "@/lib/cn";
+import { MathText } from "@/components/math/MathText";
 import type { QuizResult } from "../api";
 import { useQuizSubmit, useStudentArtifact } from "../useWorkspace";
 
@@ -13,13 +13,19 @@ interface Question {
 
 const LETTERS = ["A", "B", "C", "D"];
 
-export function QuizViewer({ artifactId, slug }: { artifactId: string; slug: string }): JSX.Element {
+export function QuizViewer({
+  artifactId,
+  slug,
+}: {
+  artifactId: string;
+  slug: string;
+}): JSX.Element {
   const { data, isPending, isError, refetch } = useStudentArtifact(artifactId);
   const submit = useQuizSubmit(artifactId, slug);
   const navigate = useNavigate();
 
   const questions = useMemo(
-    () => ((data?.content_json?.questions ?? []) as Question[]),
+    () => (data?.content_json?.questions ?? []) as Question[],
     [data?.content_json],
   );
   const total = questions.length;
@@ -32,11 +38,19 @@ export function QuizViewer({ artifactId, slug }: { artifactId: string; slug: str
   if (isError || !data || total === 0)
     return <ErrorState title="Quiz isn’t ready" onRetry={() => void refetch()} />;
 
-  if (result) return <Results result={result} questions={questions} onRetake={() => {
-    setResult(null);
-    setAnswers({});
-    setCurrent(0);
-  }} onBack={() => navigate(`/learn/${slug}`)} />;
+  if (result)
+    return (
+      <Results
+        result={result}
+        questions={questions}
+        onRetake={() => {
+          setResult(null);
+          setAnswers({});
+          setCurrent(0);
+        }}
+        onBack={() => navigate(`/learn/${slug}`)}
+      />
+    );
 
   const q = questions[current]!;
   const answeredCount = Object.keys(answers).length;
@@ -71,7 +85,9 @@ export function QuizViewer({ artifactId, slug }: { artifactId: string; slug: str
       </div>
 
       <Card className="p-5">
-        <p className="font-headline-md text-headline-md"><MathText text={q.question} /></p>
+        <p className="font-headline-md text-headline-md">
+          <MathText text={q.question} />
+        </p>
         <div className="mt-4 flex flex-col gap-2">
           {q.options.map((opt, oi) => {
             const selected = answers[current] === oi;
@@ -121,9 +137,7 @@ export function QuizViewer({ artifactId, slug }: { artifactId: string; slug: str
             data-testid="btn-qz4"
             loading={submit.isPending}
             disabled={!allAnswered}
-            onClick={() =>
-              submit.mutate(answers, { onSuccess: (r) => setResult(r) })
-            }
+            onClick={() => submit.mutate(answers, { onSuccess: (r) => setResult(r) })}
           >
             Submit
           </Button>
@@ -168,7 +182,13 @@ function Results({
           {Math.round(result.latest_score_percent)}%
         </p>
         <div className="mt-2 flex gap-2">
-          <Button variant="secondary" size="sm" iconLeft="replay" data-testid="btn-qz5" onClick={onRetake}>
+          <Button
+            variant="secondary"
+            size="sm"
+            iconLeft="replay"
+            data-testid="btn-qz5"
+            onClick={onRetake}
+          >
             Retake
           </Button>
           <Button size="sm" iconLeft="arrow_back" data-testid="btn-qz6" onClick={onBack}>
@@ -189,17 +209,23 @@ function Results({
                   className={row.is_correct ? "text-secondary" : "text-error"}
                 />
                 <div className="flex-1">
-                  <p className="font-label-lg text-label-lg"><MathText text={q.question} /></p>
+                  <p className="font-label-lg text-label-lg">
+                    <MathText text={q.question} />
+                  </p>
                   <p className="mt-1 text-body-md text-on-surface-variant">
-                    Your answer: {LETTERS[row.selected_index]}. <MathText text={q.options[row.selected_index] ?? ""} />
+                    Your answer: {LETTERS[row.selected_index]}.{" "}
+                    <MathText text={q.options[row.selected_index] ?? ""} />
                   </p>
                   {!row.is_correct && (
                     <p className="text-body-md text-secondary">
-                      Correct: {LETTERS[row.correct_index]}. <MathText text={q.options[row.correct_index] ?? ""} />
+                      Correct: {LETTERS[row.correct_index]}.{" "}
+                      <MathText text={q.options[row.correct_index] ?? ""} />
                     </p>
                   )}
                   {row.explanation && (
-                    <p className="mt-1 text-body-sm text-on-surface-variant"><MathText text={row.explanation} /></p>
+                    <p className="mt-1 text-body-sm text-on-surface-variant">
+                      <MathText text={row.explanation} />
+                    </p>
                   )}
                 </div>
               </div>

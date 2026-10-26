@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
 import { cn } from "@/lib/cn";
+import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface Cue {
@@ -79,10 +80,7 @@ export function AudioPlayer({
   if (isError || !data || !src)
     return <ErrorState title="Audio isn’t ready" onRetry={() => void refetch()} />;
 
-  const activeCue = cues.reduce(
-    (acc, c, i) => (c.t <= time ? i : acc),
-    -1,
-  );
+  const activeCue = cues.reduce((acc, c, i) => (c.t <= time ? i : acc), -1);
 
   const el = () => audioRef.current;
   const togglePlay = () => {
@@ -133,9 +131,7 @@ export function AudioPlayer({
       <Card className="flex flex-col items-center gap-4 p-8">
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="font-headline-md text-headline-md">Listen to Lesson</p>
-          {moduleTitle && (
-            <p className="text-body-md text-on-surface-variant">{moduleTitle}</p>
-          )}
+          {moduleTitle && <p className="text-body-md text-on-surface-variant">{moduleTitle}</p>}
         </div>
         <button
           type="button"
@@ -157,7 +153,9 @@ export function AudioPlayer({
         </div>
 
         <div className="flex w-full items-center gap-3">
-          <span className="w-12 text-right font-label-sm text-label-sm tabular-nums">{fmt(time)}</span>
+          <span className="w-12 text-right font-label-sm text-label-sm tabular-nums">
+            {fmt(time)}
+          </span>
           <input
             type="range"
             data-testid="btn-au4"
@@ -234,7 +232,7 @@ export function AudioPlayer({
                   <span className="shrink-0 tabular-nums text-label-sm text-on-surface-variant">
                     {fmt(c.t)}
                   </span>
-                  {c.text}
+                  <MathText text={c.text} />
                 </button>
               </li>
             ))}

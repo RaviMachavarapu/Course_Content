@@ -62,6 +62,15 @@ function renderViewer() {
   );
 }
 
+describe("InfographicViewer math", () => {
+  it("draws a formula in the caption", async () => {
+    installFetch({ ...ARTIFACT, content_json: { caption: "Rate of $S_N2$" } });
+    const { container } = renderViewer();
+    await screen.findByTestId("infographic-image");
+    expect(container.querySelector(".katex")).not.toBeNull();
+  });
+});
+
 describe("InfographicViewer", () => {
   it("renders the diagram, caption, module title, and marks viewed on open", async () => {
     const fetchMock = installFetch();
