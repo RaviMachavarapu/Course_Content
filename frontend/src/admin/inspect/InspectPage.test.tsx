@@ -15,7 +15,11 @@ const V2 = {
   generation_job_id: "job-2",
   notebooklm_artifact_id: "nlm-2",
   created_at: "2026-01-02T00:00:00Z",
-  content_json: { title: "R", read_minutes: 5, sections: [] },
+  content_json: {
+    title: "The Report",
+    read_minutes: 5,
+    sections: [{ heading: "Intro", html: "<p>body</p>" }],
+  },
   content_html: "<h1>The Report</h1><p>body</p>",
   media: [{ kind: "report_pdf", url: "/api/media/r.pdf", size_bytes: 1, page_index: null }],
 };

@@ -1,8 +1,7 @@
-import { useMemo } from "react";
 import type { ArtifactType } from "../api";
 import type { InspectVersion } from "../staging/api";
 import { MathText } from "@/components/math/MathText";
-import { renderMathInHtml } from "@/components/math/renderMathInHtml";
+import { MathHtml } from "@/components/math/MathHtml";
 
 /** Read-only render of a version's content_json, one branch per type.
  * Deliberately plain — the student-facing renderers land in Phase 4. */
@@ -17,7 +16,37 @@ export function ContentView({
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
   if (type === "report") {
-    return <ReportHtml html={version.content_html ?? ""} />;
+    // content_json, like the student report: content_html escapes $…$ as plain text
+    if (!Array.isArray(c.sections)) return <ReportHtml html={version.content_html ?? ""} />;
+    const sections = c.sections as { heading: string; html: string }[];
+    const takeaways = (Array.isArray(c.key_takeaways) ? c.key_takeaways : []) as string[];
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="font-headline-lg text-headline-lg text-primary">
+          <MathText text={str(c.title) || "Report"} />
+        </h1>
+        {takeaways.length > 0 && (
+          <div className="rounded-lg border border-outline-variant p-4">
+            <p className="font-label-sm text-label-sm text-outline">Key takeaways</p>
+            <ul className="mt-1 list-disc pl-5 text-body-md">
+              {takeaways.map((t, i) => (
+                <li key={i}>
+                  <MathText text={t} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {sections.map((s, i) => (
+          <section key={i}>
+            <h2 className="font-headline-md text-headline-md text-primary">
+              <MathText text={s.heading} />
+            </h2>
+            <ReportHtml html={s.html} />
+          </section>
+        ))}
+      </div>
+    );
   }
 
   if (type === "slide_deck") {
@@ -168,12 +197,10 @@ export function ContentView({
 }
 
 function ReportHtml({ html }: { html: string }): JSX.Element {
-  // renderMathInHtml is not idempotent: always run it on the stored html.
-  const rendered = useMemo(() => renderMathInHtml(html), [html]);
   return (
-    <div
+    <MathHtml
+      html={html}
       className="prose max-w-none text-body-md [&_h1]:font-display [&_h1]:text-primary [&_h2]:font-display [&_h2]:text-primary"
-      dangerouslySetInnerHTML={{ __html: rendered }}
     />
   );
 }

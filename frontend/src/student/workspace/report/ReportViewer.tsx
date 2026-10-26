@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
 import { MathText } from "@/components/math/MathText";
-import { renderMathInHtml } from "@/components/math/renderMathInHtml";
+import { MathHtml } from "@/components/math/MathHtml";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface Section {
@@ -118,13 +118,11 @@ export function ReportViewer({
 }
 
 function SectionHtml({ html }: { html: string }): JSX.Element {
-  // renderMathInHtml is not idempotent: always run it on the stored html.
-  const rendered = useMemo(() => renderMathInHtml(html), [html]);
+  // backend renders + sanitises this HTML (nh3 allowlist, T020); math is drawn by KaTeX
   return (
-    <div
+    <MathHtml
+      html={html}
       className="prose-report mt-2 space-y-3 text-body-md leading-relaxed text-on-surface [&_a]:text-tertiary [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_strong]:font-semibold"
-      // backend renders + sanitises this HTML (nh3 allowlist, T020); math is drawn by KaTeX
-      dangerouslySetInnerHTML={{ __html: rendered }}
     />
   );
 }

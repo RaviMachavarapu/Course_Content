@@ -46,6 +46,29 @@ describe("ContentView math", () => {
   });
 });
 
+describe("ContentView report", () => {
+  it("renders the report from content_json with formulas drawn in title, takeaways and headings", () => {
+    const ver = {
+      ...version([]),
+      content_json: {
+        title: "About $S_N2$",
+        key_takeaways: ["$S_N2$ is one step"],
+        sections: [
+          { heading: "$S_N2$ Reactions", html: '<p>Rate <span class="math-inline">k_1</span></p>' },
+        ],
+      },
+      content_html: "<h1>About $S_N2$</h1><ul><li>$S_N2$ is one step</li></ul>",
+    };
+    const { container } = render(<ContentView type="report" version={ver} />);
+    expect(container.textContent).not.toContain("$");
+    expect(container.querySelectorAll("h1 .katex").length).toBe(1);
+    expect(container.querySelectorAll("li .katex").length).toBe(1);
+    expect(container.querySelectorAll("h2 .katex").length).toBe(1);
+    expect(container.querySelectorAll(".math-inline .katex").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Key takeaways")).toBeInTheDocument();
+  });
+});
+
 describe("ContentView infographic", () => {
   it("shows the generated image, with the text description tucked away", () => {
     render(
