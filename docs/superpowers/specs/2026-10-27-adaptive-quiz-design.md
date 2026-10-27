@@ -13,7 +13,7 @@ A student taking a quiz sees, right after answering each question, whether it wa
 | Q1 | Instant feedback per question (correct/incorrect + correct answer + explanation) and a score at the end. |
 | Q2 | Retakes never repeat the student's earlier questions — every retake is a fresh set. |
 | Q3 | Fresh sets come from NotebookLM **chat** (`notebook_query`) on the module's notebook — not Studio generation (no Studio quota; seconds, not minutes). Chosen after a live test. |
-| Q4 | Question types: multiple-choice (4 options, one correct) **and** fill-in-the-blank. |
+| Q4 | Question types: multiple-choice (4 options, one correct) **and** fill-in-the-blank. Fill-blank answers are words/plain numbers only; formula answers are asked as multiple-choice (owner decision, 2026-10-27). |
 | Q5 | Attempt 1 = the admin-reviewed, published Studio quiz. Attempts 2+ = chat-generated sets (auto-validated, not admin-reviewed). |
 | Q6 | Proof-quote check runs only when the module has PDF sources; link-only modules get format/answer checks only. |
 | Q7 | Students download a questions-only quiz PDF; the full answer-key PDF is admin-only (already being built in the PDF fix wave). |
@@ -40,8 +40,9 @@ Correct answers and explanations are never sent to the browser before that quest
 - **Notation:** `\( … \)` and `\[ … \]` are accepted as formula delimiters everywhere `$ … $` / `$$ … $$` are (web MathText, backend `_split_math`, PDF builders).
 - **Limits:** chat uses the NotebookLM account's chat allowance (separate from Studio). Each prepared set is 1–2 chat queries. If chat is unavailable or rate-limited, preparation retries with back-off; the student sees the "try again later" message only if no prepared set exists.
 
-### 4.4 Fill-in-the-blank grading
-Correct if the normalized typed answer equals the normalized answer or any accepted answer. Normalization: Unicode NFKC, lowercase, trim, collapse whitespace, strip surrounding punctuation, remove `$`/`\(`/`\)` delimiters. No fuzzy matching beyond that (an exact rule, so grading is predictable).
+### 4.4 Fill-in-the-blank answers and grading (revised 2026-10-27, owner decision)
+- Fill-in-the-blank answers are **words or plain numbers only** (e.g. "racemic mixture", "5", "-3", "0.5", "50%", "40 °C"). A generated fill-blank question whose answer or any accepted answer contains formula notation (LaTeX delimiters or commands, `^`, `_`, `{}`, `/` between terms, √, chemical formulas with digits like H2O) is dropped at validation; the prompt asks for formula answers to be written as multiple-choice instead. The student never types a formula.
+- Grading: Unicode NFKC; trim; collapse whitespace; map `−` (U+2212) to `-`; strip trailing sentence punctuation (`. , ; : ! ?` and quotes) but keep signs (`-`, `+`), `%` and `°`; a leading `.` before a digit becomes `0.`. Case-insensitive, except when the answer contains an uppercase letter that is not the first letter of a word (e.g. CO, NaCl, pH, mRNA) — then case-sensitive. Then exact match against the answer or any accepted answer.
 
 ### 4.5 Admin view
 - Inspect/Staging for a quiz shows, per quiz artifact: the published Studio quiz (as today) and a read-only list of recently generated sets with their validation results (kept/dropped + reason), so admins can audit chat questions.
