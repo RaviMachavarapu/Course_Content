@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onTestFinished } from "vitest";
 import { QuizViewer } from "./QuizViewer";
@@ -127,10 +127,15 @@ const COMPLETE = {
 interface Setup {
   starts: { status: number; body: unknown }[];
   checks?: Record<number, unknown>;
+  /** Per-call override for POST /answers: a response spec, or "network" to reject. */
+  answers?: (call: number) => { status: number; body: unknown } | "network" | undefined;
+  complete?: (call: number) => { status: number; body: unknown } | "network" | undefined;
 }
 
 function installFetch(setup: Setup) {
   const starts = [...setup.starts];
+  let answerCalls = 0;
+  let completeCalls = 0;
   const fn = vi.fn((input: string | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input.toString();
     const method = (init?.method ?? "GET").toUpperCase();
@@ -139,6 +144,14 @@ function installFetch(setup: Setup) {
     if (url.endsWith("/quiz-attempts") && method === "POST") {
       const next = starts.length > 1 ? starts.shift()! : starts[0]!;
       ({ status, body } = next);
+    } else if (url.endsWith("/answers") && setup.answers?.(answerCalls++)) {
+      const o = setup.answers(answerCalls - 1)!;
+      if (o === "network") return Promise.reject(new TypeError("network"));
+      ({ status, body } = o);
+    } else if (url.endsWith("/complete") && setup.complete?.(completeCalls++)) {
+      const o = setup.complete(completeCalls - 1)!;
+      if (o === "network") return Promise.reject(new TypeError("network"));
+      ({ status, body } = o);
     } else if (url.endsWith("/answers")) {
       const idx = JSON.parse(init!.body as string).index as number;
       body = (setup.checks ?? CHECKS)[idx];
@@ -303,6 +316,76 @@ describe("QuizViewer check flow", () => {
     expect(screen.getByText(/Because 2 plus 2 is four/)).toBeInTheDocument();
     expect(screen.getByTestId("btn-qz1-1")).toHaveAttribute("aria-pressed", "true");
     expect(posts(fetchMock, "/answers")).toHaveLength(0);
+  });
+});
+
+describe("QuizViewer failures", () => {
+  const START = { status: 201, body: attempt([MCQ(), FILL()]) };
+
+  it("resyncs after a 409 already_checked and shows the recorded feedback", async () => {
+    const fetchMock = installFetch({
+      starts: [
+        START,
+        {
+          status: 200,
+          body: attempt([MCQ({ result: CHECKS[0] }), FILL()], { status: "resumed" }),
+        },
+      ],
+      answers: () => ({
+        status: 409,
+        body: { error: { code: "already_checked", message: "already" } },
+      }),
+    });
+    renderViewer();
+    await userEvent.click(await screen.findByTestId("btn-qz1-1"));
+    await userEvent.click(screen.getByTestId("btn-qz8"));
+    expect(await screen.findByText(/Because 2 plus 2 is four/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(posts(fetchMock, "/quiz-attempts")).toHaveLength(2);
+    expect(screen.getByTestId("quiz-feedback")).toHaveFocus();
+  });
+
+  it("shows an error when the check and the resync both fail, then retry works", async () => {
+    installFetch({
+      starts: [START, START],
+      answers: (n) => (n === 0 ? "network" : undefined),
+    });
+    renderViewer();
+    await userEvent.click(await screen.findByTestId("btn-qz1-1"));
+    await userEvent.click(screen.getByTestId("btn-qz8"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Couldn’t check/);
+    expect(screen.queryByTestId("quiz-feedback")).toBeNull();
+    await userEvent.click(screen.getByTestId("btn-qz8"));
+    expect(await screen.findByTestId("quiz-feedback")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a failed Finish shows an error and can be retried", async () => {
+    installFetch({
+      starts: [START],
+      complete: (n) =>
+        n === 0 ? { status: 500, body: { error: { code: "x", message: "x" } } } : undefined,
+    });
+    renderViewer();
+    await userEvent.click(await screen.findByTestId("btn-qz1-1"));
+    await userEvent.click(screen.getByTestId("btn-qz8"));
+    await userEvent.click(await screen.findByTestId("btn-qz3"));
+    await userEvent.type(screen.getByTestId("quiz-fill-input"), "oxygen");
+    await userEvent.click(screen.getByTestId("btn-qz8"));
+    await userEvent.click(await screen.findByTestId("btn-qz4"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Couldn’t finish/);
+    await userEvent.click(screen.getByTestId("btn-qz4"));
+    expect(await screen.findByTestId("quiz-score")).toBeInTheDocument();
+  });
+
+  it("non-409 start error shows the error state; empty question list too", async () => {
+    installFetch({ starts: [{ status: 500, body: { error: { code: "x", message: "x" } } }] });
+    renderViewer();
+    expect(await screen.findByText("Quiz isn’t ready")).toBeInTheDocument();
+    cleanup();
+    installFetch({ starts: [{ status: 201, body: attempt([]) }] });
+    renderViewer();
+    expect(await screen.findByText("Quiz isn’t ready")).toBeInTheDocument();
   });
 });
 

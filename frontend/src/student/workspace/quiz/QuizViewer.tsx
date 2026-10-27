@@ -63,7 +63,7 @@ export function QuizViewer({
           if (run !== runRef.current) return;
           continue;
         }
-        setPhase({ kind: "running", attempt: r });
+        setPhase(r.questions.length === 0 ? { kind: "error" } : { kind: "running", attempt: r });
         return;
       } catch (e) {
         if (run !== runRef.current) return;
@@ -144,6 +144,7 @@ export function QuizViewer({
       <Attempt
         key={phase.attempt.attempt_id}
         attempt={phase.attempt}
+        artifactId={artifactId}
         onDone={(result) => {
           setPhase({ kind: "results", result });
           void qc.invalidateQueries({ queryKey: ["student", "quiz-attempts", artifactId] });
@@ -158,9 +159,11 @@ export function QuizViewer({
 
 function Attempt({
   attempt,
+  artifactId,
   onDone,
 }: {
   attempt: QuizAttemptStart;
+  artifactId: string;
   onDone: (r: QuizResult) => void;
 }): JSX.Element {
   const questions = attempt.questions;
@@ -178,6 +181,15 @@ function Attempt({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const focusPending = useRef(false);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusPending.current && feedbackRef.current) {
+      focusPending.current = false;
+      feedbackRef.current.focus();
+    }
+  }, [results]);
+
   const q = questions[current]!;
   const res = results[q.index];
   const draft = drafts[q.index];
@@ -191,15 +203,28 @@ function Attempt({
     setError(null);
     try {
       const r = await workspaceApi.checkQuizAnswer(attempt.attempt_id, q.index, draft!);
+      focusPending.current = true;
       setResults((m) => ({ ...m, [q.index]: r }));
     } catch {
-      setError("Couldn’t check that answer — please try again.");
+      // Resync: the server may already have recorded this check (409, lost response).
+      try {
+        const s = await workspaceApi.startQuiz(artifactId);
+        if (s.status === "preparing" || s.attempt_id !== attempt.attempt_id) throw new Error();
+        const merged: Record<number, QuizCheckResult> = {};
+        for (const sq of s.questions) if (sq.result) merged[sq.index] = sq.result;
+        if (!merged[q.index]) throw new Error();
+        focusPending.current = true;
+        setResults((m) => ({ ...m, ...merged }));
+      } catch {
+        setError("Couldn’t check that answer — please try again.");
+      }
     } finally {
       setBusy(false);
     }
   }
 
   async function finish() {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -273,31 +298,34 @@ function Attempt({
           />
         )}
 
-        {res && (
-          <div
-            data-testid="quiz-feedback"
-            role="status"
-            className="mt-4 rounded-lg bg-surface-container p-3"
-          >
-            <p
-              className={cn(
-                "flex items-center gap-1 font-label-lg text-label-lg",
-                res.correct ? "text-secondary" : "text-error",
-              )}
+        <div aria-live="polite">
+          {res && (
+            <div
+              data-testid="quiz-feedback"
+              ref={feedbackRef}
+              tabIndex={-1}
+              className="mt-4 rounded-lg bg-surface-container p-3 focus:outline-none"
             >
-              <Icon name={res.correct ? "check_circle" : "cancel"} filled />
-              {res.correct ? "Correct" : "Incorrect"}
-            </p>
-            <p className="mt-1 text-body-md">
-              Correct answer: <MathText text={res.correct_answer} />
-            </p>
-            {res.explanation && (
-              <p className="mt-1 text-body-sm text-on-surface-variant">
-                <MathText text={res.explanation} />
+              <p
+                className={cn(
+                  "flex items-center gap-1 font-label-lg text-label-lg",
+                  res.correct ? "text-secondary" : "text-error",
+                )}
+              >
+                <Icon name={res.correct ? "check_circle" : "cancel"} filled />
+                {res.correct ? "Correct" : "Incorrect"}
               </p>
-            )}
-          </div>
-        )}
+              <p className="mt-1 text-body-md">
+                Correct answer: <MathText text={res.correct_answer} />
+              </p>
+              {res.explanation && (
+                <p className="mt-1 text-body-sm text-on-surface-variant">
+                  <MathText text={res.explanation} />
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </Card>
 
       {error && (
@@ -312,7 +340,7 @@ function Attempt({
           size="sm"
           iconLeft="chevron_left"
           data-testid="btn-qz2"
-          disabled={current === 0}
+          disabled={current === 0 || busy}
           onClick={() => setCurrent((c) => Math.max(0, c - 1))}
         >
           Previous
@@ -335,6 +363,7 @@ function Attempt({
             size="sm"
             iconRight="chevron_right"
             data-testid="btn-qz3"
+            disabled={busy}
             onClick={() => setCurrent((c) => Math.min(total - 1, c + 1))}
           >
             Next
@@ -445,7 +474,7 @@ function Results({
                 {LETTERS[row.response]}. <MathText text={row.options?.[row.response] ?? ""} />
               </>
             ) : (
-              <MathText text={String(row.response)} />
+              String(row.response)
             );
           return (
             <Card key={row.index} className="p-4" data-testid="quiz-result-row">
