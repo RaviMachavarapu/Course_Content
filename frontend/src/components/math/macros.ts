@@ -20,11 +20,14 @@ interface Ctx {
 /** Consume one braced argument and return its source text. */
 function arg(ctx: Ctx): string {
   const toks = ctx.consumeArgs(1)[0] ?? [];
-  return toks
-    .slice()
-    .reverse()
-    .map((t) => t.text)
-    .join("");
+  // KaTeX's lexer drops the space after a control word; put it back where the
+  // next token is a letter so `\vec v` does not become `\vecv`.
+  let out = "";
+  for (const t of toks.slice().reverse()) {
+    if (/\\[A-Za-z]+$/.test(out) && /^[A-Za-z]/.test(t.text)) out += " ";
+    out += t.text;
+  }
+  return out;
 }
 
 /** Optional [..] argument: returns its text or null when absent. */
@@ -71,6 +74,18 @@ function pdv(ctx: Ctx): string {
   return `\\frac{${power(PARTIAL, n)} ${f}}{${PARTIAL} ${x}${n && n !== "1" ? `^{${n}}` : ""}}`;
 }
 
+/** physics: bold upright letters; symbols (Greek) and the starred form use \boldsymbol. */
+function vb(ctx: Ctx): string {
+  ctx.consumeSpaces();
+  let star = false;
+  if (ctx.future().text === "*") {
+    ctx.popToken();
+    star = true;
+  }
+  const a = arg(ctx);
+  return star || a.startsWith("\\") ? `\\boldsymbol{${a}}` : `\\mathbf{${a}}`;
+}
+
 function expval(ctx: Ctx): string {
   const a = arg(ctx);
   if (hasBrace(ctx)) {
@@ -97,6 +112,20 @@ const UNITS: Record<string, string> = {
   kelvin: "K",
   mole: "mol",
   hertz: "Hz",
+  hour: "h",
+  minute: "min",
+  day: "d",
+  litre: "L",
+  liter: "L",
+  tesla: "T",
+  pascal: "Pa",
+  coulomb: "C",
+  farad: "F",
+  henry: "H",
+  radian: "rad",
+  degreeCelsius: "^\\circ C",
+  electronvolt: "eV",
+  percent: "\\%",
 };
 const PREFIXES: Record<string, string> = {
   kilo: "k",
@@ -159,6 +188,7 @@ export function numToLatex(src: string): string {
 }
 
 const SI = (ctx: Ctx): string => {
+  optArg(ctx); // siunitx options are accepted and ignored
   const n = arg(ctx);
   const u = arg(ctx);
   return `${numToLatex(n)}\\,${unitToLatex(u)}`;
@@ -182,7 +212,7 @@ export const MATH_MACROS: Readonly<Record<string, MacroValue>> = Object.freeze({
   "\\pdv": pdv,
   "\\abs": "\\left|#1\\right|",
   "\\norm": "\\left\\lVert #1\\right\\rVert",
-  "\\vb": "\\mathbf{#1}",
+  "\\vb": vb,
   "\\vu": "\\mathbf{\\hat{#1}}",
   "\\expval": expval,
   "\\grad": "\\nabla",
@@ -190,7 +220,7 @@ export const MATH_MACROS: Readonly<Record<string, MacroValue>> = Object.freeze({
   "\\divergence": "\\nabla\\cdot",
   "\\SI": SI,
   "\\qty": SI,
-  "\\si": (ctx: Ctx) => unitToLatex(arg(ctx)),
-  "\\unit": (ctx: Ctx) => unitToLatex(arg(ctx)),
-  "\\num": (ctx: Ctx) => numToLatex(arg(ctx)),
+  "\\si": (ctx: Ctx) => (optArg(ctx), unitToLatex(arg(ctx))),
+  "\\unit": (ctx: Ctx) => (optArg(ctx), unitToLatex(arg(ctx))),
+  "\\num": (ctx: Ctx) => (optArg(ctx), numToLatex(arg(ctx))),
 });

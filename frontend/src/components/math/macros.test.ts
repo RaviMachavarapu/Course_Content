@@ -95,3 +95,29 @@ describe("siunitx macros", () => {
     expect(reading("\\dv{x}{t}")).toBe("dxdt");
   });
 });
+
+describe("fix round 1", () => {
+  it("keeps the space after control words in arguments", () => {
+    for (const f of ["\\dv{\\vec v}{t}", "\\dv{\\alpha x}{t}", "\\expval{\\hat H}", "\\pdv{\\phi}{x}"]) html(f);
+    expect(mathml("\\dv{\\alpha x}{t}")).toContain("α");
+  });
+  it("more units", () => {
+    expect(visible("\\qty{5}{\\hour}")).toBe("5h");
+    expect(visible("\\unit{\\kilo\\pascal}")).toBe("kPa");
+    expect(visible("\\unit{\\litre}")).toBe("L");
+    expect(visible("\\qty{20}{\\degreeCelsius}")).toBe("20∘C");
+    expect(visible("\\unit{\\electronvolt}")).toBe("eV");
+    for (const u of ["minute", "day", "tesla", "pascal", "coulomb", "farad", "henry", "radian", "percent", "liter"]) html(`\\SI{2}{\\${u}}`);
+  });
+  it("siunitx options are ignored", () => {
+    expect(visible("\\SI[per-mode=symbol]{9.8}{m/s^2}")).toBe(visible("\\SI{9.8}{m/s^2}"));
+    expect(visible("\\num[round-mode=none]{12}")).toBe("12");
+    expect(visible("\\unit[x=y]{\\metre}")).toBe("m");
+  });
+  it("vb uses boldsymbol for symbols and star", () => {
+    expect(html("\\vb{\\omega}")).toContain("boldsymbol");
+    expect(mathml("\\vb{\\omega}")).toContain("ω");
+    expect(html("\\vb*{a}")).toContain("boldsymbol");
+    expect(html("\\vb{F}")).toContain("mathbf");
+  });
+});
