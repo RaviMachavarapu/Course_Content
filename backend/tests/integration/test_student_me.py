@@ -112,7 +112,7 @@ def test_progress_reflects_real_records_and_earns_course_complete(
 
 
 def test_quiz_ace_and_flashcard_streak_achievements(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     slug, _ = _setup(client, db_session)
     ids = _ids(client, slug)
@@ -123,12 +123,18 @@ def test_quiz_ace_and_flashcard_streak_achievements(
     assert quiz_artifact is not None
     version = next(v for v in quiz_artifact.versions if v.id == quiz_artifact.published_version_id)
     questions = version.content_json["questions"]
-    answers = {str(i): q["correct_index"] for i, q in enumerate(questions)}
-
-    resp = client.post(
-        f"/api/student/artifacts/{ids['quiz']}/quiz-attempts", json={"answers": answers}
-    )
-    assert resp.status_code == 201
+    monkeypatch.setattr("app.api.student.quiz.enqueue_prepare", lambda *a: None)
+    started = client.post(f"/api/student/artifacts/{ids['quiz']}/quiz-attempts")
+    assert started.status_code == 201
+    attempt_id = started.json()["attempt_id"]
+    for i, q in enumerate(questions):
+        checked = client.post(
+            f"/api/student/quiz-attempts/{attempt_id}/answers",
+            json={"index": i, "response": q["correct_index"]},
+        )
+        assert checked.status_code == 200
+    resp = client.post(f"/api/student/quiz-attempts/{attempt_id}/complete")
+    assert resp.status_code == 200
     assert resp.json()["score_percent"] == 100.0
 
     client.put(f"/api/student/artifacts/{ids['flashcards']}/progress", json={"completed": True})
