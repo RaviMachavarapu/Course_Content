@@ -188,3 +188,61 @@ def test_timeout_returns_504(base_url, monkeypatch):
     status, _, body = post(base_url, {"markdown": "Text", "title": "", "images": {}})
     assert status == 504
     assert "error" in json.loads(body)
+
+
+def _tex_processes() -> list[str]:
+    found = []
+    for d in Path("/proc").glob("[0-9]*"):
+        try:
+            cmd = (d / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if "xelatex" in cmd or "deno" in cmd or "quarto" in cmd:
+            found.append(cmd)
+    return found
+
+
+def test_timeout_kills_whole_process_tree(base_url, monkeypatch):
+    monkeypatch.setattr(server, "DOC_TIMEOUT", 6)
+    status, _, _ = post(base_url, {"markdown": "Loop $\\def\\x{\\x}\\x$ here.\n", "title": "", "images": {}})
+    assert status in (200, 504)
+    assert _tex_processes() == []
+
+
+def test_looping_formula_reaches_fallback(base_url):
+    headers, pdf = render(base_url, "Loop $\\def\\x{\\x}\\x$ and good $y^2$.\n")
+    assert headers["X-Typeset-Fallback"] == "1"
+    text = pdftext(pdf)
+    assert "\\def\\x{\\x}\\x" in text and "y^2" not in text
+    assert _tex_processes() == []
+
+
+def test_title_math_prints_literally(base_url):
+    _, pdf = render(base_url, "Body $x^2$.", title="Bad $\\frac{1}{$")
+    assert "Bad $\\frac{1}{$" in pdftext(pdf)
+    _, pdf = render(base_url, "Body.", title="$x$ and $y$ *cost* $5")
+    assert "$x$ and $y$ *cost* $5" in pdftext(pdf)
+
+
+def test_file_access_formulas_are_never_compiled(base_url):
+    md = "Leak $\\input{/etc/passwd}$ and $\\immediate\\write18{touch /tmp/pwned}$, good $z^2$.\n"
+    headers, pdf = render(base_url, md)
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "2"
+    assert "\\input{/etc/passwd}" in text
+    assert "root:" not in text and "z^2" not in text
+    assert not Path("/tmp/pwned").exists()
+
+
+def test_busy_returns_503(base_url, monkeypatch):
+    slots = server.threading.BoundedSemaphore(1)
+    slots.acquire()
+    monkeypatch.setattr(server, "_slots", slots)
+    monkeypatch.setattr(server, "QUEUE_WAIT", 0.1)
+    status, _, body = post(base_url, {"markdown": "x", "title": "", "images": {}})
+    assert status == 503 and json.loads(body) == {"error": "busy"}
+
+
+def test_invalid_base64_is_400(base_url):
+    status, _, body = post(base_url, {"markdown": "x", "title": "", "images": {"a.png": "not*base64!"}})
+    assert status == 400 and "base64" in json.loads(body)["error"]

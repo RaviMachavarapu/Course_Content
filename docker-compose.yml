@@ -104,9 +104,12 @@ services:
   # Markdown + LaTeX formulas -> PDF (Quarto + xelatex). Internal only: the
   # backend calls http://typeset:8080/pdf. Optional — nothing depends on it;
   # if it is down, artifacts stay ready and their PDFs are built later.
+  # It compiles LLM-written LaTeX: never give it secrets (no env secrets, no
+  # volumes, no credentials).
   typeset:
     build: ./typeset
     restart: unless-stopped
+    init: true  # reap TeX processes killed on timeout
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
       interval: 30s

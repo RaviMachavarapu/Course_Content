@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -41,8 +42,13 @@ from typing import Any, Callable, Collection
 HERE = Path(__file__).resolve().parent
 HEADERS = (HERE / "header.tex", HERE / "unicode.tex")
 DOC_TIMEOUT = float(os.environ.get("TYPESET_TIMEOUT", "120"))
-MAX_BODY = int(os.environ.get("TYPESET_MAX_BODY", str(64 * 1024 * 1024)))
+MAX_BODY = int(os.environ.get("TYPESET_MAX_BODY", str(25 * 1024 * 1024)))
 CONCURRENCY = int(os.environ.get("TYPESET_CONCURRENCY", "2"))
+QUEUE_WAIT = float(os.environ.get("TYPESET_QUEUE_WAIT", "30"))  # then 503 busy
+# Share of the budget the first (full) render may use, so a formula that makes
+# TeX loop still leaves time for the fallback; cap for one probe compile.
+FIRST_RENDER_SHARE = 0.4
+PROBE_CAP = 8.0
 
 # Markdown in, Markdown out: no raw TeX/HTML and no citations, so plain text
 # (backslashes, <tags>, @handles) always prints literally. Math via $...$.
@@ -67,6 +73,12 @@ FRONT_MATTER = """\
 """
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# Formulas that could read or write files (or build such commands) are never
+# compiled; they are shown as their source like a failing formula.
+FORBIDDEN = re.compile(
+    r"\\(?:input|include|openin|read|InputIfFileExists|@@input|csname|openout|write"
+    r"|catcode|scantokens)(?![A-Za-z])|\^\^"
+)
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"%PDF-")
 
@@ -97,15 +109,35 @@ class Deadline:
         return left
 
 
-def _run(cmd: list[str], cwd: Path, deadline: Deadline, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str], cwd: Path, deadline: Deadline, stdin: str | None = None, cap: float | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run in its own session; on timeout kill the whole process group (quarto
+    -> deno -> xelatex). If only `cap` (not the document budget) ran out, the
+    result is a failed process (returncode -9) instead of Timeout."""
+    left = deadline.left()
+    limit = min(left, cap) if cap is not None else left
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        res = subprocess.run(
-            cmd, cwd=cwd, input=stdin, capture_output=True, text=True, timeout=deadline.left()
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise Timeout() from exc
-    res.stderr = ANSI.sub("", res.stderr)
-    return res
+        out, err = proc.communicate(stdin, timeout=limit)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        if cap is not None and cap < left:
+            return subprocess.CompletedProcess(cmd, -9, "", f"timed out after {cap:.0f} s")
+        raise Timeout()
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, ANSI.sub("", err))
 
 
 # --------------------------------------------------------------------------- AST
@@ -182,7 +214,7 @@ def _write_images(work: Path, images: dict[str, str]) -> set[str]:
         if not isinstance(name, str) or not isinstance(b64, str):
             raise BadRequest("images must map names to base64 strings")
         try:
-            data = base64.b64decode(b64, validate=False)
+            data = base64.b64decode(b64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise BadRequest(f"image {name!r} is not valid base64") from exc
         if not SAFE_NAME.match(name):
@@ -204,12 +236,19 @@ def _to_markdown(ast: Any, work: Path, deadline: Deadline) -> str:
     return res.stdout
 
 
-def _render(body: str, title: str, work: Path, deadline: Deadline) -> tuple[bytes | None, str]:
+def plain_title(title: str) -> str:
+    """The title is plain text: backslash-escape every ASCII punctuation
+    character so Markdown/math syntax ($, *, \\, ...) prints literally."""
+    flat = " ".join(title.split())
+    return re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", flat)
+
+
+def _render(body: str, title: str, work: Path, deadline: Deadline, cap: float | None = None) -> tuple[bytes | None, str]:
     for f in ("doc.pdf", "doc.tex", "doc.log"):
         (work / f).unlink(missing_ok=True)
-    title_line = f"title: {json.dumps(title, ensure_ascii=False)}\n" if title.strip() else ""
+    title_line = f"title: {json.dumps(plain_title(title), ensure_ascii=False)}\n" if title.strip() else ""
     (work / "doc.qmd").write_text(FRONT_MATTER.format(title=title_line, fmt=MD_FORMAT) + body, encoding="utf-8")
-    res = _run(["quarto", "render", "doc.qmd", "--to", "pdf"], work, deadline)
+    res = _run(["quarto", "render", "doc.qmd", "--to", "pdf"], work, deadline, cap=cap)
     pdf = work / "doc.pdf"
     if res.returncode == 0 and pdf.is_file() and pdf.read_bytes().startswith(b"%PDF-"):
         return pdf.read_bytes(), ""
@@ -253,6 +292,7 @@ def find_bad_formulas(math: list[tuple[str, str]], preamble: str, work: Path, de
             ["xelatex", "-no-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
             probe_dir,
             deadline,
+            cap=PROBE_CAP,
         )
         return res.returncode == 0
 
@@ -292,23 +332,28 @@ def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes,
             raise BuildFailed(f"markdown parse failed: {res.stderr[-2000:]}")
         ast = json.loads(res.stdout)
 
-        def attempt(**kw: Any) -> tuple[bytes | None, str]:
-            return _render(_to_markdown(transform(ast, names, **kw), work, deadline), title, work, deadline)
-
-        pdf, err = attempt()
-        if pdf:
-            return pdf, "0"
-        log.info("render failed after %.1fs, looking for bad formulas: %s", DOC_TIMEOUT - deadline.left(), err[-500:])
+        def attempt(cap: float | None = None, **kw: Any) -> tuple[bytes | None, str]:
+            return _render(_to_markdown(transform(ast, names, **kw), work, deadline), title, work, deadline, cap)
 
         math = collect_math(ast)
-        bad: set[tuple[str, str]] = set()
+        forbidden = {m for m in math if FORBIDDEN.search(m[1])}
+        if forbidden:
+            log.warning("formulas not compiled (file access): %s", sorted(s for _, s in forbidden))
+        math = [m for m in math if m not in forbidden]
+
+        pdf, err = attempt(cap=DOC_TIMEOUT * FIRST_RENDER_SHARE, bad_math=forbidden)
+        if pdf:
+            return pdf, str(len(forbidden))
+        log.info("render failed after %.1fs, looking for bad formulas: %s", DOC_TIMEOUT - deadline.left(), err[-500:])
+
+        bad: set[tuple[str, str]] = set(forbidden)
         if math:
             try:
-                bad = find_bad_formulas(math, _preamble(work, deadline), work, deadline)
+                bad |= find_bad_formulas(math, _preamble(work, deadline), work, deadline)
             except BuildFailed as exc:  # no preamble: skip straight to the last resort
                 log.warning("formula search skipped: %s", exc)
         log.info("formula search done after %.1fs; shown as source: %s", DOC_TIMEOUT - deadline.left(), sorted(s for _, s in bad))
-        if bad:
+        if bad - forbidden:
             pdf, err = attempt(bad_math=bad)
             if pdf:
                 return pdf, str(len(bad))
@@ -317,6 +362,7 @@ def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes,
             if pdf:
                 return pdf, f"{len(bad)}+images"
         # Last resort: every formula as source, images as their alt text.
+        log.warning("last resort, every formula as source; LaTeX error: %s", err[-1500:])
         pdf, err = attempt(all_math=True, drop_images=True)
         if pdf:
             return pdf, "all"
@@ -368,8 +414,13 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(title, str) or not isinstance(images, dict):
                 raise BadRequest("'title' must be a string and 'images' an object")
             started = time.monotonic()
-            with _slots:
+            if not _slots.acquire(timeout=QUEUE_WAIT):
+                self._json(503, {"error": "busy"})
+                return
+            try:
                 pdf, fallback = build_pdf(req["markdown"], title, images)
+            finally:
+                _slots.release()
             log.info("pdf built in %.1fs (%d bytes, fallback=%s)", time.monotonic() - started, len(pdf), fallback)
         except BadRequest as exc:
             self._json(400, {"error": str(exc)})
