@@ -1,0 +1,6 @@
+% Extra preamble after header.tex (which stays verbatim from the spike).
+% Latin Modern Math has no U+00B5 MICRO SIGN, so xelatex silently dropped µ
+% inside formulas. Typeset it as an upright mu in math; keep the text glyph
+% (from the main font) in text. The formula source itself is not changed.
+\usepackage{newunicodechar}
+\newunicodechar{µ}{\ifmmode\upmu\else\symbol{"00B5}\fi}

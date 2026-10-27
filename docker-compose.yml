@@ -101,6 +101,19 @@ services:
       start_period: 10s
     depends_on: [api]
 
+  # Markdown + LaTeX formulas -> PDF (Quarto + xelatex). Internal only: the
+  # backend calls http://typeset:8080/pdf. Optional — nothing depends on it;
+  # if it is down, artifacts stay ready and their PDFs are built later.
+  typeset:
+    build: ./typeset
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # Abandoned upstream; amd64-only image (runs emulated on arm64 — the platform
   # warning is benign). Kept because the spec names the service `mailhog`.
   mailhog:

@@ -1,0 +1,404 @@
+"""typeset: Markdown with LaTeX formulas -> PDF (Quarto + xelatex).
+
+POST /pdf  {"markdown": str, "title": str, "images": {name: base64}}
+    200 application/pdf
+    400 {"error"}  malformed request
+    422 {"error"}  even the fallback document could not be built
+    504 {"error"}  the 120 s per-document budget ran out
+GET /health -> 200 {"status": "ok"}
+
+Formulas are typeset exactly as written. If the document does not compile,
+each formula is compiled alone (bisection over groups, so a clean document
+costs nothing extra and one bad formula costs ~2*log2(n) small runs) in a
+minimal document with the same preamble; every failing formula is replaced by
+its source in monospace and the document is rendered again.
+
+Response header X-Typeset-Fallback: "0" (clean), "<n>" formulas shown as
+source, "<n>+images" (images also replaced by their alt text, e.g. an
+unreadable image file) or "all" (last resort: every formula as source).
+
+Stdlib only.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Callable, Collection
+
+HERE = Path(__file__).resolve().parent
+HEADERS = (HERE / "header.tex", HERE / "unicode.tex")
+DOC_TIMEOUT = float(os.environ.get("TYPESET_TIMEOUT", "120"))
+MAX_BODY = int(os.environ.get("TYPESET_MAX_BODY", str(64 * 1024 * 1024)))
+CONCURRENCY = int(os.environ.get("TYPESET_CONCURRENCY", "2"))
+
+# Markdown in, Markdown out: no raw TeX/HTML and no citations, so plain text
+# (backslashes, <tags>, @handles) always prints literally. Math via $...$.
+MD_FORMAT = "markdown-raw_tex-raw_html-raw_attribute-citations"
+
+FRONT_MATTER = """\
+---
+{title}format:
+  pdf:
+    pdf-engine: xelatex
+    from: {fmt}
+    include-in-header: [header.tex, unicode.tex]
+    keep-tex: true
+    latex-auto-install: false
+    papersize: a4
+    geometry: margin=2cm
+    mainfont: DejaVu Serif
+    sansfont: DejaVu Sans
+    monofont: DejaVu Sans Mono
+---
+
+"""
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"%PDF-")
+
+log = logging.getLogger("typeset")
+_slots = threading.BoundedSemaphore(CONCURRENCY)
+
+
+class BadRequest(Exception):
+    pass
+
+
+class BuildFailed(Exception):
+    pass
+
+
+class Timeout(Exception):
+    pass
+
+
+class Deadline:
+    def __init__(self, seconds: float) -> None:
+        self.end = time.monotonic() + seconds
+
+    def left(self) -> float:
+        left = self.end - time.monotonic()
+        if left <= 0:
+            raise Timeout()
+        return left
+
+
+def _run(cmd: list[str], cwd: Path, deadline: Deadline, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        res = subprocess.run(
+            cmd, cwd=cwd, input=stdin, capture_output=True, text=True, timeout=deadline.left()
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise Timeout() from exc
+    res.stderr = ANSI.sub("", res.stderr)
+    return res
+
+
+# --------------------------------------------------------------------------- AST
+
+
+def _walk(node: Any, fn: Callable[[dict[str, Any]], Any]) -> Any:
+    """Bottom-up map over pandoc JSON; fn may return a replacement node."""
+    if isinstance(node, list):
+        return [_walk(x, fn) for x in node]
+    if isinstance(node, dict):
+        new = {k: _walk(v, fn) for k, v in node.items()}
+        if "t" in new:
+            out = fn(new)
+            return new if out is None else out
+        return new
+    return node
+
+
+def _math_key(node: dict[str, Any]) -> tuple[str, str]:
+    kind, src = node["c"]
+    return kind["t"], src
+
+
+def _code(src: str) -> dict[str, Any]:
+    return {"t": "Code", "c": [["", ["formula-source"], []], src]}
+
+
+def _alt(node: dict[str, Any]) -> dict[str, Any]:
+    alt = node["c"][1]
+    return {"t": "Span", "c": [["", [], []], alt or [{"t": "Str", "c": "[image]"}]]}
+
+
+def collect_math(ast: Any) -> list[tuple[str, str]]:
+    found: dict[tuple[str, str], None] = {}
+
+    def fn(n: dict[str, Any]) -> None:
+        if n["t"] == "Math":
+            found[_math_key(n)] = None
+
+    _walk(ast, fn)
+    return list(found)
+
+
+def transform(
+    ast: Any,
+    images: set[str],
+    bad_math: Collection[tuple[str, str]] = (),
+    all_math: bool = False,
+    drop_images: bool = False,
+) -> Any:
+    """Point images at img/<name> (unknown ones become their alt text) and
+    replace the given formulas (or all) by their source in monospace."""
+
+    def fn(n: dict[str, Any]) -> Any:
+        if n["t"] == "Image":
+            target = n["c"][2][0]
+            if drop_images or target not in images:
+                return _alt(n)
+            n["c"][2][0] = f"img/{target}"
+            return n
+        if n["t"] == "Math" and (all_math or _math_key(n) in bad_math):
+            return _code(n["c"][1])
+        return None
+
+    return _walk(ast, fn)
+
+
+# ------------------------------------------------------------------------ build
+
+
+def _write_images(work: Path, images: dict[str, str]) -> set[str]:
+    ok: set[str] = set()
+    for name, b64 in images.items():
+        if not isinstance(name, str) or not isinstance(b64, str):
+            raise BadRequest("images must map names to base64 strings")
+        try:
+            data = base64.b64decode(b64, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            raise BadRequest(f"image {name!r} is not valid base64") from exc
+        if not SAFE_NAME.match(name):
+            log.warning("skipping image with unsafe name %r", name)
+            continue
+        if not data.startswith(IMAGE_MAGIC):
+            log.warning("skipping image %r: not PNG/JPEG/PDF", name)
+            continue
+        (work / "img").mkdir(exist_ok=True)
+        (work / "img" / name).write_bytes(data)
+        ok.add(name)
+    return ok
+
+
+def _to_markdown(ast: Any, work: Path, deadline: Deadline) -> str:
+    res = _run(["quarto", "pandoc", "-f", "json", "-t", MD_FORMAT, "--wrap=none"], work, deadline, json.dumps(ast))
+    if res.returncode != 0:
+        raise BuildFailed(f"pandoc json->markdown failed: {res.stderr[-2000:]}")
+    return res.stdout
+
+
+def _render(body: str, title: str, work: Path, deadline: Deadline) -> tuple[bytes | None, str]:
+    for f in ("doc.pdf", "doc.tex", "doc.log"):
+        (work / f).unlink(missing_ok=True)
+    title_line = f"title: {json.dumps(title, ensure_ascii=False)}\n" if title.strip() else ""
+    (work / "doc.qmd").write_text(FRONT_MATTER.format(title=title_line, fmt=MD_FORMAT) + body, encoding="utf-8")
+    res = _run(["quarto", "render", "doc.qmd", "--to", "pdf"], work, deadline)
+    pdf = work / "doc.pdf"
+    if res.returncode == 0 and pdf.is_file() and pdf.read_bytes().startswith(b"%PDF-"):
+        return pdf.read_bytes(), ""
+    return None, (res.stderr or res.stdout)[-3000:]
+
+
+def _preamble(work: Path, deadline: Deadline) -> str:
+    tex = work / "doc.tex"
+    if not tex.is_file():
+        res = _run(["quarto", "render", "doc.qmd", "--to", "latex"], work, deadline)
+        if res.returncode != 0 or not tex.is_file():
+            raise BuildFailed(f"could not produce LaTeX preamble: {res.stderr[-2000:]}")
+    text = tex.read_text(encoding="utf-8")
+    idx = text.find("\\begin{document}")
+    if idx < 0:
+        raise BuildFailed("no \\begin{document} in generated LaTeX")
+    return text[:idx]
+
+
+def _formula_tex(kind: str, src: str) -> str:
+    return f"\\[{src}\\]" if kind == "DisplayMath" else f"\\({src}\\)"
+
+
+def find_bad_formulas(math: list[tuple[str, str]], preamble: str, work: Path, deadline: Deadline) -> set[tuple[str, str]]:
+    """Bisection: a group that compiles is all good; a failing group is split
+    until single formulas remain (each then compiled alone)."""
+    probe_dir = work / "probe"
+    probe_dir.mkdir(exist_ok=True)
+    counter = iter(range(1_000_000))
+    lock = threading.Lock()
+
+    def compiles(group: list[tuple[str, str]]) -> bool:
+        with lock:
+            n = next(counter)
+        name = f"p{n}"
+        body = "\n\n".join(_formula_tex(k, s) + "\n\\par" for k, s in group)
+        (probe_dir / f"{name}.tex").write_text(
+            preamble + "\\begin{document}\n" + body + "\n\\end{document}\n", encoding="utf-8"
+        )
+        res = _run(
+            ["xelatex", "-no-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
+            probe_dir,
+            deadline,
+        )
+        return res.returncode == 0
+
+    bad: set[tuple[str, str]] = set()
+
+    def search(group: list[tuple[str, str]]) -> None:
+        if compiles(group):
+            return
+        if len(group) == 1:
+            bad.add(group[0])
+            return
+        mid = len(group) // 2
+        search(group[:mid])
+        search(group[mid:])
+
+    if not math:
+        return bad
+    # Split the top level into a few chunks checked in parallel.
+    chunks = max(1, min(4, len(math)))
+    size = -(-len(math) // chunks)
+    groups = [math[i : i + size] for i in range(0, len(math), size)]
+    with ThreadPoolExecutor(max_workers=len(groups)) as pool:
+        list(pool.map(search, groups))
+    return bad
+
+
+def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes, str]:
+    """Returns (pdf bytes, fallback marker: "0", "<n>", "<n>+images" or "all")."""
+    deadline = Deadline(DOC_TIMEOUT)
+    work = Path(tempfile.mkdtemp(prefix="typeset-"))
+    try:
+        for h in HEADERS:
+            shutil.copy(h, work / h.name)
+        names = _write_images(work, images)
+        res = _run(["quarto", "pandoc", "-f", MD_FORMAT, "-t", "json"], work, deadline, markdown)
+        if res.returncode != 0:
+            raise BuildFailed(f"markdown parse failed: {res.stderr[-2000:]}")
+        ast = json.loads(res.stdout)
+
+        def attempt(**kw: Any) -> tuple[bytes | None, str]:
+            return _render(_to_markdown(transform(ast, names, **kw), work, deadline), title, work, deadline)
+
+        pdf, err = attempt()
+        if pdf:
+            return pdf, "0"
+        log.info("render failed after %.1fs, looking for bad formulas: %s", DOC_TIMEOUT - deadline.left(), err[-500:])
+
+        math = collect_math(ast)
+        bad: set[tuple[str, str]] = set()
+        if math:
+            try:
+                bad = find_bad_formulas(math, _preamble(work, deadline), work, deadline)
+            except BuildFailed as exc:  # no preamble: skip straight to the last resort
+                log.warning("formula search skipped: %s", exc)
+        log.info("formula search done after %.1fs; shown as source: %s", DOC_TIMEOUT - deadline.left(), sorted(s for _, s in bad))
+        if bad:
+            pdf, err = attempt(bad_math=bad)
+            if pdf:
+                return pdf, str(len(bad))
+        if names:  # maybe an unreadable image: keep the formulas, drop images
+            pdf, err = attempt(bad_math=bad, drop_images=True)
+            if pdf:
+                return pdf, f"{len(bad)}+images"
+        # Last resort: every formula as source, images as their alt text.
+        pdf, err = attempt(all_math=True, drop_images=True)
+        if pdf:
+            return pdf, "all"
+        raise BuildFailed(err)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# ------------------------------------------------------------------------- http
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "typeset/1"
+
+    def log_message(self, fmt: str, *args: Any) -> None:  # route to logging
+        if self.path != "/health":
+            log.info("%s %s", self.address_string(), fmt % args)
+
+    def _json(self, code: int, obj: dict[str, Any]) -> None:
+        data = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self._json(200, {"status": "ok"})
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        if self.path != "/pdf":
+            self._json(404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > MAX_BODY:
+                raise BadRequest("missing or oversized body")
+            try:
+                req = json.loads(self.rfile.read(length))
+            except ValueError as exc:
+                raise BadRequest("body is not JSON") from exc
+            if not isinstance(req, dict) or not isinstance(req.get("markdown"), str):
+                raise BadRequest("'markdown' (string) is required")
+            title = req.get("title") or ""
+            images = req.get("images") or {}
+            if not isinstance(title, str) or not isinstance(images, dict):
+                raise BadRequest("'title' must be a string and 'images' an object")
+            started = time.monotonic()
+            with _slots:
+                pdf, fallback = build_pdf(req["markdown"], title, images)
+            log.info("pdf built in %.1fs (%d bytes, fallback=%s)", time.monotonic() - started, len(pdf), fallback)
+        except BadRequest as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        except Timeout:
+            self._json(504, {"error": f"typesetting exceeded {DOC_TIMEOUT:.0f} s"})
+            return
+        except BuildFailed as exc:
+            log.warning("build failed: %s", exc)
+            self._json(422, {"error": str(exc)})
+            return
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception("unexpected error")
+            self._json(500, {"error": f"internal error: {exc}"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(pdf)))
+        self.send_header("X-Typeset-Fallback", fallback)
+        self.end_headers()
+        self.wfile.write(pdf)
+
+
+def make_server(host: str = "0.0.0.0", port: int = 8080) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.daemon_threads = True
+    return server
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    make_server(port=int(os.environ.get("PORT", "8080"))).serve_forever()
