@@ -4,7 +4,8 @@
 returns the PDF; the `X-Typeset-Fallback` header says how many formulas had to
 be shown as source (`0`, `<n>`, `<n>+images` or `all`).
 
-`TypesetUnavailable` is transient (service down, busy, or out of time): retry
+`TypesetUnavailable` is transient (service down, busy, out of time, or a
+500 crash): retry
 later. `TypesetError` is permanent for this document: don't retry.
 """
 
@@ -17,7 +18,9 @@ import httpx
 
 from app.config import get_settings
 
+# 500 too: an unexpected service crash is worth another try later.
 _RETRYABLE = {
+    httpx.codes.INTERNAL_SERVER_ERROR,
     httpx.codes.BAD_GATEWAY,
     httpx.codes.SERVICE_UNAVAILABLE,
     httpx.codes.GATEWAY_TIMEOUT,
@@ -57,7 +60,7 @@ def render_pdf(
 ) -> TypesetResult:
     """Typeset `markdown` (pandoc Markdown, formulas in `$…$`/`$$…$$`) into a PDF.
 
-    `title` is plain text (the service escapes it). `images` maps the names used
+    `title` is plain-text PDF metadata (the service doesn't print it). `images` maps the names used
     in `![](name)` to PNG/JPEG/PDF bytes. `client` is for tests.
     """
     settings = get_settings()

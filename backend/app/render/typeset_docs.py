@@ -13,6 +13,9 @@ The service reads pandoc Markdown with raw TeX and raw HTML disabled, so:
 * every other ASCII punctuation character in text is backslash-escaped, so
   text prints literally (pandoc then escapes it for LaTeX itself).
 
+The document title is the Markdown's top heading (so its formulas are drawn)
+and, as plain text, the PDF's metadata title.
+
 Which text is a formula follows the web exactly: plain-text fields (titles,
 takeaways, cards, questions, notes, captions) use MathText's dollar rule
 (frontend/src/components/math/segments.ts, ported below); report section HTML
@@ -32,6 +35,7 @@ from urllib.parse import quote
 from bs4 import BeautifulSoup, Comment, NavigableString, PageElement, Tag
 from PIL import Image
 
+from app.config import get_settings
 from app.models.enums import ArtifactType, MediaFileKind
 from app.schemas.content import (
     FlashcardsContent,
@@ -40,6 +44,8 @@ from app.schemas.content import (
     ReportContent,
     SlideDeckContent,
 )
+from app.storage.keys import InvalidKeyError, validate_key
+from app.storage.service import get_storage
 
 
 class StoredImage(NamedTuple):
@@ -51,8 +57,10 @@ class StoredImage(NamedTuple):
 
 
 class TypesetDoc(NamedTuple):
+    #: starts with the title as a `#` heading (its formulas drawn)
     markdown: str
-    #: plain text; the service escapes it
+    #: plain text for the PDF's metadata (formula sources without `$`); the
+    #: service doesn't print it
     title: str
     #: names used in `![](name)` → PNG/JPEG bytes
     images: dict[str, bytes]
@@ -67,21 +75,29 @@ PDF_KINDS: dict[ArtifactType, MediaFileKind] = {
     ArtifactType.slide_deck: MediaFileKind.slides_handout_pdf,
 }
 
-#: Above this many image bytes in one document, images are re-encoded as JPEG
-#: (the service caps a request at 25 MB, and base64 adds a third).
-IMAGE_BUDGET_BYTES = 15 * 1024 * 1024
-MAX_IMAGE_SIDE = 2000
+#: reads a stored media file by its storage key
+MediaLoader = Callable[[str], bytes]
 
 # Sentinels while assembling inline text (NUL is stripped from all input).
 _BR = "\x00b"  # hard line break
 _PARA = "\x00p"  # paragraph break inside a plain-text field
 _MATH_END = "\x00m"  # just after a formula
 
+# C0 controls other than tab/newline/CR make xelatex fail; VT/FF are line breaks.
+_CONTROLS = {c: None for c in [*range(0x00, 0x09), *range(0x0E, 0x20), 0x7F]} | {
+    0x0B: "\n",
+    0x0C: "\n",
+}
 _PUNCT = re.compile(r"([!-/:-@\[-`{-~])")
 _BLANK_LINES = re.compile(r"\n[ \t]*(?:\n[ \t]*)+")
 
 
 # -- text and formulas ----------------------------------------------------------------
+def _clean(text: str) -> str:
+    """Drop control characters (and so any NUL a sentinel could collide with)."""
+    return text.translate(_CONTROLS)
+
+
 def _escape(text: str, *, nbsp: bool = False) -> str:
     out = _PUNCT.sub(r"\\\1", text)
     return out.replace(" ", "\\ ") if nbsp else out
@@ -101,7 +117,7 @@ def _has_unescaped(latex: str, char: str) -> bool:
 
 def _code(source: str) -> str:
     """`source` as an inline code span (prints verbatim, monospace)."""
-    content = " ".join(source.split())
+    content = " ".join(_clean(source).split())
     if not content:
         return ""
     longest = max((len(run) for run in re.findall(r"`+", content)), default=0)
@@ -111,7 +127,7 @@ def _code(source: str) -> str:
 
 
 def _math(latex: str, display: bool, *, one_line: bool = False, inline_only: bool = False) -> str:
-    src = _BLANK_LINES.sub("\n", latex.replace("\x00", "").strip())
+    src = _BLANK_LINES.sub("\n", _clean(latex).strip())
     if not src:
         return ""
     if one_line and "\n" in src:
@@ -206,7 +222,7 @@ def text_to_markdown(text: str, *, one_line: bool = False) -> str:
     """A plain-text field (MathText on the web) as Markdown: its `$…$`/`$$…$$`
     formulas kept, everything else literal. Line breaks become hard breaks and
     blank lines paragraph breaks, unless `one_line` (headings)."""
-    text = text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = _clean(text).replace("\r\n", "\n").replace("\r", "\n").strip()
     parts: list[str] = []
     for is_math, s, display in _split_math(text):
         if is_math:
@@ -222,6 +238,11 @@ def text_to_markdown(text: str, *, one_line: bool = False) -> str:
     return _finish("".join(parts))
 
 
+def plain_title(text: str) -> str:
+    """A title as plain text: formula sources kept, their `$` delimiters dropped."""
+    return " ".join("".join(s for _, s, _ in _split_math(_clean(text))).split())
+
+
 # -- report section HTML -----------------------------------------------------------------
 _HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _BLOCK_TAGS = _HEADINGS | {
@@ -233,8 +254,39 @@ _LINK_SCHEMES = ("http://", "https://", "mailto:")
 _URL_SAFE = ":/?#@!$&'*+,;=%~"  # spaces, parentheses and brackets get %-encoded
 
 
+@dataclass
+class _Media:
+    """Report section images: loads `/api/media/<key>` sources and collects them."""
+
+    load: MediaLoader | None
+    images: dict[str, bytes]
+
+    def embed(self, src: str) -> str | None:
+        """The name of the embedded image for `src`, or None (not ours / unreadable)."""
+        if self.load is None:
+            return None
+        base = get_settings().public_base_url.rstrip("/")
+        key = next(
+            (src[len(p) :] for p in (f"{base}/api/media/", "/api/media/") if src.startswith(p)),
+            None,
+        )
+        if not key:
+            return None
+        try:
+            validate_key(key)
+            data = self.load(key)
+        except (InvalidKeyError, OSError, ValueError):
+            return None
+        (prepared,) = _prepare_images([(f"image-{len(self.images) + 1:03d}", data)])
+        if prepared is None:
+            return None
+        self.images[prepared[0]] = prepared[1]
+        return prepared[0]
+
+
 @dataclass(frozen=True)
 class _Ctx:
+    media: _Media | None = None
     active: frozenset[str] = frozenset()
     nbsp: bool = False  # inside sub/sup: spaces must be escaped
     one_line: bool = False  # table cells and headings
@@ -250,9 +302,24 @@ def _math_class(tag: Tag) -> str | None:
 
 
 def _wrap(mark: str, inner: str) -> str:
-    m = re.fullmatch(r"(\s*)(.*?)(\s*)", inner, re.S)
-    assert m is not None
-    lead, core, trail = m.groups()
+    """`inner` between `mark`s, with its outer spaces (incl. escaped `\\ ` and
+    line breaks) moved outside — pandoc needs the marks next to text."""
+    tokens = re.findall(r"\\.|\x00.|.", inner, re.S)
+
+    def spacy(tok: str) -> bool:
+        return tok.isspace() or tok in ("\\ ", _BR)
+
+    start, end = 0, len(tokens)
+    while start < end and spacy(tokens[start]):
+        start += 1
+    while end > start and spacy(tokens[end - 1]):
+        end -= 1
+
+    def outside(toks: list[str]) -> str:
+        return "".join(" " if t == "\\ " else t for t in toks)
+
+    lead, trail = outside(tokens[:start]), outside(tokens[end:])
+    core = "".join(tokens[start:end])
     return f"{lead}{mark}{core}{mark}{trail}" if core else lead + trail
 
 
@@ -264,7 +331,7 @@ def _inline(node: PageElement, ctx: _Ctx) -> str:
     if isinstance(node, Comment):
         return ""
     if isinstance(node, NavigableString):
-        return _escape(re.sub(r"\s+", " ", str(node).replace("\x00", "")), nbsp=ctx.nbsp)
+        return _escape(re.sub(r"\s+", " ", _clean(str(node))), nbsp=ctx.nbsp)
     if not isinstance(node, Tag):
         return ""
     name = node.name
@@ -277,6 +344,8 @@ def _inline(node: PageElement, ctx: _Ctx) -> str:
             inline_only=ctx.inline_only,
         )
     if name == "br":
+        if ctx.nbsp:  # inside sub/sup
+            return "\\ "
         return " " if ctx.one_line else _BR
     marks = {"strong": "**", "b": "**", "em": "*", "i": "*", "s": "~~", "sub": "~", "sup": "^"}
     if name in marks:
@@ -296,13 +365,15 @@ def _inline(node: PageElement, ctx: _Ctx) -> str:
             return f"[{inner}]({quote(href, safe=_URL_SAFE)})"
         return inner
     if name == "img":
-        return _escape(" ".join(str(node.get("alt") or "").split()))
+        alt = _escape(" ".join(_clean(str(node.get("alt") or "")).split()))
+        embedded = ctx.media.embed(str(node.get("src") or "").strip()) if ctx.media else None
+        return f"![{alt}]({embedded})" if embedded else alt
     if name in _BLOCK_TAGS:
         return f" {_inline_children(node, ctx)} "
     return _inline_children(node, ctx)
 
 
-def _blocks(children: Iterable[PageElement]) -> list[str]:
+def _blocks(children: Iterable[PageElement], base: _Ctx) -> list[str]:
     out: list[str] = []
     buf: list[str] = []
 
@@ -317,9 +388,9 @@ def _blocks(children: Iterable[PageElement]) -> list[str]:
             child.name in _BLOCK_TAGS or _math_class(child) == "math-display"
         ):
             flush()
-            out.extend(_block(child))
+            out.extend(_block(child, base))
         else:
-            buf.append(_inline(child, _Ctx()))
+            buf.append(_inline(child, base))
     flush()
     return out
 
@@ -336,7 +407,7 @@ def _list_items(markers: Sequence[str], bodies: Sequence[list[str]]) -> str:
     return ("\n\n" if loose else "\n").join(items)
 
 
-def _table(tag: Tag) -> list[str]:
+def _table(tag: Tag, base: _Ctx) -> list[str]:
     rows: list[list[str]] = []
     header = False
     for tr in tag.find_all("tr"):
@@ -346,7 +417,7 @@ def _table(tag: Tag) -> list[str]:
         if not rows:
             in_head = isinstance(tr.parent, Tag) and tr.parent.name == "thead"
             header = in_head or (bool(cells) and all(c.name == "th" for c in cells))
-        ctx = _Ctx(one_line=True)
+        ctx = replace(base, one_line=True)
         rows.append([_finish(_inline_children(c, ctx)) for c in cells])
     width = max((len(r) for r in rows), default=0)
     if not width:
@@ -359,51 +430,62 @@ def _table(tag: Tag) -> list[str]:
         *("| " + " | ".join(r) + " |" for r in rows),
     ]
     caption = tag.find("caption")
-    title = _finish(_inline_children(caption, _Ctx())) if isinstance(caption, Tag) else ""
+    title = _finish(_inline_children(caption, base)) if isinstance(caption, Tag) else ""
     return [title, "\n".join(lines)] if title else ["\n".join(lines)]
 
 
-def _block(tag: Tag) -> list[str]:
+def _block(tag: Tag, base: _Ctx) -> list[str]:
     name = tag.name
     math = _math_class(tag)
     if math:
         formula = _finish(_math(tag.get_text(), math == "math-display"))
         return [formula] if formula else []
     if name in _HEADINGS:
-        level = max(2, int(name[1]) - 1)  # level 1 is the report's section heading
-        text = _finish(_inline_children(tag, _Ctx(one_line=True, inline_only=True)))
+        # levels 1 and 2 are the document title and the report's section headings
+        level = max(3, int(name[1]))
+        text = _finish(_inline_children(tag, replace(base, one_line=True, inline_only=True)))
         return [f"{'#' * level} {text}"] if text else []
     if name in ("ul", "ol"):
         items = [c for c in tag.children if isinstance(c, Tag)]
         if not items:
             return []
         markers = [f"{i}." if name == "ol" else "-" for i in range(1, len(items) + 1)]
-        return [_list_items(markers, [_blocks(li.children) for li in items])]
+        return [_list_items(markers, [_blocks(li.children, base) for li in items])]
     if name == "blockquote":
-        inner = "\n\n".join(_blocks(tag.children))
+        inner = "\n\n".join(_blocks(tag.children, base))
         quoted = "\n".join(f"> {line}" if line else ">" for line in inner.split("\n"))
         return [quoted] if inner else []
     if name == "pre":
-        text = tag.get_text().replace("\x00", "").strip("\n")
+        text = _clean(tag.get_text()).strip("\n")
         longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
         fence = "`" * max(3, longest + 1)
         return [f"{fence}\n{text}\n{fence}"]
     if name == "hr":
         return ["* * *"]
     if name == "table":
-        return _table(tag)
+        return _table(tag, base)
     if name == "dt":
-        term = _finish(_inline_children(tag, _Ctx(active=frozenset({"strong"}))))
+        term = _finish(_inline_children(tag, replace(base, active=frozenset({"strong"}))))
         return [f"**{term}**"] if term else []
     if name in ("col", "colgroup"):
         return []
-    return _blocks(tag.children)
+    return _blocks(tag.children, base)
 
 
-def html_to_markdown(html: str) -> str:
-    """Report section HTML (sanitised) → Markdown blocks."""
+def html_to_markdown(
+    html: str,
+    *,
+    load_media: MediaLoader | None = None,
+    images: dict[str, bytes] | None = None,
+) -> str:
+    """Report section HTML (sanitised) → Markdown blocks.
+
+    `<img>` with one of our media URLs (`/api/media/<key>`, optionally under
+    PUBLIC_BASE_URL) is read with `load_media` and added to `images` as
+    `image-NNN.png|jpg`; any other image (or without a loader) is its alt text."""
     soup = BeautifulSoup(html or "", "html.parser")
-    return "\n\n".join(_blocks(soup.children))
+    media = _Media(load_media, images if images is not None else {})
+    return "\n\n".join(_blocks(soup.children, _Ctx(media=media)))
 
 
 # -- images -------------------------------------------------------------------------------
@@ -415,64 +497,63 @@ def _image_type(data: bytes) -> str | None:
     return None
 
 
-def _reencode(data: bytes, fmt: str) -> bytes | None:
+def _to_png(data: bytes) -> bytes | None:
     try:
-        with Image.open(io.BytesIO(data)) as opened:
-            opened.load()
-            img: Image.Image = opened
-            if fmt == "JPEG":
-                if img.mode in ("RGBA", "LA", "P"):
-                    rgba = img.convert("RGBA")
-                    img = Image.new("RGB", rgba.size, "white")
-                    img.paste(rgba, mask=rgba.getchannel("A"))
-                else:
-                    img = img.convert("RGB")
-                img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+        with Image.open(io.BytesIO(data)) as img:
+            img.load()
             out = io.BytesIO()
-            img.save(out, fmt, **({"quality": 85} if fmt == "JPEG" else {}))
+            img.save(out, "PNG")
             return out.getvalue()
     except Exception:  # unreadable or hostile image: leave it out
         return None
 
 
 def _prepare_images(named: Sequence[tuple[str, bytes]]) -> list[tuple[str, bytes] | None]:
-    """(stem, bytes) → (file name, PNG/JPEG bytes), or None for an unreadable image.
-    Everything is re-encoded as JPEG when the total is over IMAGE_BUDGET_BYTES."""
+    """(stem, bytes) → (file name, PNG/JPEG bytes) unchanged; other formats Pillow
+    reads (WebP, GIF, …) become PNG; None for an unreadable image."""
     out: list[tuple[str, bytes] | None] = []
     for stem, data in named:
         ext = _image_type(data)
         if ext is None:
-            png = _reencode(data, "PNG")
+            png = _to_png(data)
             out.append((f"{stem}.png", png) if png else None)
         else:
             out.append((f"{stem}.{ext}", data))
-    if sum(len(item[1]) for item in out if item) > IMAGE_BUDGET_BYTES:
-        smaller: list[tuple[str, bytes] | None] = []
-        for item in out:
-            jpeg = _reencode(item[1], "JPEG") if item else None
-            smaller.append((f"{item[0].rsplit('.', 1)[0]}.jpg", jpeg) if item and jpeg else None)
-        out = smaller
     return out
 
 
 # -- builders -----------------------------------------------------------------------------
-def _join(blocks: Iterable[str]) -> str:
-    return "\n\n".join(b for b in blocks if b) + "\n"
+def _doc(title: str, blocks: Iterable[str], images: dict[str, bytes]) -> TypesetDoc:
+    """The title as the top heading (formulas drawn) and as plain metadata."""
+    heading = text_to_markdown(title, one_line=True)
+    body = [f"# {heading}" if heading else "", *blocks]
+    return TypesetDoc("\n\n".join(b for b in body if b) + "\n", plain_title(title), images)
+
+
+def _storage_loader(key: str) -> bytes:
+    return get_storage().open(key)
 
 
 def build_report(
-    content_json: dict[str, Any], media: Sequence[StoredImage], *, title: str | None = None
+    content_json: dict[str, Any],
+    media: Sequence[StoredImage],
+    *,
+    title: str | None = None,
+    load_media: MediaLoader | None = _storage_loader,
 ) -> TypesetDoc:
+    """Section headings are numbered like the student ReportViewer. Section
+    images on our media URLs are read with `load_media` (Storage by default)."""
     c = ReportContent.model_validate(content_json)
+    images: dict[str, bytes] = {}
     blocks = [f"*About {c.read_minutes} min read*"]
     if c.key_takeaways:
-        blocks.append("# Key takeaways")
+        blocks.append("## Key takeaways")
         bodies = [[text_to_markdown(t)] for t in c.key_takeaways]
         blocks.append(_list_items(["-"] * len(bodies), bodies))
-    for section in c.sections:
-        blocks.append(f"# {text_to_markdown(section.heading, one_line=True)}")
-        blocks.append(html_to_markdown(section.html))
-    return TypesetDoc(_join(blocks), title or c.title, {})
+    for i, section in enumerate(c.sections, 1):
+        blocks.append(f"## {i}. {text_to_markdown(section.heading, one_line=True)}")
+        blocks.append(html_to_markdown(section.html, load_media=load_media, images=images))
+    return _doc(title or c.title, blocks, images)
 
 
 def build_flashcards(
@@ -487,7 +568,7 @@ def build_flashcards(
             blocks.append(f"**Category:** {category}")
         blocks.append(f"**Front:** {text_to_markdown(card.front)}")
         blocks.append(f"**Back:** {text_to_markdown(card.back)}")
-    return TypesetDoc(_join(blocks), title or "Flashcards", {})
+    return _doc(title or "Flashcards", blocks, {})
 
 
 _LETTERS = "ABCD"
@@ -497,18 +578,18 @@ def build_quiz(
     content_json: dict[str, Any], media: Sequence[StoredImage], *, title: str | None = None
 ) -> TypesetDoc:
     c = QuizContent.model_validate(content_json)
-    blocks = ["# Questions"]
+    blocks = ["## Questions"]
     for i, q in enumerate(c.questions, 1):
-        blocks.append(f"## Question {i}")
+        blocks.append(f"### Question {i}")
         blocks.append(text_to_markdown(q.question))
         markers = [f"{letter}." for letter in _LETTERS[: len(q.options)]]
         blocks.append(_list_items(markers, [[text_to_markdown(o)] for o in q.options]))
-    blocks.append("# Answer key")
+    blocks.append("## Answer key")
     for i, q in enumerate(c.questions, 1):
         answer = text_to_markdown(q.options[q.correct_index])
         blocks.append(f"**{i}. {_LETTERS[q.correct_index]}:** {answer}")
         blocks.append(text_to_markdown(q.explanation))
-    return TypesetDoc(_join(blocks), title or "Quiz", {})
+    return _doc(title or "Quiz", blocks, {})
 
 
 def build_infographic(
@@ -525,7 +606,7 @@ def build_infographic(
             blocks.append(f"![]({prepared[0]})")
     blocks.append(text_to_markdown(c.caption))
     blocks.append(text_to_markdown(c.description or ""))
-    return TypesetDoc(_join(blocks), title or "Infographic", images)
+    return _doc(title or "Infographic", blocks, images)
 
 
 def build_slide_deck(
@@ -549,7 +630,7 @@ def build_slide_deck(
             blocks.append(f"![]({image[0]})")
         if i < len(c.slides):
             blocks.append(text_to_markdown(c.slides[i].notes or ""))
-    return TypesetDoc(_join(blocks), title or "Slides", images)
+    return _doc(title or "Slides", blocks, images)
 
 
 Builder = Callable[..., TypesetDoc]
@@ -569,11 +650,15 @@ def build_document(
     media: Sequence[StoredImage],
     *,
     title: str | None = None,
+    load_media: MediaLoader | None = _storage_loader,
 ) -> TypesetDoc:
     """The typeset document for one artifact version. `media` is the version's
     stored files (bytes read from storage); `title` overrides the default
-    (the report's own title; "Flashcards", "Quiz", "Infographic", "Slides")."""
+    (the report's own title; "Flashcards", "Quiz", "Infographic", "Slides").
+    `load_media` reads report-section images by storage key (Storage by default)."""
     builder = _BUILDERS.get(artifact_type)
     if builder is None:
         raise ValueError(f"no typeset PDF for {artifact_type.value}")
+    if artifact_type is ArtifactType.report:
+        return builder(content_json, media, title=title, load_media=load_media)
     return builder(content_json, media, title=title)

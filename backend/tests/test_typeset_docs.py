@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 from PIL import Image
 
+from app.config import get_settings
 from app.models.enums import ArtifactType, MediaFileKind
 from app.pipeline.parsers.notebooklm import parse_notebooklm
-from app.render import typeset_docs
 from app.render.typeset_docs import (
     PDF_KINDS,
     StoredImage,
@@ -34,6 +34,12 @@ from app.render.typeset_docs import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "notebooklm"
+
+
+def _jpeg() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), "blue").save(buf, "JPEG")
+    return buf.getvalue()
 
 
 def _png(color: str = "red", size: tuple[int, int] = (4, 3)) -> bytes:
@@ -73,6 +79,11 @@ def test_text_to_markdown(text: str, expected: str) -> None:
     assert text_to_markdown(text) == expected
 
 
+def test_text_control_characters() -> None:
+    assert text_to_markdown("bell\x07 vt\x0b esc\x1b end\x7f") == "bell vt\\\nesc end"
+    assert text_to_markdown("$x\x07^2$") == "$x^2$"
+
+
 def test_text_formula_with_blank_line_stays_one_formula() -> None:
     assert text_to_markdown("$$a\n\n  b$$") == "$$a\nb$$"
 
@@ -104,8 +115,18 @@ def test_text_formula_with_blank_line_stays_one_formula() -> None:
             "-   a\n\n    -   b\n\n-   c",
         ),
         ("<p>line one<br>line two<br></p>", "line one\\\nline two"),
-        ("<h3>Sub <em>head</em></h3><p>x</p>", "## Sub *head*\n\nx"),
-        ("<h4>Minor</h4>", "### Minor"),
+        ("<h3>Sub <em>head</em></h3><p>x</p>", "### Sub *head*\n\nx"),
+        ("<h2>Big</h2>", "### Big"),
+        ("<h4>Minor</h4>", "#### Minor"),
+        # spaces and line breaks at the edge of sub/sup go outside the marks
+        ("<p>H<sub>2 </sub>O</p>", "H~2~ O"),
+        ("<p>x<sup>n </sup></p>", "x^n^"),
+        ("<p>x<sup>a <br>b</sup> y</p>", "x^a\\ \\ b^ y"),
+        ("<p><strong><br>lead</strong> z</p>", "**lead** z"),
+        # control characters break xelatex: VT/FF are line breaks, the rest go
+        ("<p>bell\x07 vt\x0b esc\x1b end</p>", "bell vt esc end"),
+        ("<pre>a\x07b</pre>", "```\nab\n```"),
+        ('<p><code>a\x1bb</code> <span class="math-inline">x\x07^2</span></p>', "`ab` $x^2$"),
         ("<blockquote><p>quoted</p><p>more</p></blockquote>", "> quoted\n>\n> more"),
         ("<pre><code>code `x`\n  y</code></pre>", "```\ncode `x`\n  y\n```"),
         ("<p>H<sub>2</sub>O and x<sup>a b</sup></p>", "H~2~O and x^a\\ b^"),
@@ -173,14 +194,16 @@ REPORT: dict[str, Any] = {
     ],
 }
 
-REPORT_MD = r"""*About 7 min read*
+REPORT_MD = r"""# Nucleophilic Substitution\: $S_N2$ \& More
 
-# Key takeaways
+*About 7 min read*
+
+## Key takeaways
 
 -   $S_N2$ is one step\; costs \$5 at 100\%
 -   Rate \= $k[\text{RX}][\text{Nu}^-]$
 
-# 1\. Mechanism \#1 of $S_N2$
+## 1. 1\. Mechanism \#1 of $S_N2$
 
 The **rate** of an $S_N2$ reaction is 50\% faster \& uses CH\_3\_Br \*as\* is\. Costs \$5 at 20 µL\.
 
@@ -191,13 +214,13 @@ $$\frac{d[A]}{dt} = -k[A][B]$$
 -   first *point*
 -   second $x < y$
 
-# Table
+## 2. Table
 
 | Ion | Charge |
 |---|---|
 | $|q|$ | a \| b |
 
-## Sub
+### Sub
 
 line one\
 line two
@@ -216,15 +239,18 @@ code `x`
 def test_report_markdown() -> None:
     doc = build_report(REPORT, [])
     assert doc.markdown == REPORT_MD
-    # the service treats the title as plain text
-    assert doc.title == "Nucleophilic Substitution: $S_N2$ & More"
+    # metadata title: plain text, formula sources without their dollars
+    assert doc.title == "Nucleophilic Substitution: S_N2 & More"
     assert doc.images == {}
 
 
 def test_report_without_takeaways() -> None:
     content = {**REPORT, "key_takeaways": [], "read_minutes": 1}
     md = build_report(content, []).markdown
-    assert md.startswith("*About 1 min read*\n\n# 1\\. Mechanism")
+    assert md.startswith(
+        "# Nucleophilic Substitution\\: $S_N2$ \\& More\n\n*About 1 min read*\n\n"
+        "## 1. 1\\. Mechanism"
+    )
     assert "Key takeaways" not in md
 
 
@@ -241,7 +267,9 @@ FLASHCARDS: dict[str, Any] = {
     ]
 }
 
-FLASHCARDS_MD = r"""## Card 1
+FLASHCARDS_MD = r"""# Flashcards
+
+## Card 1
 
 **Category:** Mechanisms
 
@@ -285,9 +313,11 @@ QUIZ: dict[str, Any] = {
     ]
 }
 
-QUIZ_MD = r"""# Questions
+QUIZ_MD = r"""# Quiz
 
-## Question 1
+## Questions
+
+### Question 1
 
 Which is the rate law for $S_N2$\?
 
@@ -296,7 +326,7 @@ B.  $k[RX][Nu]$
 C.  $k$
 D.  None — costs \$5
 
-## Question 2
+### Question 2
 
 Pick 1\.
 
@@ -305,7 +335,7 @@ B.  c\*d
 C.  e\#f
 D.  g\%h
 
-# Answer key
+## Answer key
 
 **1. B:** $k[RX][Nu]$
 
@@ -336,7 +366,8 @@ def test_infographic_markdown_with_image() -> None:
     ]
     doc = build_infographic(INFOGRAPHIC, media)
     assert doc.markdown == (
-        "![](infographic.png)\n\nRates of $S_N1$ vs $S_N2$\n\nLine 1\\: 50\\% \\& more\n\nPara 2\n"
+        "# Infographic\n\n![](infographic.png)\n\n"
+        "Rates of $S_N1$ vs $S_N2$\n\nLine 1\\: 50\\% \\& more\n\nPara 2\n"
     )
     assert doc.images == {"infographic.png": png}
     assert doc.title == "Infographic"
@@ -344,7 +375,7 @@ def test_infographic_markdown_with_image() -> None:
 
 def test_infographic_without_png_omits_the_image() -> None:
     doc = build_infographic({"caption": "Only text", "description": None}, [])
-    assert doc.markdown == "Only text\n"
+    assert doc.markdown == "# Infographic\n\nOnly text\n"
     assert doc.images == {}
 
 
@@ -355,7 +386,7 @@ def test_infographic_jpeg_keeps_jpeg_name() -> None:
         INFOGRAPHIC, [StoredImage(MediaFileKind.infographic_png, None, buf.getvalue())]
     )
     assert list(doc.images) == ["infographic.jpg"]
-    assert doc.markdown.startswith("![](infographic.jpg)\n\n")
+    assert doc.markdown.startswith("# Infographic\n\n![](infographic.jpg)\n\n")
 
 
 def test_other_image_formats_are_converted_to_png() -> None:
@@ -394,7 +425,7 @@ def test_slide_deck_markdown() -> None:
     ]
     doc = build_slide_deck(SLIDES, media)
     assert doc.markdown == (
-        "## Slide 1\n\n![](slide-001.png)\n\nWelcome to $S_N2$\\.\\\nCosts \\$5\\.\n\n"
+        "# Slides\n\n## Slide 1\n\n![](slide-001.png)\n\nWelcome to $S_N2$\\.\\\nCosts \\$5\\.\n\n"
         "## Slide 2\n\n![](slide-002.png)\n\n"
         "## Slide 3\n\nOnly notes\n"
     )
@@ -402,17 +433,57 @@ def test_slide_deck_markdown() -> None:
     assert doc.title == "Slides"
 
 
-def test_large_images_are_recompressed_to_fit_the_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(typeset_docs, "IMAGE_BUDGET_BYTES", 10)
-    media = [StoredImage(MediaFileKind.slide_png, i, _png(size=(3000, 2000))) for i in range(2)]
+def test_large_images_are_sent_unchanged() -> None:
+    big = _png(size=(3000, 2000))
+    media = [StoredImage(MediaFileKind.slide_png, i, big) for i in range(2)]
     doc = build_slide_deck(SLIDES, media)
-    assert sorted(doc.images) == ["slide-001.jpg", "slide-002.jpg"]
-    for data in doc.images.values():
-        assert data.startswith(b"\xff\xd8\xff")
-        assert max(Image.open(io.BytesIO(data)).size) <= typeset_docs.MAX_IMAGE_SIDE
-    assert "![](slide-001.jpg)" in doc.markdown
+    assert doc.images == {"slide-001.png": big, "slide-002.png": big}
+
+
+# -- titles ---------------------------------------------------------------------------------
+def test_title_is_the_top_heading_and_plain_metadata() -> None:
+    doc = build_flashcards(FLASHCARDS, [], title="Rates of $S_N2$ & $k$: 50% *off*")
+    assert doc.markdown.startswith("# Rates of $S_N2$ \\& $k$\\: 50\\% \\*off\\*\n\n## Card 1")
+    assert doc.title == "Rates of S_N2 & k: 50% *off*"
+    # display math in a heading is drawn inline
+    assert build_quiz(QUIZ, [], title="A $$x^2$$ b").markdown.startswith("# A $x^2$ b\n")
+
+
+# -- report section images --------------------------------------------------------------------
+def test_report_embeds_our_media_images_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://app.example")
+    get_settings.cache_clear()
+    png, jpeg = _png(), _jpeg()
+    stored = {"courses/c/a.png": png, "courses/c/b.jpg": jpeg}
+    loaded: list[str] = []
+
+    def load(key: str) -> bytes:
+        loaded.append(key)
+        if key not in stored:
+            raise FileNotFoundError(key)
+        return stored[key]
+
+    html = (
+        '<p>A <img src="/api/media/courses/c/a.png" alt="Fig [1]"></p>'
+        '<p><img src="https://app.example/api/media/courses/c/b.jpg"></p>'
+        '<p><img src="https://evil.example/x.png" alt="ext"> '
+        '<img src="/api/media/courses/c/missing.png" alt="gone"> '
+        '<img src="/api/media/../etc/passwd" alt="bad"></p>'
+    )
+    content = {**REPORT, "key_takeaways": [], "sections": [{"heading": "S", "html": html}]}
+    try:
+        doc = build_report(content, [], load_media=load)
+    finally:
+        get_settings.cache_clear()
+    assert doc.markdown.endswith(
+        "## 1. S\n\nA ![Fig \\[1\\]](image-001.png)\n\n![](image-002.jpg)\n\next gone bad\n"
+    )
+    assert doc.images == {"image-001.png": png, "image-002.jpg": jpeg}
+    assert loaded == ["courses/c/a.png", "courses/c/b.jpg", "courses/c/missing.png"]
+
+
+def test_report_images_need_a_loader() -> None:
+    assert html_to_markdown('<p><img src="/api/media/k/a.png" alt="x"></p>') == "x"
 
 
 # -- dispatch -------------------------------------------------------------------------------
@@ -494,6 +565,18 @@ def test_recorded_notebooklm_report_formulas_are_verbatim() -> None:
             ArtifactType.slide_deck,
             SLIDES,
             [StoredImage(MediaFileKind.slide_png, 0, _png(size=(40, 30)))],
+        ),
+        (
+            ArtifactType.flashcards,
+            {
+                "cards": [
+                    {
+                        "front": "bell\x07 vt\x0b esc\x1b end",
+                        "back": 'Literal "q" << >> ,, `tick` -- --- and x<sub>',
+                    }
+                ]
+            },
+            [],
         ),
     ],
 )

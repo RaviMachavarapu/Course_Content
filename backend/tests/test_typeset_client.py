@@ -78,8 +78,8 @@ def test_missing_fallback_header_reads_as_zero() -> None:
     assert result.fallback == "0"
 
 
-@pytest.mark.parametrize("status", [503, 504])
-def test_busy_or_timeout_is_unavailable(status: int) -> None:
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_crash_busy_or_timeout_is_unavailable(status: int) -> None:
     client = _client(lambda r: httpx.Response(status, json={"error": "busy"}))
     with pytest.raises(TypesetUnavailable, match="busy"):
         render_pdf("x", "t", {}, client=client)
@@ -101,7 +101,7 @@ def test_client_timeout_is_unavailable() -> None:
         render_pdf("x", "t", {}, client=_client(handler))
 
 
-@pytest.mark.parametrize("status", [400, 422, 500])
+@pytest.mark.parametrize("status", [400, 404, 422])
 def test_build_failures_are_errors(status: int) -> None:
     client = _client(lambda r: httpx.Response(status, json={"error": "build failed: bad"}))
     with pytest.raises(TypesetError, match="build failed: bad"):
