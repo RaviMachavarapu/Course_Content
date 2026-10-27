@@ -58,8 +58,9 @@ router = APIRouter(prefix="/api/student", tags=["student-quiz"])
 
 PREPARING_MESSAGE = "Preparing new questions…"
 UNAVAILABLE_MESSAGE = "New questions aren't available right now — please try again later"
-#: a chat set still `preparing` after this long is treated as unavailable (the
-#: task itself replaces it only after `app.tasks.quiz.STALE_AFTER`)
+#: a chat set `preparing` with no sign of life (heartbeat, else creation) for this long
+#: is treated as unavailable and preparation is enqueued again; the task replaces it
+#: once silent for `app.tasks.quiz.STALE_AFTER` (20 min, deliberately longer: see there)
 PREPARING_PATIENCE = dt.timedelta(minutes=15)
 
 QType = Literal["mcq", "fill_blank"]
@@ -306,7 +307,7 @@ def start_attempt(
         if qs is None:
             preparing = _chat_set(db, artifact.id, uid, QuizSetStatus.preparing)
             if preparing is not None:
-                recent = _now() - preparing.created_at < PREPARING_PATIENCE
+                recent = _now() - preparing.alive_at < PREPARING_PATIENCE
                 # a fresh set is on its way: the client's 3 s polls must not re-enqueue
                 return _waiting(db, artifact.id, uid, available=recent, enqueue=not recent)
             failed = _latest_chat_status(db, artifact.id, uid) is QuizSetStatus.failed

@@ -16,8 +16,14 @@ Chat unavailable (a transient provider error, a 5xx/408 answer, the connector un
 unreadable source PDFs or a database connection error is
 retried with exponential back-off (30 s, 1, 2, 4, 8 min); the set stays `preparing`
 meanwhile and is marked `failed` when the retries run out. Artifact status is never
-touched. A `preparing` set older than `STALE_AFTER` (its worker died) is failed and
-replaced by the next call.
+touched.
+
+Heartbeat: the task stamps `heartbeat_at` on its set when it claims (or resumes) it,
+before each chat round and before scheduling a retry. A `preparing` set silent for
+`STALE_AFTER` (its worker died; `heartbeat_at`, else `created_at`) is failed and replaced
+by the next call. A slow task that finds its set replaced stops ("superseded") without
+asking chat again, retrying or writing anything: every write is by set id and only while
+the set is still `preparing`, so the replacement is never touched.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ from typing import Any
 
 import httpx
 from celery import Task, shared_task
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -56,9 +62,15 @@ QUEUE = "quiz"
 DEFAULT_QUESTION_COUNT = 10
 MAX_RETRIES = 5
 RETRY_BASE_SEC = 30
-#: a `preparing` set this old was abandoned (worst case for a live one: 5 retries of
-#: back-off plus two 5-minute chat queries per run is about 75 minutes)
-STALE_AFTER = dt.timedelta(hours=2)
+#: a `preparing` set whose heartbeat is this old was abandoned (its worker died). The
+#: longest silence of a live task is the last back-off, 8 min (RETRY_BASE_SEC * 2**4),
+#: plus waiting for the single quiz worker to finish another student's run (up to ~10 min:
+#: two 5-minute chat queries); one chat query alone is at most 5 min. 20 min covers that.
+#: It is deliberately longer than the student API's `PREPARING_PATIENCE` (15 min): the
+#: student is told "try later" first, and a set is only replaced once it is clearly dead.
+#: Replacing a live set by mistake is safe (the slow task stops as "superseded"); it only
+#: wastes a chat query.
+STALE_AFTER = dt.timedelta(minutes=20)
 
 _PENDING_WHERE = text("source = 'chat' AND status IN ('preparing', 'ready')")
 #: chat unavailable (timeout, locked session, 5xx/408, connector unreachable during a restart)
@@ -155,7 +167,8 @@ def enqueue_prepare(artifact_id: uuid.UUID | str, user_id: uuid.UUID | str) -> N
 @shared_task(bind=True, name="app.tasks.prepare_quiz_set", queue=QUEUE)
 def prepare_quiz_set(self: Task, artifact_id: str, user_id: str, set_id: str | None = None) -> str:
     """Returns "ready", "failed", "gave up" (out of retries), "exists" (a set is already
-    preparing or ready), "off" (fresh retakes switched off) or "skipped" (not a quiz)."""
+    preparing or ready), "superseded" (this run's set was replaced meanwhile), "off"
+    (fresh retakes switched off) or "skipped" (not a quiz)."""
     aid, uid = uuid.UUID(artifact_id), uuid.UUID(user_id)
     ctx = {"artifact_id": artifact_id, "user_id": user_id}
     try:
@@ -173,7 +186,10 @@ def prepare_quiz_set(self: Task, artifact_id: str, user_id: str, set_id: str | N
         else:
             result = _generate(get_content_provider(), job)
     except _Done as done:
-        log.info("quiz.prepare_skipped", outcome=done.outcome, **ctx)
+        if done.outcome == "superseded":
+            log.warning("quiz.superseded", set_id=str(claimed), **ctx)
+        else:
+            log.info("quiz.prepare_skipped", outcome=done.outcome, **ctx)
         return done.outcome
     except _RETRYABLE as exc:
         retries = self.request.retries
@@ -181,6 +197,9 @@ def prepare_quiz_set(self: Task, artifact_id: str, user_id: str, set_id: str | N
             log.error("quiz.gave_up", attempts=retries + 1, error=str(exc), **ctx)
             _finish(claimed, _Result(report={"error": f"gave up: {exc}"}))
             return "gave up"
+        if not _heartbeat(claimed):  # replaced meanwhile: nothing left to retry for
+            log.warning("quiz.superseded", set_id=str(claimed), **ctx)
+            return "superseded"
         countdown = RETRY_BASE_SEC * 2**retries
         log.warning("quiz.retry", countdown=countdown, error=str(exc), **ctx)
         raise self.retry(
@@ -218,9 +237,10 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
     """The id of the `preparing` set this run fills; raises `_Done` when there is
     nothing to do. A retry (`set_id` given) resumes its own set."""
     if set_id is not None:
-        existing = db.get(QuizQuestionSet, set_id)
+        existing = db.get(QuizQuestionSet, set_id, with_for_update=True)
         if existing is None or existing.status is not QuizSetStatus.preparing:
             raise _Done("exists")
+        existing.heartbeat_at = func.now()
         return set_id
 
     artifact = db.get(Artifact, aid)
@@ -239,7 +259,8 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
             QuizQuestionSet.user_id == uid,
             QuizQuestionSet.source == QuizSetSource.chat,
             QuizQuestionSet.status == QuizSetStatus.preparing,
-            QuizQuestionSet.created_at < dt.datetime.now(tz=dt.UTC) - STALE_AFTER,
+            func.coalesce(QuizQuestionSet.heartbeat_at, QuizQuestionSet.created_at)
+            < dt.datetime.now(tz=dt.UTC) - STALE_AFTER,
         )
         .with_for_update(skip_locked=True)
     ).first()
@@ -268,6 +289,7 @@ def _insert_preparing(db: Session, aid: uuid.UUID, uid: uuid.UUID) -> uuid.UUID 
             status=QuizSetStatus.preparing,
             questions=[],
             validation_report={},
+            heartbeat_at=func.now(),
         )
         .on_conflict_do_nothing(
             index_elements=["artifact_id", "user_id"], index_where=_PENDING_WHERE
@@ -275,6 +297,32 @@ def _insert_preparing(db: Session, aid: uuid.UUID, uid: uuid.UUID) -> uuid.UUID 
         .returning(QuizQuestionSet.id)
     )
     return db.execute(stmt).scalar_one_or_none()
+
+
+def _heartbeat(set_id: uuid.UUID) -> bool:
+    """Stamp the set's heartbeat; False when it is no longer `preparing` (replaced as
+    abandoned, or finished). A database error is logged and ignored (True): a missed
+    beat is harmless, and the caller's own error handling covers a database outage."""
+    try:
+        with session_scope() as db:
+            updated = db.execute(
+                update(QuizQuestionSet)
+                .where(
+                    QuizQuestionSet.id == set_id,
+                    QuizQuestionSet.status == QuizSetStatus.preparing,
+                )
+                .values(heartbeat_at=func.now())
+            )
+            return bool(getattr(updated, "rowcount", 0))
+    except OperationalError as exc:
+        log.warning("quiz.heartbeat_failed", set_id=str(set_id), error=str(exc))
+        return True
+
+
+def _beat_or_stop(set_id: uuid.UUID) -> None:
+    """Heartbeat before a chat round; stop when the set was replaced meanwhile."""
+    if not _heartbeat(set_id):
+        raise _Done("superseded")
 
 
 def _load_job(db: Session, set_id: uuid.UUID, aid: uuid.UUID, uid: uuid.UUID) -> _Job:
@@ -313,6 +361,7 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
     nb = NotebookRef(notebook_id=job.notebook_id or "")
     report: dict[str, Any] = {"requested": job.n, "seen": len(job.seen), "rounds": []}
 
+    _beat_or_stop(job.set_id)
     parsed = qg.parse_questions(provider.query(nb, qg.build_prompt(job.n, job.seen)))
     kept, dropped = qg.validate(parsed, seen=job.seen, source_text=job.source_text)
     report["rounds"].append(_round(1, job.n, parsed, kept, dropped))
@@ -320,6 +369,7 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
     if len(kept) < job.n:
         short = job.n - len(kept)
         kept_texts = [q["question"] for q in kept]
+        _beat_or_stop(job.set_id)
         try:
             answer = provider.query(nb, qg.build_prompt(short, kept_texts + job.seen))
         except (ProviderError, httpx.TransportError) as exc:

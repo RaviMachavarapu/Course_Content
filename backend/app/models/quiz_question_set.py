@@ -50,3 +50,11 @@ class QuizQuestionSet(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    #: last sign of life of the task preparing this set (bumped when it claims the set,
+    #: before each chat round and before each retry); NULL = use `created_at`
+    heartbeat_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def alive_at(self) -> dt.datetime:
+        """When the preparing task last showed it was alive (heartbeat, else creation)."""
+        return self.heartbeat_at or self.created_at

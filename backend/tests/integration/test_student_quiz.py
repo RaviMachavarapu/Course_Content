@@ -205,6 +205,7 @@ def _add_set(
     status: QuizSetStatus,
     *,
     created_at: dt.datetime | None = None,
+    heartbeat_at: dt.datetime | None = None,
     questions: list[dict[str, Any]] | None = None,
 ) -> QuizQuestionSet:
     qs = QuizQuestionSet(
@@ -214,6 +215,7 @@ def _add_set(
         status=status,
         questions=_chat_questions() if questions is None else questions,
         validation_report={},
+        heartbeat_at=heartbeat_at,
     )
     if created_at is not None:
         qs.created_at = created_at
@@ -578,6 +580,47 @@ def test_retake_when_preparing_is_stale(
     _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
     old = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=16)
     _add_set(db_session, ctx, QuizSetStatus.preparing, created_at=old)
+    enqueued.clear()
+    resp = _start(client, ctx)
+    assert resp.status_code == 409
+    assert resp.json()["message"] == UNAVAILABLE
+    assert enqueued == [(ctx.quiz_id, str(ctx.student_id))]
+
+
+def test_retake_while_a_long_preparation_still_beats(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    """Created long ago (retries with back-off) but its task beat recently: still coming."""
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    now = dt.datetime.now(dt.UTC)
+    _add_set(
+        db_session,
+        ctx,
+        QuizSetStatus.preparing,
+        created_at=now - dt.timedelta(minutes=40),
+        heartbeat_at=now - dt.timedelta(minutes=2),
+    )
+    enqueued.clear()
+    resp = _start(client, ctx)
+    assert resp.status_code == 202
+    assert resp.json() == PREPARING
+    assert enqueued == []
+
+
+def test_retake_when_the_preparation_stopped_beating(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    now = dt.datetime.now(dt.UTC)
+    _add_set(
+        db_session,
+        ctx,
+        QuizSetStatus.preparing,
+        created_at=now - dt.timedelta(minutes=17),
+        heartbeat_at=now - dt.timedelta(minutes=16),
+    )
     enqueued.clear()
     resp = _start(client, ctx)
     assert resp.status_code == 409

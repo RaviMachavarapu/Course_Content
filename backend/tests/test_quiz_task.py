@@ -921,3 +921,250 @@ def test_concurrent_claims_on_separate_connections_insert_one_set(db_engine: sa.
             db.execute(sa.delete(Course).where(Course.id == course.id))
             db.execute(sa.delete(User).where(User.id == user.id))
             db.commit()
+
+
+# -- heartbeat: a crashed preparation is replaced after STALE_AFTER of silence ------
+
+
+def _ago(minutes: float) -> dt.datetime:
+    return dt.datetime.now(tz=dt.UTC) - dt.timedelta(minutes=minutes)
+
+
+def _stale_minutes() -> float:
+    return quiz.STALE_AFTER.total_seconds() / 60 + 1
+
+
+def _preparing(
+    db: Session,
+    artifact: Artifact,
+    user: User,
+    *,
+    created_at: dt.datetime | None = None,
+    heartbeat_at: dt.datetime | None = None,
+) -> QuizQuestionSet:
+    qs = QuizQuestionSet(
+        artifact_id=artifact.id,
+        user_id=user.id,
+        source=QuizSetSource.chat,
+        status=QuizSetStatus.preparing,
+        heartbeat_at=heartbeat_at,
+    )
+    if created_at is not None:
+        qs.created_at = created_at
+    db.add(qs)
+    db.commit()
+    return qs
+
+
+def _heartbeat_of(db: Session, set_id: uuid.UUID) -> dt.datetime | None:
+    db.expire_all()
+    qs = db.get(QuizQuestionSet, set_id)
+    assert qs is not None
+    return qs.heartbeat_at
+
+
+def _age_heartbeat(db: Session, set_id: uuid.UUID, minutes: float) -> None:
+    db.execute(
+        sa.update(QuizQuestionSet)
+        .where(QuizQuestionSet.id == set_id)
+        .values(heartbeat_at=_ago(minutes))
+    )
+    db.commit()
+
+
+def test_stale_after_leaves_room_for_the_longest_back_off() -> None:
+    longest_countdown = quiz.RETRY_BASE_SEC * 2 ** (quiz.MAX_RETRIES - 1)
+    assert dt.timedelta(seconds=longest_countdown) < quiz.STALE_AFTER
+    assert dt.timedelta(minutes=15) <= quiz.STALE_AFTER <= dt.timedelta(minutes=30)
+
+
+def test_a_new_set_starts_with_a_heartbeat(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    assert (
+        _run(monkeypatch, FakeChat(answer([mcq() for _ in range(10)])), artifact, user) == "ready"
+    )
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.heartbeat_at is not None
+    assert qs.heartbeat_at > _ago(1)
+
+
+def test_a_crashed_preparation_is_replaced_once_its_heartbeat_is_stale(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    old = _preparing(
+        db_session,
+        artifact,
+        user,
+        created_at=_ago(_stale_minutes() + 5),
+        heartbeat_at=_ago(_stale_minutes()),
+    )
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    by_status = {qs.status: qs for qs in _sets(db_session, artifact, user)}
+    assert set(by_status) == {QuizSetStatus.failed, QuizSetStatus.ready}
+    assert by_status[QuizSetStatus.failed].id == old.id
+    assert "abandoned" in by_status[QuizSetStatus.failed].validation_report["error"]
+
+
+def test_a_live_preparation_with_a_fresh_heartbeat_is_not_replaced(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Created hours ago (a long back-off) but its task beat a minute ago: alive."""
+    artifact, user = setup
+    live = _preparing(db_session, artifact, user, created_at=_ago(180), heartbeat_at=_ago(1))
+    chat = FakeChat()
+
+    assert _run(monkeypatch, chat, artifact, user) == "exists"
+
+    assert chat.prompts == []
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.id == live.id
+    assert qs.status is QuizSetStatus.preparing
+
+
+@pytest.mark.parametrize(
+    ("created_minutes_ago", "replaced"), [(1, False), (None, True)], ids=["recent", "stale"]
+)
+def test_without_a_heartbeat_liveness_falls_back_to_created_at(
+    created_minutes_ago: float | None,
+    replaced: bool,
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sets made before the heartbeat column existed have heartbeat_at NULL."""
+    artifact, user = setup
+    minutes = _stale_minutes() if created_minutes_ago is None else created_minutes_ago
+    old = _preparing(db_session, artifact, user, created_at=_ago(minutes))
+    assert old.heartbeat_at is None
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    outcome = _run(monkeypatch, chat, artifact, user)
+
+    assert outcome == ("ready" if replaced else "exists")
+    db_session.refresh(old)
+    assert old.status is (QuizSetStatus.failed if replaced else QuizSetStatus.preparing)
+
+
+def test_a_retry_bumps_the_heartbeat_before_it_is_scheduled(
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+    retries: list[dict[str, Any]],
+) -> None:
+    artifact, user = setup
+    chat = FakeChat(TransientProviderError("rate limited"))
+
+    def age_it() -> None:  # the chat call took a long time
+        [qs] = _sets(db_session, artifact, user)
+        _age_heartbeat(db_session, qs.id, 6)
+
+    chat.on_query = age_it
+
+    with pytest.raises(Retry):
+        _run(monkeypatch, chat, artifact, user)
+
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.preparing
+    assert qs.heartbeat_at is not None and qs.heartbeat_at > _ago(1)
+    assert len(retries) == 1
+
+
+def test_a_resumed_retry_bumps_the_heartbeat(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    qs = _preparing(db_session, artifact, user, created_at=_ago(30), heartbeat_at=_ago(9))
+    beats: list[dt.datetime | None] = []
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+    chat.on_query = lambda: beats.append(_heartbeat_of(db_session, qs.id))
+
+    assert _run(monkeypatch, chat, artifact, user, set_id=str(qs.id), retries=3) == "ready"
+
+    [beat] = beats
+    assert beat is not None and beat > _ago(1)
+
+
+def test_each_chat_round_bumps_the_heartbeat(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    chat = FakeChat(answer([mcq() for _ in range(6)]), answer([mcq() for _ in range(4)]))
+    beats: list[dt.datetime | None] = []
+
+    def round_one() -> None:
+        [qs] = _sets(db_session, artifact, user)
+        beats.append(qs.heartbeat_at)
+        _age_heartbeat(db_session, qs.id, 6)  # round 1 took a while
+        chat.on_query = lambda: beats.append(_heartbeat_of(db_session, qs.id))
+
+    chat.on_query = round_one
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    assert len(beats) == 2
+    assert all(b is not None and b > _ago(1) for b in beats)
+
+
+def test_a_live_task_whose_set_was_replaced_does_not_touch_the_replacement(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow task's set goes silent past STALE_AFTER and the next enqueue replaces it;
+    when the slow task wakes up it stops without asking chat again or writing anything."""
+    artifact, user = setup
+    replacement = [mcq() for _ in range(10)]
+    slow = FakeChat(answer([mcq() for _ in range(6)]), answer([mcq() for _ in range(4)]))
+    inner: list[str] = []
+
+    def replaced_meanwhile() -> None:
+        [qs] = _sets(db_session, artifact, user)
+        _age_heartbeat(db_session, qs.id, _stale_minutes())
+        inner.append(_run(monkeypatch, FakeChat(answer(replacement)), artifact, user))
+
+    slow.on_query = replaced_meanwhile
+
+    assert _run(monkeypatch, slow, artifact, user) == "superseded"
+
+    assert inner == ["ready"]
+    assert len(slow.prompts) == 1  # the re-ask was never sent
+    by_status = {qs.status: qs for qs in _sets(db_session, artifact, user)}
+    assert set(by_status) == {QuizSetStatus.failed, QuizSetStatus.ready}
+    assert [q["question"] for q in by_status[QuizSetStatus.ready].questions] == [
+        q["question"] for q in replacement
+    ]
+    assert "abandoned" in by_status[QuizSetStatus.failed].validation_report["error"]
+
+
+def test_a_live_task_whose_set_was_replaced_does_not_retry(
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+    retries: list[dict[str, Any]],
+) -> None:
+    artifact, user = setup
+    chat = FakeChat(TransientProviderError("rate limited"))
+    inner: list[str] = []
+
+    def replaced_meanwhile() -> None:
+        [qs] = _sets(db_session, artifact, user)
+        _age_heartbeat(db_session, qs.id, _stale_minutes())
+        inner.append(
+            _run(monkeypatch, FakeChat(answer([mcq() for _ in range(10)])), artifact, user)
+        )
+
+    chat.on_query = replaced_meanwhile
+
+    assert _run(monkeypatch, chat, artifact, user) == "superseded"
+
+    assert inner == ["ready"]
+    assert retries == []
+    statuses = sorted(qs.status.value for qs in _sets(db_session, artifact, user))
+    assert statuses == ["failed", "ready"]
