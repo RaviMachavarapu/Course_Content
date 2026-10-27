@@ -124,6 +124,7 @@ def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
         "app.api.admin.uploads",
         "app.api.admin.courses",
         "app.pipeline.module_sources",
+        "app.render.typeset_docs",
     ):
         monkeypatch.setattr(f"{module}.get_storage", lambda: store, raising=False)
     return store

@@ -11,14 +11,20 @@ import io
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
 import pytest
 from PIL import Image
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models.enums import ArtifactType, MediaFileKind
+from app.models.artifact import Artifact
+from app.models.artifact_version import ArtifactVersion
+from app.models.course import Course
+from app.models.enums import ArtifactType, MediaFileKind, ModuleSourceType
+from app.models.module import Module
 from app.pipeline.parsers.notebooklm import parse_notebooklm
 from app.render.typeset_docs import (
     PDF_KINDS,
@@ -29,9 +35,11 @@ from app.render.typeset_docs import (
     build_quiz,
     build_report,
     build_slide_deck,
+    course_media_loader,
     html_to_markdown,
     text_to_markdown,
 )
+from app.storage.service import Storage
 
 FIXTURES = Path(__file__).parent / "fixtures" / "notebooklm"
 
@@ -476,10 +484,63 @@ def test_report_embeds_our_media_images_only(monkeypatch: pytest.MonkeyPatch) ->
     finally:
         get_settings.cache_clear()
     assert doc.markdown.endswith(
-        "## 1. S\n\nA ![Fig \\[1\\]](image-001.png)\n\n![](image-002.jpg)\n\next gone bad\n"
+        "## 1. S\n\nA ![](image-001.png)\n\n![](image-002.jpg)\n\next gone bad\n"
     )
     assert doc.images == {"image-001.png": png, "image-002.jpg": jpeg}
     assert loaded == ["courses/c/a.png", "courses/c/b.jpg", "courses/c/missing.png"]
+
+
+def _stored_media(db: Session, storage: Storage, data: bytes) -> tuple[uuid.UUID, str]:
+    """A course with one report artifact whose version owns a stored PNG."""
+    course = Course(title="C", slug=f"c-{uuid.uuid4()}")
+    module = Module(
+        course=course,
+        order_index=0,
+        title="M",
+        source_url="https://y/x",
+        source_type=ModuleSourceType.youtube,
+    )
+    artifact = Artifact(module=module, type=ArtifactType.report)
+    db.add(artifact)
+    db.flush()
+    version = ArtifactVersion(artifact_id=artifact.id, revision=1, focus_prompt_used="p")
+    db.add(version)
+    db.flush()
+    key = f"courses/{course.id}/modules/{module.id}/artifacts/{artifact.id}/v1/hero.png"
+    stored = storage.put(key, data, "image/png")
+    db.add(
+        storage.build_media_file(
+            stored, artifact_version_id=str(version.id), kind=MediaFileKind.hero
+        )
+    )
+    db.flush()
+    return course.id, key
+
+
+def test_course_media_loader_only_reads_this_courses_media(
+    db_session: Session, media_storage: Storage
+) -> None:
+    png = _png()
+    course_id, key = _stored_media(db_session, media_storage, png)
+    other_id, other_key = _stored_media(db_session, media_storage, _png("green"))
+    media_storage.put("courses/x/loose.png", png, "image/png")  # a file with no MediaFile row
+
+    load = course_media_loader(db_session, course_id)
+    assert load(key) == png
+    for bad in (other_key, "courses/x/loose.png"):
+        with pytest.raises(ValueError):
+            load(bad)
+
+    html = "".join(
+        f'<p><img src="/api/media/{k}" alt="alt {i}"></p>'
+        for i, k in enumerate([key, other_key, "courses/x/loose.png"])
+    )
+    content = {**REPORT, "key_takeaways": [], "sections": [{"heading": "S", "html": html}]}
+    doc = build_document(ArtifactType.report, content, [], load_media=load)
+    assert doc.images == {"image-001.png": png}
+    assert doc.markdown.endswith("![](image-001.png)\n\nalt 1\n\nalt 2\n")
+    # without a loader nothing is embedded
+    assert build_document(ArtifactType.report, content, []).images == {}
 
 
 def test_report_images_need_a_loader() -> None:
@@ -598,3 +659,28 @@ def test_live_typeset_builds_without_fallback(
         get_settings.cache_clear()
     assert result.pdf.startswith(b"%PDF-")
     assert result.fallback == "0"
+
+
+@pytest.mark.skipif(not os.environ.get("TYPESET_URL"), reason="set TYPESET_URL to run")
+def test_live_embedded_report_image_has_no_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.render.typeset_client import render_pdf
+
+    monkeypatch.setenv("TYPESET_ENDPOINT", os.environ["TYPESET_URL"])
+    get_settings.cache_clear()
+    html = '<p><img src="/api/media/courses/c/sn2.png" alt="Diagram of SN2"></p><p>After.</p>'
+    content = {**REPORT, "key_takeaways": [], "sections": [{"heading": "S", "html": html}]}
+    try:
+        doc = build_report(content, [], load_media=lambda key: _png(size=(40, 30)))
+        result = render_pdf(doc.markdown, doc.title, doc.images)
+    finally:
+        get_settings.cache_clear()
+    assert result.fallback == "0"
+    text = _pdf_text(result.pdf)
+    assert "After." in text
+    assert "Figure" not in text and "Diagram" not in text
+
+
+def _pdf_text(pdf: bytes) -> str:
+    from pypdf import PdfReader
+
+    return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf)).pages)

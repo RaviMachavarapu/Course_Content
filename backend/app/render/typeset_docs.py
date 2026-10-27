@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import io
 import re
+import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, NamedTuple
@@ -34,9 +35,15 @@ from urllib.parse import quote
 
 from bs4 import BeautifulSoup, Comment, NavigableString, PageElement, Tag
 from PIL import Image
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.models.artifact import Artifact
+from app.models.artifact_version import ArtifactVersion
 from app.models.enums import ArtifactType, MediaFileKind
+from app.models.media_file import MediaFile
+from app.models.module import Module
 from app.schemas.content import (
     FlashcardsContent,
     InfographicContent,
@@ -367,7 +374,8 @@ def _inline(node: PageElement, ctx: _Ctx) -> str:
     if name == "img":
         alt = _escape(" ".join(_clean(str(node.get("alt") or "")).split()))
         embedded = ctx.media.embed(str(node.get("src") or "").strip()) if ctx.media else None
-        return f"![{alt}]({embedded})" if embedded else alt
+        # no alt text once embedded: pandoc would caption a lone image "Figure 1: <alt>"
+        return f"![]({embedded})" if embedded else alt
     if name in _BLOCK_TAGS:
         return f" {_inline_children(node, ctx)} "
     return _inline_children(node, ctx)
@@ -530,8 +538,24 @@ def _doc(title: str, blocks: Iterable[str], images: dict[str, bytes]) -> Typeset
     return TypesetDoc("\n\n".join(b for b in body if b) + "\n", plain_title(title), images)
 
 
-def _storage_loader(key: str) -> bytes:
-    return get_storage().open(key)
+def course_media_loader(db: Session, course_id: uuid.UUID) -> MediaLoader:
+    """Reads a stored file only if it is a MediaFile of an artifact in `course_id`;
+    anything else raises (and the report prints the image's alt text)."""
+
+    def load(key: str) -> bytes:
+        owner = db.scalar(
+            select(Module.course_id)
+            .join(Artifact, Artifact.module_id == Module.id)
+            .join(ArtifactVersion, ArtifactVersion.artifact_id == Artifact.id)
+            .join(MediaFile, MediaFile.artifact_version_id == ArtifactVersion.id)
+            .where(MediaFile.storage_key == key)
+            .limit(1)
+        )
+        if owner != course_id:
+            raise ValueError(f"media {key!r} is not this course's")
+        return get_storage().open(key)
+
+    return load
 
 
 def build_report(
@@ -539,10 +563,11 @@ def build_report(
     media: Sequence[StoredImage],
     *,
     title: str | None = None,
-    load_media: MediaLoader | None = _storage_loader,
+    load_media: MediaLoader | None = None,
 ) -> TypesetDoc:
     """Section headings are numbered like the student ReportViewer. Section
-    images on our media URLs are read with `load_media` (Storage by default)."""
+    images on our media URLs are read with `load_media` (see `course_media_loader`);
+    without one they print as their alt text."""
     c = ReportContent.model_validate(content_json)
     images: dict[str, bytes] = {}
     blocks = [f"*About {c.read_minutes} min read*"]
@@ -650,12 +675,13 @@ def build_document(
     media: Sequence[StoredImage],
     *,
     title: str | None = None,
-    load_media: MediaLoader | None = _storage_loader,
+    load_media: MediaLoader | None = None,
 ) -> TypesetDoc:
     """The typeset document for one artifact version. `media` is the version's
     stored files (bytes read from storage); `title` overrides the default
     (the report's own title; "Flashcards", "Quiz", "Infographic", "Slides").
-    `load_media` reads report-section images by storage key (Storage by default)."""
+    `load_media` reads report-section images by storage key — pass
+    `course_media_loader(db, course_id)`; without it they print as alt text."""
     builder = _BUILDERS.get(artifact_type)
     if builder is None:
         raise ValueError(f"no typeset PDF for {artifact_type.value}")
