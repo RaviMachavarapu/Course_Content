@@ -7,7 +7,10 @@ Pure, synchronous steps (no Celery) shared by the `build_artifact_pdf` task
 2. the caller renders it with the typeset service (`render_pdf`), outside any
    lock or long-held session;
 3. `store_pdf` stores it under the type's PDF kind, replacing a previous PDF of
-   that kind for the version; the caller deletes `stale_keys` after committing.
+   that kind for the version; the caller deletes `stale_keys` after committing,
+   or calls `discard_new_file` if the commit fails.
+
+A version that is neither its artifact's current nor published one is skipped.
 
 None of this touches the artifact's status or last_error: a missing PDF never
 makes an artifact fail.
@@ -47,6 +50,7 @@ __all__ = [
     "StoredPdf",
     "build_version_pdf",
     "delete_files",
+    "discard_new_file",
     "prepare_pdf",
     "store_pdf",
 ]
@@ -81,15 +85,22 @@ class PdfSource:
 @dataclass(frozen=True)
 class StoredPdf:
     media: MediaFile
+    #: the new file's storage key
+    new_key: str
+    #: True when no previous row used `new_key`: if the commit fails, delete it
+    fresh: bool
     #: files of the replaced PDF; delete them once the new row is committed
     stale_keys: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class BuiltPdf:
-    media: MediaFile
+    stored: StoredPdf
     fallback: str
-    stale_keys: list[str] = field(default_factory=list)
+
+    @property
+    def media(self) -> MediaFile:
+        return self.stored.media
 
 
 def prepare_pdf(session: Session, version_id: uuid.UUID) -> PdfSource:
@@ -102,6 +113,8 @@ def prepare_pdf(session: Session, version_id: uuid.UUID) -> PdfSource:
     kind = PDF_KINDS.get(artifact.type)
     if kind is None:
         raise PdfSkipped(f"{artifact.type.value} has no PDF")
+    if version_id not in (artifact.current_version_id, artifact.published_version_id):
+        raise PdfSkipped("superseded")
     if not version.content_json:
         raise PdfSkipped("version has no content")
     module = artifact.module
@@ -154,21 +167,35 @@ def store_pdf(
         ext=STORAGE_EXTS[kind],
         variant=hashlib.sha256(pdf).hexdigest()[:12],
     )
+    previous = list(
+        session.scalars(
+            select(MediaFile).where(
+                MediaFile.artifact_version_id == version_id, MediaFile.kind == kind
+            )
+        )
+    )
+    fresh = all(old.storage_key != key for old in previous)
     storage = get_storage()
     stored = storage.put(key, pdf, "application/pdf")
+    try:
+        for old in previous:
+            session.delete(old)
+        session.flush()
+        media = storage.build_media_file(stored, artifact_version_id=str(version_id), kind=kind)
+        session.add(media)
+        session.flush()
+    except Exception:
+        if fresh:
+            delete_files([key])
+        raise
+    stale = [old.storage_key for old in previous if old.storage_key != key]
+    return StoredPdf(media=media, new_key=key, fresh=fresh, stale_keys=stale)
 
-    stale: list[str] = []
-    for old in session.scalars(
-        select(MediaFile).where(MediaFile.artifact_version_id == version_id, MediaFile.kind == kind)
-    ):
-        if old.storage_key != key:
-            stale.append(old.storage_key)
-        session.delete(old)
-    session.flush()
-    media = storage.build_media_file(stored, artifact_version_id=str(version_id), kind=kind)
-    session.add(media)
-    session.flush()
-    return StoredPdf(media=media, stale_keys=stale)
+
+def discard_new_file(stored: StoredPdf) -> None:
+    """The commit of `stored` failed: remove its file unless an older row uses it."""
+    if stored.fresh:
+        delete_files([stored.new_key])
 
 
 def delete_files(keys: Iterable[str]) -> None:
@@ -189,4 +216,4 @@ def build_version_pdf(
     source = prepare_pdf(session, version_id)
     result = (render or render_pdf)(*source.doc)
     stored = store_pdf(session, version_id, source.kind, result.pdf)
-    return BuiltPdf(media=stored.media, fallback=result.fallback, stale_keys=stored.stale_keys)
+    return BuiltPdf(stored=stored, fallback=result.fallback)

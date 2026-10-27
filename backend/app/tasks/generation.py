@@ -97,6 +97,6 @@ def _enqueue_pdf(version_id: str) -> None:
     committed, so the task always finds the version. A broker error only means
     no PDF yet (`rebuild-pdfs` builds it later), never a failed generation."""
     try:
-        build_artifact_pdf.apply_async(args=[version_id], queue="text")
+        build_artifact_pdf.apply_async(args=[version_id], queue="pdf")
     except Exception as exc:
         log.warning("pdf.enqueue_failed", version_id=version_id, error=str(exc))

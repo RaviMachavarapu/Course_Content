@@ -7,16 +7,19 @@ opt-in live tests in test_typeset_docs.py.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 from PIL import Image
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app import cli
 from app.cli import build_parser, rebuild_pdfs
 from app.models.artifact import Artifact
 from app.models.artifact_version import ArtifactVersion
@@ -439,3 +442,168 @@ def test_rebuild_pdfs_parser() -> None:
     assert ns.dry_run is True
     assert ns.type == "quiz"
     assert ns.version == str(uuid.UUID(int=1))
+
+
+# -- fix round 1 ------------------------------------------------------------------------
+def test_the_task_runs_on_its_own_pdf_queue() -> None:
+    assert pdf_task.build_artifact_pdf.queue == "pdf"
+
+
+def test_a_database_outage_is_retried(
+    db_session: Session, task_sessions: None, fake: FakeTypeset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    version = _version(db_session, ArtifactType.quiz)
+
+    def down(*_: Any) -> None:
+        raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    monkeypatch.setattr(pdf_task, "prepare_pdf", down)
+    scheduled: list[dict[str, Any]] = []
+
+    def fake_retry(**kwargs: Any) -> Exception:
+        scheduled.append(kwargs)
+        return RuntimeError("retry")
+
+    monkeypatch.setattr(pdf_task.build_artifact_pdf, "retry", fake_retry)
+    with pytest.raises(RuntimeError, match="retry"):
+        _run_task(version.id, retries=1)
+    assert scheduled[0]["countdown"] == 60
+    assert isinstance(scheduled[0]["exc"], OperationalError)
+    assert _run_task(version.id, retries=pdf_task.MAX_RETRIES) == "gave up"
+
+
+def test_a_superseded_version_is_skipped(
+    db_session: Session, task_sessions: None, fake: FakeTypeset
+) -> None:
+    old = _version(db_session, ArtifactType.quiz)
+    newer = ArtifactVersion(
+        artifact_id=old.artifact_id, revision=2, focus_prompt_used="p", content_json=QUIZ
+    )
+    db_session.add(newer)
+    db_session.flush()
+    old.artifact.current_version_id = newer.id
+    db_session.flush()
+
+    assert _run_task(old.id) == "skipped"
+    assert fake.calls == []
+    assert _pdfs(db_session, old) == []
+
+    # still built while it is the published version
+    old.artifact.published_version_id = old.id
+    db_session.flush()
+    assert _run_task(old.id) == "built"
+
+
+class _FailingCommit:
+    """session_scope stand-in whose commit fails after the body ran."""
+
+    def __init__(self, inner: Callable[..., Any], fail_on: int) -> None:
+        self.inner = inner
+        self.fail_on = fail_on
+        self.calls = 0
+
+    @contextlib.contextmanager
+    def __call__(self) -> Iterator[Session]:
+        self.calls += 1
+        with self.inner() as session:
+            yield session
+            if self.calls == self.fail_on:
+                raise OperationalError("COMMIT", {}, Exception("connection lost"))
+
+
+def test_a_failed_commit_leaves_no_orphan_file(
+    db_session: Session,
+    media_storage: Storage,
+    source_step_sessions: Callable[..., Any],
+    fake: FakeTypeset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    version = _version(db_session, ArtifactType.quiz)
+    monkeypatch.setattr(pdf_task, "session_scope", _FailingCommit(source_step_sessions, 2))
+    monkeypatch.setattr(pdf_task.build_artifact_pdf, "retry", lambda **kw: RuntimeError("retry"))
+
+    with pytest.raises(RuntimeError, match="retry"):
+        _run_task(version.id)
+
+    assert not list(media_storage._root.rglob("*.pdf"))
+
+
+def test_a_failed_commit_keeps_a_previous_file_with_the_same_key(
+    db_session: Session,
+    media_storage: Storage,
+    source_step_sessions: Callable[..., Any],
+    fake: FakeTypeset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    version = _version(db_session, ArtifactType.quiz)
+    monkeypatch.setattr(pdf_task, "session_scope", source_step_sessions)
+    _run_task(version.id)
+    (pdf,) = _pdfs(db_session, version)
+    key = pdf.storage_key
+
+    # same bytes again (same key), and this time the commit fails
+    monkeypatch.setattr(pdf_task, "session_scope", _FailingCommit(source_step_sessions, 2))
+    monkeypatch.setattr(pdf_task.build_artifact_pdf, "retry", lambda **kw: RuntimeError("retry"))
+    with pytest.raises(RuntimeError):
+        _run_task(version.id)
+
+    assert media_storage.open(key) == fake.pdf
+
+
+def test_store_pdf_removes_its_new_file_if_the_rows_cannot_be_written(
+    db_session: Session, media_storage: Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    version = _version(db_session, ArtifactType.quiz)
+    monkeypatch.setattr(
+        media_storage,
+        "build_media_file",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db write failed")),
+    )
+    with pytest.raises(RuntimeError, match="db write failed"):
+        artifact_pdf.store_pdf(db_session, version.id, MediaFileKind.quiz_pdf, b"%PDF-1.7 x")
+    assert not list(media_storage._root.rglob("*.pdf"))
+
+
+def test_rebuild_pdfs_failed_commit_leaves_no_orphan_file(
+    db_session: Session,
+    media_storage: Storage,
+    fake: FakeTypeset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    version = _version(db_session, ArtifactType.quiz)
+
+    def broken_commit() -> None:
+        raise OperationalError("COMMIT", {}, Exception("connection lost"))
+
+    monkeypatch.setattr(db_session, "commit", broken_commit)
+    monkeypatch.setattr(db_session, "rollback", lambda: None)
+
+    (result,) = rebuild_pdfs(db_session, version_id=version.id)
+
+    assert result[1].startswith("failed (OperationalError")
+    assert not list(media_storage._root.rglob("*.pdf"))
+
+
+def test_refresh_report_math_hints_at_rebuilding_pdfs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    @contextlib.contextmanager
+    def scope() -> Iterator[object]:
+        yield object()
+
+    monkeypatch.setattr(cli, "session_scope", scope)
+    monkeypatch.setattr(cli, "get_content_provider", lambda: object())
+    for outcomes, dry_run, hinted in (
+        (["updated", "unchanged"], False, True),
+        (["unchanged"], False, False),
+        (["updated"], True, False),
+    ):
+        monkeypatch.setattr(
+            cli,
+            "refresh_report_math",
+            lambda *a, _o=outcomes, **k: [(f"r{i}", o) for i, o in enumerate(_o)],
+        )
+        cli.main(["refresh-report-math", *(["--dry-run"] if dry_run else [])])
+        out = capsys.readouterr().out
+        assert (out.strip().splitlines()[-1] == cli.REBUILD_REPORT_PDFS) is hinted
+        assert ("rebuild-pdfs --type report" in out) is hinted

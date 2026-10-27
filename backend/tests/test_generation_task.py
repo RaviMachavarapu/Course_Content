@@ -117,7 +117,7 @@ def test_a_ready_version_enqueues_its_pdf_after_commit(
 ) -> None:
     version = _Version(artifact_type)
     _, enqueued = _generate(monkeypatch, version)
-    assert enqueued == [({"args": [str(version.id)], "queue": "text"}, "commit")]
+    assert enqueued == [({"args": [str(version.id)], "queue": "pdf"}, "commit")]
 
 
 def test_audio_and_outline_review_enqueue_no_pdf(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -349,6 +349,9 @@ def _cmd_add_math_prompt_line(_: argparse.Namespace) -> int:
     return 0
 
 
+REBUILD_REPORT_PDFS = "run: python -m app.cli rebuild-pdfs --type report"
+
+
 def refresh_report_math(
     session: Session, provider: ContentProvider, *, dry_run: bool = False
 ) -> list[tuple[str, str]]:
@@ -433,6 +436,9 @@ def _cmd_refresh_report_math(args: argparse.Namespace) -> int:
         f"{prefix}refresh-report-math: {counts['updated']} updated, "
         f"{counts['unchanged']} unchanged, {counts['skipped']} skipped"
     )
+    if counts["updated"] and not args.dry_run:
+        # the reports' PDFs were typeset from the old content
+        print(REBUILD_REPORT_PDFS)
     return 0
 
 
@@ -483,10 +489,17 @@ def rebuild_pdfs(
                 artifact_pdf.prepare_pdf(session, vid)
                 results.append((label, "would build"))
                 continue
-            with session.begin_nested():
-                built = artifact_pdf.build_version_pdf(session, vid, render=render)
-            session.commit()
-            artifact_pdf.delete_files(built.stale_keys)
+            built: artifact_pdf.BuiltPdf | None = None
+            try:
+                with session.begin_nested():
+                    built = artifact_pdf.build_version_pdf(session, vid, render=render)
+                session.commit()
+            except Exception:
+                if built is not None:  # the commit failed: don't orphan the new file
+                    session.rollback()
+                    artifact_pdf.discard_new_file(built.stored)
+                raise
+            artifact_pdf.delete_files(built.stored.stale_keys)
             results.append((label, f"built (fallback {built.fallback})"))
         except artifact_pdf.PdfSkipped as exc:
             results.append((label, f"skipped ({exc})"))
