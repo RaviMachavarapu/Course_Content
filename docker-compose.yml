@@ -47,6 +47,7 @@ services:
       - ./backend:/app
       - media:/data/media
     ports: ["8000:8000"]
+    networks: [default, typeset]
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:8000/healthz"]
       interval: 10s
@@ -80,6 +81,7 @@ services:
     build: ./backend
     command: celery -A app.tasks.celery_app worker -Q pdf --concurrency=1 --loglevel=info
     environment: *backend-env
+    networks: [default, typeset]
     volumes:
       - ./backend:/app
       - media:/data/media
@@ -124,9 +126,12 @@ services:
   # backend calls http://typeset:8080/pdf. Optional — nothing depends on it;
   # if it is down, artifacts stay ready and their PDFs are built later.
   # It compiles LLM-written LaTeX: never give it secrets (no env secrets, no
-  # volumes, no credentials).
+  # volumes, no credentials). Its own internal network, shared only with its
+  # callers (api, worker-pdf): it can't reach postgres, redis, mcp or the
+  # internet.
   typeset:
     build: ./typeset
+    networks: [typeset]
     restart: unless-stopped
     init: true  # reap TeX processes killed on timeout
     healthcheck:
@@ -165,3 +170,9 @@ services:
 volumes:
   pgdata:
   media:
+
+networks:
+  default:
+  # typeset and its callers only (see the typeset service)
+  typeset:
+    internal: true
