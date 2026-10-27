@@ -66,6 +66,7 @@ _STATUS_COMPLETED = 3
 _STATUS_FAILED = 4
 _STATUS_OUTLINE_REVIEW = 6
 _DOWNLOAD_TIMEOUT_SEC = 300.0
+_QUERY_TIMEOUT_SEC = 300.0  # a chat answer for ~10 questions takes ~40 s live
 
 
 class NotebookLmMcpProvider:
@@ -194,6 +195,20 @@ class NotebookLmMcpProvider:
         )
         self._raise_for_status(resp)
 
+    def query(self, nb: NotebookRef, text: str) -> str:
+        try:
+            data = self._call(
+                "notebook_query",
+                {"notebook_id": nb.notebook_id, "query": text},
+                timeout=_QUERY_TIMEOUT_SEC,
+            )
+        except httpx.TimeoutException as exc:
+            raise TransientProviderError(f"notebook_query timed out: {exc}") from exc
+        answer = data.get("answer")
+        if not isinstance(answer, str):
+            raise ProviderError(f"notebook_query returned no answer: {data!r}")
+        return answer
+
     def health(self) -> ProviderHealth:
         try:
             resp = self._http.get("/health", timeout=10.0)
@@ -237,8 +252,13 @@ class NotebookLmMcpProvider:
             raise ProviderError(f"{path} returned a non-object result: {body!r}")
         return body
 
-    def _call(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
-        resp = self._locked(lambda: self._http.post("/call", json={"tool": tool, "args": args}))
+    def _call(
+        self, tool: str, args: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        resp = self._locked(
+            lambda: self._http.post("/call", json={"tool": tool, "args": args}, **kwargs)
+        )
         self._raise_for_status(resp)
         body = resp.json()
         data = body.get("data")

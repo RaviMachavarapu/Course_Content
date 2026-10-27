@@ -29,6 +29,52 @@ _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 DEFAULT_FIXTURE_ID = "sample-neural-nets"
 
 
+def _fixture_chat_answer() -> str:
+    """A canned chat answer: prose around a JSON array of 4 MCQ + 3 fill-blank questions
+    (7 distinct questions, no source quotes, so it validates with or without PDF text)."""
+    mcq = [
+        ("What is the capital of France?", ["Paris", "Lyon", "Nice", "Lille"], 0),
+        ("Which planet is known as the Red Planet?", ["Venus", "Mars", "Jupiter", "Saturn"], 1),
+        ("How many sides does a hexagon have?", ["Five", "Six", "Seven", "Eight"], 1),
+        (
+            "Which gas do plants absorb for photosynthesis?",
+            ["Oxygen", "Nitrogen", "Carbon dioxide", "Helium"],
+            2,
+        ),
+    ]
+    blanks = [
+        ("Water is made of hydrogen and ____.", "oxygen", ["Oxygen"]),
+        ("The chemical symbol for gold is ____.", "Au", []),
+        ("A triangle has ____ sides.", "three", ["3"]),
+    ]
+    items: list[dict[str, Any]] = [
+        {
+            "type": "mcq",
+            "question": q,
+            "options": opts,
+            "correct_index": ci,
+            "explanation": f"The answer is {opts[ci]}.",
+            "source_quote": "",
+        }
+        for q, opts, ci in mcq
+    ]
+    items += [
+        {
+            "type": "fill_blank",
+            "question": q,
+            "answer": a,
+            "accepted_answers": acc,
+            "explanation": f"The answer is {a}.",
+            "source_quote": "",
+        }
+        for q, a, acc in blanks
+    ]
+    return "Here are your questions:\n" + json.dumps(items, indent=2)
+
+
+FIXTURE_CHAT_ANSWER = _fixture_chat_answer()
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "untitled"
 
@@ -118,6 +164,10 @@ class FixtureProvider:
     def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
         # Fixture generations finish immediately; they never wait for an outline.
         raise ProviderError("FixtureProvider has no slide outline to review")
+
+    def query(self, nb: NotebookRef, text: str) -> str:
+        self.calls.append(("query", nb.notebook_id, text))
+        return FIXTURE_CHAT_ANSWER
 
     def health(self) -> ProviderHealth:
         return ProviderHealth(

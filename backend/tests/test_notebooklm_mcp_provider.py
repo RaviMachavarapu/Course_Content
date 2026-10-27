@@ -366,3 +366,27 @@ def test_source_statuses_bad_items_are_provider_errors(item: dict[str, Any], mes
 
     with pytest.raises(ProviderError, match=message):
         _provider(handler).source_statuses(NotebookRef(notebook_id="nb-1"))
+
+
+def test_query_calls_notebook_query_and_returns_answer() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _ok({"answer": "[]"})
+
+    assert _provider(handler).query(NotebookRef(notebook_id="nb-1"), "ask") == "[]"
+    assert seen == [{"tool": "notebook_query", "args": {"notebook_id": "nb-1", "query": "ask"}}]
+
+
+def test_query_without_answer_is_a_provider_error() -> None:
+    with pytest.raises(ProviderError):
+        _provider(lambda r: _ok({"status": "ok"})).query(NotebookRef(notebook_id="nb-1"), "ask")
+
+
+def test_query_timeout_is_transient() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with pytest.raises(TransientProviderError):
+        _provider(handler).query(NotebookRef(notebook_id="nb-1"), "ask")

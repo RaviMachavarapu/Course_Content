@@ -1,0 +1,125 @@
+[
+  {
+    "type": "mcq",
+    "question": "In the transition state of an \\(\\text{S}_\\text{N}2\\) reaction, to how many atoms is the carbon atom under attack simultaneously bonded?",
+    "options": [
+      "\\(3\\)",
+      "\\(4\\)",
+      "\\(5\\)",
+      "\\(6\\)"
+    ],
+    "correct_index": 2,
+    "explanation": "In the transition state of an \\(\\text{S}_\\text{N}2\\) reaction, carbon is simultaneously attached to the incoming nucleophile, leaving group, and three hydrogens or alkyl groups, making a total of \\(5\\) atoms.",
+    "source_quote": "Thus, in the transition state, carbon is simultaneously bonded to five atoms."
+  },
+  {
+    "type": "mcq",
+    "question": "Which type of solvent is generally used to carry out \\(\\text{S}_\\text{N}1\\) reactions?",
+    "options": [
+      "Polar protic solvents",
+      "Non-polar solvents",
+      "Polar aprotic solvents only",
+      "Gaseous hydrocarbon solvents"
+    ],
+    "correct_index": 0,
+    "explanation": "\\(\\text{S}_\\text{N}1\\) reactions are generally carried out in polar protic solvents such as water, alcohol, and acetic acid to stabilize carbocation intermediates.",
+    "source_quote": "SN1 reactions are generally carried out in polar protic solvents (like water, alcohol, acetic acid, etc.)."
+  },
+  {
+    "type": "mcq",
+    "question": "What is the hybridisation and geometry of the carbocation formed in the slow step of an \\(\\text{S}_\\text{N}1\\) reaction?",
+    "options": [
+      "\\(\\text{sp}^3\\) and tetrahedral",
+      "\\(\\text{sp}^2\\) and planar",
+      "\\(\\text{sp}\\) and linear",
+      "\\(\\text{sp}^3\\text{d}\\) and trigonal bipyramidal"
+    ],
+    "correct_index": 1,
+    "explanation": "The carbocation intermediate formed during the slow, rate-determining step of an \\(\\text{S}_\\text{N}1\\) reaction is \\(\\text{sp}^2\\) hybridised and planar.",
+    "source_quote": "Actually the carbocation formed in the slow step being sp2 hybridised is planar (achiral)."
+  },
+  {
+    "type": "mcq",
+    "question": "What is the \\(\\text{C-Cl}\\) bond length in a haloalkane compared to a haloarene?",
+    "options": [
+      "\\(177\\text{ pm}\\) in haloalkane and \\(169\\text{ pm}\\) in haloarene",
+      "\\(169\\text{ pm}\\) in haloalkane and \\(177\\text{ pm}\\) in haloarene",
+      "\\(154\\text{ pm}\\) in haloalkane and \\(134\\text{ pm}\\) in haloarene",
+      "\\(190\\text{ pm}\\) in haloalkane and \\(170\\text{ pm}\\) in haloarene"
+    ],
+    "correct_index": 0,
+    "explanation": "The \\(\\text{C-Cl}\\) bond length in haloalkane is \\(177\\text{ pm}\\) whereas in haloarene it is \\(169\\text{ pm}\\) due to \\(\\text{sp}^2\\) hybridisation and resonance partial double bond character.",
+    "source_quote": "Thus, C—Cl bond length in haloalkane is 177pm while in haloarene is 169 pm."
+  },
+  {
+    "type": "mcq",
+    "question": "Under what conditions of temperature and pressure can chlorobenzene be converted into phenol using aqueous sodium hydroxide?",
+    "options": [
+      "\\(298\\text{ K}\\) and \\(1\\text{ atm}\\)",
+      "\\(373\\text{ K}\\) and \\(10\\text{ atm}\\)",
+      "\\(500\\text{ K}\\) and \\(100\\text{ atm}\\)",
+      "\\(623\\text{ K}\\) and \\(300\\text{ atmospheres}\\)"
+    ],
+    "correct_index": 3,
+    "explanation": "Nucleophilic substitution in chlorobenzene requires heating in aqueous sodium hydroxide at \\(623\\text{ K}\\) and \\(300\\text{ atmospheres}\\) of pressure.",
+    "source_quote": "Chlorobenzene can be converted into phenol by heating in aqueous sodium hydroxide solution at a temperature of 623K and a pressure of 300 atmospheres."
+  },
+  {
+    "type": "mcq",
+    "question": "At which position relative to the halogen substituent does the presence of an electron-withdrawing nitro group (\\(-\\text{NO}_2\\)) show no effect on the reactivity of haloarenes?",
+    "options": [
+      "Ortho-position",
+      "Para-position",
+      "Meta-position",
+      "Both ortho- and para-positions"
+    ],
+    "correct_index": 2,
+    "explanation": "Electron-withdrawing nitro groups (\\(-\\text{NO}_2\\)) increase reactivity at ortho- and para-positions, but have no effect when present at the meta-position.",
+    "source_quote": "However, no effect on reactivity of haloarenes is observed by the presence of electron withdrawing group at meta-position."
+  },
+  {
+    "type": "fill_blank",
+    "question": "A mixture containing two enantiomers in equal proportions will have zero optical rotation, and such a mixture is known as a ____ or racemic modification.",
+    "answer": "racemic mixture",
+    "accepted_answers": [
+      "racemic mixture"
+    ],
+    "explanation": "A racemic mixture contains equal amounts of both enantiomers, causing the optical rotations to cancel out completely.",
+    "source_quote": "Such a mixture is known as racemic mixture or racemic modification."
+  },
+  {
+    "type": "fill_blank",
+    "question": "According to Zaitsev's rule, in dehydrohalogenation reactions, the preferred product is that alkene which has the greater number of ____ attached to the doubly bonded carbon atoms.",
+    "answer": "alkyl groups",
+    "accepted_answers": [
+      "alkyl groups"
+    ],
+    "explanation": "Zaitsev's rule dictates that elimination yields predominantly the more substituted alkene bearing more alkyl groups on the double bond carbons.",
+    "source_quote": "in dehydrohalogenation reactions, the preferred product is that alkene which has the greater number of alkyl groups attached to the doubly bonded carbon atoms."
+  },
+  {
+    "type": "fill_blank",
+    "question": "The preservation of the spatial arrangement of bonds to an asymmetric centre during a chemical reaction is defined as ____.",
+    "answer": "Retention of configuration",
+    "accepted_answers": [
+      "Retention of configuration",
+      "retention of configuration",
+      "Retention of the configuration"
+    ],
+    "explanation": "Retention of configuration occurs when no bond to the stereocentre is cleaved and the stereochemical layout is preserved.",
+    "source_quote": "Retention of configuration is the preservation of the spatial arrangement of bonds to an asymmetric centre during a chemical reaction or transformation."
+  },
+  {
+    "type": "fill_blank",
+    "question": "In haloalkanes, the carbon atom attached to halogen is \\(\\text{sp}^3\\) hybridised while in haloarenes, the carbon atom attached to halogen is ____.",
+    "answer": "sp2-hybridised",
+    "accepted_answers": [
+      "sp2-hybridised",
+      "sp2 hybridised",
+      "\\(\\text{sp}^2\\)-hybridised",
+      "\\(\\text{sp}^2\\) hybridised"
+    ],
+    "explanation": "The haloarene carbon bonded to halogen is \\(\\text{sp}^2\\) hybridised, giving it higher s-character and greater electronegativity than the \\(\\text{sp}^3\\) carbon in haloalkanes.",
+    "source_quote": "In haloalkane, the carbon atom attached to halogen is sp3 hybridised while in case of haloarene, the carbon atom attached to halogen is sp2-hybridised."
+  }
+]
