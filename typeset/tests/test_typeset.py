@@ -54,6 +54,14 @@ def pdftext(pdf: bytes) -> str:
         return subprocess.run(["pdftotext", "-enc", "UTF-8", f.name, "-"], capture_output=True, text=True, check=True).stdout
 
 
+def pdftitle(pdf: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(pdf)
+        f.flush()
+        info = subprocess.run(["pdfinfo", "-enc", "UTF-8", f.name], capture_output=True, text=True, check=True).stdout
+    return next(line.split(":", 1)[1].strip() for line in info.splitlines() if line.startswith("Title:"))
+
+
 def png(width: int = 40, height: int = 20) -> bytes:
     row = b"\x00" + b"\xff\x00\x00" * width
     raw = row * height
@@ -82,7 +90,7 @@ def test_good_doc_renders_pdf(base_url):
     )
     headers, pdf = render(base_url, md, title="Motion basics")
     text = pdftext(pdf)
-    assert "Motion basics" in text
+    assert "Motion basics" not in text and pdftitle(pdf) == "Motion basics"
     assert "Kinematics" in text
     assert "Velocity is the rate of change" in text
     assert headers["X-Typeset-Fallback"] == "0"
@@ -121,7 +129,7 @@ def test_plain_text_specials_are_escaped(base_url):
     for token in ["50%", "#3", "R&D", "snake_case", "{braces}", "~tilde", "^caret", "C:\\temp\\new"]:
         assert text.count(token) == 3, (token, text)
     assert "<b>stay</b>" in text and "@someone" in text
-    assert "Title with % & # _ {x}" in text
+    assert pdftitle(pdf) == "Title with % & # _ {x}"
 
 
 def test_unicode_text_is_present(base_url):
@@ -223,11 +231,29 @@ def test_looping_formula_reaches_fallback(base_url):
     assert _tex_processes() == []
 
 
-def test_title_math_prints_literally(base_url):
+def test_title_is_plain_metadata_not_printed(base_url):
     _, pdf = render(base_url, "Body $x^2$.", title="Bad $\\frac{1}{$")
-    assert "Bad $\\frac{1}{$" in pdftext(pdf)
+    assert pdftitle(pdf) == "Bad $\\frac{1}{$"
+    assert "Bad" not in pdftext(pdf)
     _, pdf = render(base_url, "Body.", title="$x$ and $y$ *cost* $5")
-    assert "$x$ and $y$ *cost* $5" in pdftext(pdf)
+    assert pdftitle(pdf) == "$x$ and $y$ *cost* $5"
+    assert "cost" not in pdftext(pdf)
+
+
+def test_no_tex_ligatures_in_text(base_url):
+    # escaped as the backend's builders escape plain text
+    md = 'Say \\"q\\" \\<\\< \\>\\> ,, \\`tick\\` \\-\\- and \\-\\-\\- end. `mono -- "x"`\n'
+    headers, pdf = render(base_url, md)
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "0"
+    for token in ['"q"', "<<", ">>", ",,", "`tick`", " -- ", "---", 'mono -- "x"']:
+        assert token in text, (token, text)
+    for curly in "\u201c\u201d\u2018\u2019\u201e\u00ab\u00bb\u2013\u2014":
+        assert curly not in text, (curly, text)
+
+
+def test_body_cap_is_100_mb():
+    assert server.MAX_BODY == 100 * 1024 * 1024
 
 
 def test_file_access_formulas_are_never_compiled(base_url):

@@ -1,6 +1,7 @@
 """typeset: Markdown with LaTeX formulas -> PDF (Quarto + xelatex).
 
 POST /pdf  {"markdown": str, "title": str, "images": {name: base64}}
+    `title` is plain-text PDF metadata (not printed); body up to 100 MB.
     200 application/pdf
     400 {"error"}  malformed request
     422 {"error"}  even the fallback document could not be built
@@ -42,7 +43,9 @@ from typing import Any, Callable, Collection
 HERE = Path(__file__).resolve().parent
 HEADERS = (HERE / "header.tex", HERE / "unicode.tex")
 DOC_TIMEOUT = float(os.environ.get("TYPESET_TIMEOUT", "120"))
-MAX_BODY = int(os.environ.get("TYPESET_MAX_BODY", str(25 * 1024 * 1024)))
+# Internal-only service; a slide handout carries every slide image (≈1.4 MB
+# each, +1/3 for base64), so the cap is generous.
+MAX_BODY = int(os.environ.get("TYPESET_MAX_BODY", str(100 * 1024 * 1024)))
 CONCURRENCY = int(os.environ.get("TYPESET_CONCURRENCY", "2"))
 QUEUE_WAIT = float(os.environ.get("TYPESET_QUEUE_WAIT", "30"))  # then 503 busy
 # Share of the budget the first (full) render may use, so a formula that makes
@@ -68,6 +71,10 @@ FRONT_MATTER = """\
     mainfont: DejaVu Serif
     sansfont: DejaVu Sans
     monofont: DejaVu Sans Mono
+    # No TeX ligatures: text must print as written (" ` ,, << >> -- stay literal).
+    mainfontoptions: [Ligatures=TeXOff]
+    sansfontoptions: [Ligatures=TeXOff]
+    monofontoptions: [Ligatures=TeXOff]
 ---
 
 """
@@ -287,7 +294,8 @@ def _render(
     """Returns (pdf or None, error tail, whether `cap` cut the render short)."""
     for f in ("doc.pdf", "doc.tex", "doc.log"):
         (work / f).unlink(missing_ok=True)
-    title_line = f"title: {json.dumps(plain_title(title), ensure_ascii=False)}\n" if title.strip() else ""
+    # The title is PDF metadata only; the caller prints its own heading.
+    title_line = f"title-meta: {json.dumps(plain_title(title), ensure_ascii=False)}\n" if title.strip() else ""
     (work / "doc.qmd").write_text(FRONT_MATTER.format(title=title_line, fmt=MD_FORMAT) + body, encoding="utf-8")
     res = _run(["quarto", "render", "doc.qmd", "--to", "pdf"], work, deadline, cap=cap)
     pdf = work / "doc.pdf"
