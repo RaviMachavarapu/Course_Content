@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# typeset: Markdown + LaTeX formulas -> PDF via Quarto + xelatex.
+# typeset: Markdown + LaTeX formulas -> PDF via pandoc (Quarto's) + xelatex.
 # Multi-arch (linux/amd64 and linux/arm64): Quarto and TinyTeX both publish
 # builds for each, so Apple Silicon builds natively (no emulation).
 FROM python:3.12.7-slim-bookworm
@@ -15,9 +15,15 @@ ENV PYTHONUNBUFFERED=1 \
     PATH=/opt/TinyTeX/bin/current:$PATH
 
 # perl: tlmgr; xz-utils: TinyTeX archive; fonts-dejavu-core: Unicode text
-# coverage (µ → ≤ ≥ × ° Greek); poppler-utils: pdftotext for the tests.
+# coverage (µ → ≤ ≥ × ° Greek); fonts-noto-core: the Indic scripts of the
+# approved languages (Hindi/Marathi: Devanagari, Telugu, Tamil, Kannada; see
+# unicode.tex) -- only those families are kept; poppler-utils: pdftotext for
+# the tests.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl perl xz-utils fontconfig fonts-dejavu-core poppler-utils \
+        ca-certificates curl perl xz-utils fontconfig fonts-dejavu-core fonts-noto-core \
+        poppler-utils \
+    && find /usr/share/fonts/truetype/noto -type f \
+        ! -regex '.*/NotoSerif\(Devanagari\|Telugu\|Tamil\|Kannada\)-\(Regular\|Bold\)\.ttf' -delete \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/quarto.deb \
@@ -44,18 +50,14 @@ RUN case "$TARGETARCH" in amd64) TT=x86_64;; arm64) TT=arm64;; *) echo "unsuppor
     && fc-cache -f
 
 WORKDIR /app
-COPY header.tex unicode.tex warmup.md /app/
-# Warm-up render: lets Quarto install anything its template still needs at
-# build time (never at request time) and fills the font caches.
-RUN mkdir -p /tmp/warm && cp /app/header.tex /app/unicode.tex /tmp/warm/ \
-    && printf -- '---\ntitle: "Warm-up"\nformat:\n  pdf:\n    pdf-engine: xelatex\n    include-in-header: [header.tex, unicode.tex]\n    mainfont: DejaVu Serif\n    sansfont: DejaVu Sans\n    monofont: DejaVu Sans Mono\n---\n\n' > /tmp/warm/warm.qmd \
-    && cat /app/warmup.md >> /tmp/warm/warm.qmd \
-    && cd /tmp/warm && quarto render warm.qmd --to pdf \
-    && test -s /tmp/warm/warm.pdf && rm -rf /tmp/warm
+COPY header.tex unicode.tex warmup.md server.py allowlist.txt /app/
+# Warm-up render through the service's own code path (pandoc -> xelatex):
+# checks the preamble, fonts and every package at build time (never at request
+# time) and fills the font caches.
+RUN cd /app && python3 -c "import server; pdf, marker = server.build_pdf(open('warmup.md').read(), 'Warm-up', {}); assert pdf.startswith(b'%PDF-') and marker == '0', marker"
 
 RUN pip install pytest==8.3.3
 
-COPY server.py allowlist.txt /app/
 COPY tests /app/tests
 
 # Formulas are LaTeX from content generation: run unprivileged.

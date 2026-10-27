@@ -12,3 +12,5 @@ $$\chemfig{*6(=-=-=-)}$$
 
 - item one
 - item two
+
+Indic scripts: बल होता है। తెలుగు தமிழ் ಕನ್ನಡ; bold $\boldsymbol{\omega} + \mathbf{\alpha}$; numbers $\num{1,500}$, $\SI{1.5e3}{\square\metre}$.

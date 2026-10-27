@@ -1,8 +1,10 @@
-"""HTTP client for the internal `typeset` service (Quarto + xelatex PDFs).
+"""HTTP client for the internal `typeset` service (pandoc + xelatex PDFs).
 
 `POST {typeset_endpoint}/pdf` with `{"markdown", "title", "images": {name: base64}}`
 returns the PDF; the `X-Typeset-Fallback` header says how many formulas had to
-be shown as source (`0`, `<n>`, `<n>+images` or `all`).
+be shown as source (`0`, `<n>`, `<n>+images` or `all`), with `+glyphs`
+appended when a character had no glyph in any font (the task logs any marker
+other than `0` as a warning).
 
 `TypesetUnavailable` is transient (service down, busy, out of time, or a
 500 crash): retry

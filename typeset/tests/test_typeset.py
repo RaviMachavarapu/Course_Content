@@ -54,6 +54,16 @@ def pdftext(pdf: bytes) -> str:
         return subprocess.run(["pdftotext", "-enc", "UTF-8", f.name, "-"], capture_output=True, text=True, check=True).stdout
 
 
+def pdftext_raw(pdf: bytes) -> str:
+    """Text in content-stream order: superscripts stay next to their base."""
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(pdf)
+        f.flush()
+        return subprocess.run(
+            ["pdftotext", "-raw", "-enc", "UTF-8", f.name, "-"], capture_output=True, text=True, check=True
+        ).stdout
+
+
 def pdftitle(pdf: bytes) -> str:
     with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
         f.write(pdf)
@@ -346,3 +356,106 @@ def test_slow_first_render_is_retried_not_degraded(base_url, monkeypatch):
         f.flush()
         listing = subprocess.run(["pdfimages", "-list", f.name], capture_output=True, text=True, check=True).stdout
     assert len(listing.strip().splitlines()) - 2 == 1, listing
+
+
+# -- final review fixes -----------------------------------------------------------------
+
+
+def test_quarto_shortcodes_are_literal_in_math_code_and_text(base_url):
+    """Nothing in the document is a Quarto shortcode: `{{<` in a formula, a code
+    span or text prints as written and never truncates the document."""
+    md = (
+        "Code `{{< env HOSTNAME >}}` and `{{< include /etc/passwd >}}` stay.\n\n"
+        "Math $x_{{< env HOSTNAME >}}$ end.\n\n"
+        "Truncate $a_{{<5}} + b$ here.\n\n"
+        "Text \\{\\{\\< include /etc/passwd \\>\\}\\} too.\n\n"
+        "Last paragraph present.\n"
+    )
+    headers, pdf = render(base_url, md)
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "0", text
+    assert "{{< env HOSTNAME >}}" in text and "{{< include /etc/passwd >}}" in text
+    assert "{{< include /etc/passwd >}} too" in text
+    assert "here." in text and "Last paragraph present" in text
+    hostname = Path("/etc/hostname").read_text().strip()
+    assert hostname not in text and "root:" not in text
+
+
+INDIC = {
+    "hindi": "बल",
+    "hindi-2": "होता",
+    "marathi": "मराठी",
+    "telugu": "తెలుగు",
+    "tamil": "தமிழ்",
+    "kannada": "ಕನ್ನಡ",
+}
+
+
+def test_indic_scripts_render(base_url):
+    md = "बल $F = ma$ होता है। मराठी తెలుగు தமிழ் ಕನ್ನಡ\n\n**बल** and *తెలుగు*.\n"
+    headers, pdf = render(base_url, md)
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "0", text
+    for name, word in INDIC.items():
+        assert word in text, (name, word, text)
+    assert "F = ma" not in text  # the formula is typeset (math spacing)
+
+
+def test_missing_glyphs_are_reported_not_silent(base_url):
+    # Linear B: no font in the image has it
+    headers, pdf = render(base_url, "A rare sign \U00010000 here, $x^2$.\n")
+    assert headers["X-Typeset-Fallback"] == "0+glyphs"
+    assert "here" in pdftext(pdf)
+
+
+BOLD = {
+    "\\boldsymbol{\\omega}": "\U0001d74e",  # bold italic omega
+    "\\boldsymbol{F}": "\U0001d46d",  # bold italic F
+    "\\boldsymbol{\\nabla}": "\U0001d735",  # bold italic nabla
+    "\\vb*{a}": "\U0001d482",  # bold italic a
+    "\\bm{x}": "\U0001d499",  # bold italic x
+    "\\mathbf{\\alpha}": "\U0001d6c2",  # bold alpha
+    "\\vb{\\omega}": "\U0001d6da",  # bold omega
+    "\\vb{\\alpha}": "\U0001d6c2",
+    "\\mathbf{F}": "\U0001d405",  # bold F
+    "\\boldsymbol{2}": "\U0001d7d0",  # bold digit two
+}
+
+
+@pytest.mark.parametrize("src", sorted(BOLD))
+def test_bold_math_is_bold(base_url, src):
+    headers, pdf = render(base_url, f"Bold ${src}$ here.\n")
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "0", text
+    assert BOLD[src] in text, (src, text)
+
+
+# Compared with all white space removed (pdftotext puts a raised exponent on
+# its own line): the characters, in order, exactly as written.
+SIUNITX = {
+    "\\si{\\joule\\per\\kilogram\\kelvin}": ("ValueJkg−1Kend.", ["K−1"]),
+    "\\num{1,500}": ("Value1,500end.", []),
+    "\\num{12345}": ("Value12345end.", []),
+    "\\num{.5}": ("Value.5end.", ["0.5"]),
+    "\\num{1.5e3}": ("Value1.5e3end.", ["×", "\U0001d452"]),  # no italic e
+    "\\SI{1,500}{\\metre}": ("Value1,500mend.", []),
+    "\\si{\\square\\metre}": ("Valuem2end.", ["□"]),
+    "\\SI{1.5e3}{\\metre}": ("Value1.5e3mend.", ["×", "\U0001d452"]),
+    "\\si{\\micro\\metre}": ("Valueµmend.", []),
+    "\\SI{3 \\times 10^{8}}{\\metre\\per\\second}": ("Value3×108ms−1end.", []),
+}
+
+
+@pytest.mark.parametrize("src", sorted(SIUNITX))
+def test_siunitx_prints_numbers_as_written(base_url, src):
+    want, never = SIUNITX[src]
+    headers, pdf = render(base_url, f"Value ${src}$ end.\n")
+    raw = pdftext_raw(pdf)
+    text = "".join(raw.split())
+    assert headers["X-Typeset-Fallback"] == "0", raw
+    assert want in text, (src, raw)
+    for bad in never:
+        assert bad not in text, (src, bad, raw)
+    # a comma in a number is not followed by math punctuation space
+    if "," in src:
+        assert "1,500" in raw, raw

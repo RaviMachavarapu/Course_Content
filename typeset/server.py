@@ -1,4 +1,4 @@
-"""typeset: Markdown with LaTeX formulas -> PDF (Quarto + xelatex).
+"""typeset: Markdown with LaTeX formulas -> PDF (pandoc + xelatex).
 
 POST /pdf  {"markdown": str, "title": str, "images": {name: base64}}
     `title` is plain-text PDF metadata (not printed); body up to 100 MB.
@@ -16,7 +16,13 @@ its source in monospace and the document is rendered again.
 
 Response header X-Typeset-Fallback: "0" (clean), "<n>" formulas shown as
 source, "<n>+images" (images also replaced by their alt text, e.g. an
-unreadable image file) or "all" (last resort: every formula as source).
+unreadable image file) or "all" (last resort: every formula as source); with
+"+glyphs" appended when a character had no glyph in any font (xelatex's
+"Missing character" -- never shipped silently: also logged as a warning).
+
+The document is rendered with pandoc (Quarto's bundled one) to LaTeX and then
+xelatex -- never `quarto render`, whose shortcodes (`{{< ... >}}`) would be
+expanded inside formulas, code and text.
 
 Stdlib only.
 """
@@ -53,31 +59,29 @@ QUEUE_WAIT = float(os.environ.get("TYPESET_QUEUE_WAIT", "30"))  # then 503 busy
 FIRST_RENDER_SHARE = 0.4
 PROBE_CAP = 8.0
 
-# Markdown in, Markdown out: no raw TeX/HTML and no citations, so plain text
-# (backslashes, <tags>, @handles) always prints literally. Math via $...$.
+# Markdown in: no raw TeX/HTML and no citations, so plain text (backslashes,
+# <tags>, @handles) always prints literally. Math via $...$.
 MD_FORMAT = "markdown-raw_tex-raw_html-raw_attribute-citations"
 
-FRONT_MATTER = """\
----
-{title}format:
-  pdf:
-    pdf-engine: xelatex
-    from: {fmt}
-    include-in-header: [header.tex, unicode.tex]
-    keep-tex: true
-    latex-auto-install: false
-    papersize: a4
-    geometry: margin=2cm
-    mainfont: DejaVu Serif
-    sansfont: DejaVu Sans
-    monofont: DejaVu Sans Mono
+# pandoc's own LaTeX template (KOMA article), the preamble files after it.
+PANDOC_LATEX = [
+    "quarto", "pandoc", "doc.json", "-f", "json", "-t", "latex", "--standalone", "-o", "doc.tex",
+    "--include-in-header=header.tex", "--include-in-header=unicode.tex",
+    "-V", "documentclass=scrartcl",
+    "-V", "papersize=a4",
+    "-V", "geometry=margin=2cm",
+    "-V", "mainfont=DejaVu Serif",
+    "-V", "sansfont=DejaVu Sans",
+    "-V", "monofont=DejaVu Sans Mono",
     # No TeX ligatures: text must print as written (" ` ,, << >> -- stay literal).
-    mainfontoptions: [Ligatures=TeXOff]
-    sansfontoptions: [Ligatures=TeXOff]
-    monofontoptions: [Ligatures=TeXOff]
----
-
-"""
+    "-V", "mainfontoptions=Ligatures=TeXOff",
+    "-V", "sansfontoptions=Ligatures=TeXOff",
+    "-V", "monofontoptions=Ligatures=TeXOff",
+]
+XELATEX = ["xelatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"]
+MAX_TEX_RUNS = 3  # hyperref's bookmarks need a second run
+# xelatex: "Missing character: There is no X (U+XXXX) in font F!"
+MISSING_GLYPH = re.compile(r"Missing character: There is no (.+?) in font (.+?)!")
 
 CAPPED = -999  # returncode of a run stopped by its cap (not the document budget)
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -157,9 +161,9 @@ class Deadline:
 def _run(
     cmd: list[str], cwd: Path, deadline: Deadline, stdin: str | None = None, cap: float | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """Run in its own session; on timeout kill the whole process group (quarto
-    -> deno -> xelatex). If only `cap` (not the document budget) ran out, the
-    result is a failed process (returncode -9) instead of Timeout."""
+    """Run in its own session; on timeout kill the whole process group. If
+    only `cap` (not the document budget) ran out, the result is a failed
+    process (returncode CAPPED) instead of Timeout."""
     left = deadline.left()
     limit = min(left, cap) if cap is not None else left
     proc = subprocess.Popen(
@@ -274,40 +278,74 @@ def _write_images(work: Path, images: dict[str, str]) -> set[str]:
     return ok
 
 
-def _to_markdown(ast: Any, work: Path, deadline: Deadline) -> str:
-    res = _run(["quarto", "pandoc", "-f", "json", "-t", MD_FORMAT, "--wrap=none"], work, deadline, json.dumps(ast))
-    if res.returncode != 0:
-        raise BuildFailed(f"pandoc json->markdown failed: {res.stderr[-2000:]}")
-    return res.stdout
+def _meta_title(title: str) -> dict[str, Any]:
+    """The title as plain-text pandoc metadata (the LaTeX writer escapes it)."""
+    words = title.split()
+    inlines: list[dict[str, Any]] = []
+    for i, word in enumerate(words):
+        if i:
+            inlines.append({"t": "Space"})
+        inlines.append({"t": "Str", "c": word})
+    return {"t": "MetaInlines", "c": inlines}
 
 
-def plain_title(title: str) -> str:
-    """The title is plain text: backslash-escape every ASCII punctuation
-    character so Markdown/math syntax ($, *, \\, ...) prints literally."""
-    flat = " ".join(title.split())
-    return re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", flat)
+def _write_latex(
+    ast: Any, title: str, work: Path, deadline: Deadline, cap: float | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Document AST (+ title metadata) -> doc.tex with pandoc's LaTeX writer."""
+    doc = dict(ast)
+    meta = dict(doc.get("meta") or {})
+    if title.strip():
+        # The title is PDF metadata only; the caller prints its own heading.
+        meta["title-meta"] = _meta_title(title)
+    doc["meta"] = meta
+    (work / "doc.json").write_text(json.dumps(doc), encoding="utf-8")
+    return _run(PANDOC_LATEX, work, deadline, cap=cap)
 
 
 def _render(
-    body: str, title: str, work: Path, deadline: Deadline, cap: float | None = None
+    ast: Any, title: str, work: Path, deadline: Deadline, cap: float | None = None
 ) -> tuple[bytes | None, str, bool]:
     """Returns (pdf or None, error tail, whether `cap` cut the render short)."""
-    for f in ("doc.pdf", "doc.tex", "doc.log"):
+    for f in ("doc.json", "doc.tex", "doc.pdf", "doc.log", "doc.aux", "doc.out"):
         (work / f).unlink(missing_ok=True)
-    # The title is PDF metadata only; the caller prints its own heading.
-    title_line = f"title-meta: {json.dumps(plain_title(title), ensure_ascii=False)}\n" if title.strip() else ""
-    (work / "doc.qmd").write_text(FRONT_MATTER.format(title=title_line, fmt=MD_FORMAT) + body, encoding="utf-8")
-    res = _run(["quarto", "render", "doc.qmd", "--to", "pdf"], work, deadline, cap=cap)
+    stop = time.monotonic() + cap if cap is not None else None
+
+    def left() -> float | None:
+        return None if stop is None else max(0.01, stop - time.monotonic())
+
+    res = _write_latex(ast, title, work, deadline, cap=left())
+    if res.returncode != 0 or not (work / "doc.tex").is_file():
+        return None, f"pandoc: {res.stderr[-3000:]}", res.returncode == CAPPED
+    for _ in range(MAX_TEX_RUNS):
+        res = _run(XELATEX, work, deadline, cap=left())
+        if res.returncode != 0:
+            return None, (res.stdout or res.stderr)[-3000:], res.returncode == CAPPED
+        log_text = (work / "doc.log").read_text(encoding="utf-8", errors="replace")
+        if "Rerun to get" not in log_text:
+            break
     pdf = work / "doc.pdf"
-    if res.returncode == 0 and pdf.is_file() and pdf.read_bytes().startswith(b"%PDF-"):
+    if pdf.is_file() and pdf.read_bytes().startswith(b"%PDF-"):
         return pdf.read_bytes(), "", False
-    return None, (res.stderr or res.stdout)[-3000:], res.returncode == CAPPED
+    return None, "xelatex produced no PDF", False
 
 
-def _preamble(work: Path, deadline: Deadline) -> str:
+def missing_glyphs(work: Path) -> list[str]:
+    """Characters the last xelatex run had no glyph for ("<char> in font <f>")."""
+    log_file = work / "doc.log"
+    if not log_file.is_file():
+        return []
+    text = log_file.read_text(encoding="utf-8", errors="replace")
+    seen: dict[str, None] = {}
+    for m in MISSING_GLYPH.finditer(text):
+        seen[f"{m.group(1)} in font {m.group(2)}"] = None
+    return list(seen)
+
+
+def _preamble(ast: Any, work: Path, deadline: Deadline) -> str:
     tex = work / "doc.tex"
     if not tex.is_file():
-        res = _run(["quarto", "render", "doc.qmd", "--to", "latex"], work, deadline)
+        res = _write_latex(ast, "", work, deadline)
         if res.returncode != 0 or not tex.is_file():
             raise BuildFailed(f"could not produce LaTeX preamble: {res.stderr[-2000:]}")
     text = tex.read_text(encoding="utf-8")
@@ -369,7 +407,8 @@ def find_bad_formulas(math: list[tuple[str, str]], preamble: str, work: Path, de
 
 
 def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes, str]:
-    """Returns (pdf bytes, fallback marker: "0", "<n>", "<n>+images" or "all")."""
+    """Returns (pdf bytes, fallback marker: "0", "<n>", "<n>+images" or "all",
+    plus "+glyphs" if a character had no glyph)."""
     deadline = Deadline(DOC_TIMEOUT)
     work = Path(tempfile.mkdtemp(prefix="typeset-"))
     try:
@@ -382,7 +421,14 @@ def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes,
         ast = json.loads(res.stdout)
 
         def attempt(cap: float | None = None, **kw: Any) -> tuple[bytes | None, str, bool]:
-            return _render(_to_markdown(transform(ast, names, **kw), work, deadline), title, work, deadline, cap)
+            return _render(transform(ast, names, **kw), title, work, deadline, cap)
+
+        def done(pdf: bytes, marker: str) -> tuple[bytes, str]:
+            missing = missing_glyphs(work)
+            if missing:
+                log.warning("characters without a glyph (shown as blanks/boxes): %s", missing)
+                marker += "+glyphs"
+            return pdf, marker
 
         math = collect_math(ast)
         refused = {m for m in math if not formula_allowed(m[1])}
@@ -392,14 +438,14 @@ def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes,
 
         pdf, err, capped = attempt(cap=DOC_TIMEOUT * FIRST_RENDER_SHARE, bad_math=refused)
         if pdf:
-            return pdf, str(len(refused))
+            return done(pdf, str(len(refused)))
         log.info("render failed after %.1fs (capped=%s), looking for bad formulas: %s",
                  DOC_TIMEOUT - deadline.left(), capped, err[-500:])
 
         found: set[tuple[str, str]] = set()
         if math:
             try:
-                found = find_bad_formulas(math, _preamble(work, deadline), work, deadline)
+                found = find_bad_formulas(math, _preamble(ast, work, deadline), work, deadline)
             except BuildFailed as exc:  # no preamble: skip straight to the later stages
                 log.warning("formula search skipped: %s", exc)
         bad = refused | found
@@ -407,22 +453,22 @@ def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes,
         if found:
             pdf, err, _ = attempt(bad_math=bad)
             if pdf:
-                return pdf, str(len(bad))
+                return done(pdf, str(len(bad)))
         elif capped:
             # Only slow, nothing wrong found: try again with the whole remaining
             # budget (Timeout -> 504) before degrading anything.
             pdf, err, _ = attempt(bad_math=bad)
             if pdf:
-                return pdf, str(len(bad))
+                return done(pdf, str(len(bad)))
         if names:  # maybe an unreadable image: keep the formulas, drop images
             pdf, err, _ = attempt(bad_math=bad, drop_images=True)
             if pdf:
-                return pdf, f"{len(bad)}+images"
+                return done(pdf, f"{len(bad)}+images")
         # Last resort: every formula as source, images as their alt text.
         log.warning("last resort, every formula as source; LaTeX error: %s", err[-1500:])
         pdf, err, _ = attempt(all_math=True, drop_images=True)
         if pdf:
-            return pdf, "all"
+            return done(pdf, "all")
         raise BuildFailed(err)
     finally:
         shutil.rmtree(work, ignore_errors=True)
