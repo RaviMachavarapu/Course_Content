@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 import zlib
@@ -177,7 +178,7 @@ def test_unreadable_image_keeps_formulas(base_url):
 
 
 def test_unbuildable_document_returns_422(base_url, monkeypatch):
-    monkeypatch.setattr(server, "_render", lambda *a, **k: (None, "! LaTeX Error: simulated"))
+    monkeypatch.setattr(server, "_render", lambda *a, **k: (None, "! LaTeX Error: simulated", False))
     status, _, body = post(base_url, {"markdown": "Text $x$", "title": "", "images": {}})
     assert status == 422
     assert json.loads(body)["error"]
@@ -191,13 +192,18 @@ def test_timeout_returns_504(base_url, monkeypatch):
 
 
 def _tex_processes() -> list[str]:
+    """TeX/Quarto processes still alive, plus any zombie (unreaped) process."""
+    time.sleep(0.5)  # give init a moment to reap
     found = []
     for d in Path("/proc").glob("[0-9]*"):
         try:
             cmd = (d / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-        except OSError:
+            state = (d / "stat").read_text().rsplit(")", 1)[1].split()[0]
+        except (OSError, IndexError):
             continue
-        if "xelatex" in cmd or "deno" in cmd or "quarto" in cmd:
+        if state == "Z":
+            found.append(f"zombie {d.name}")
+        elif "xelatex" in cmd or "deno" in cmd or "quarto" in cmd:
             found.append(cmd)
     return found
 
@@ -246,3 +252,71 @@ def test_busy_returns_503(base_url, monkeypatch):
 def test_invalid_base64_is_400(base_url):
     status, _, body = post(base_url, {"markdown": "x", "title": "", "images": {"a.png": "not*base64!"}})
     assert status == 400 and "base64" in json.loads(body)["error"]
+
+
+
+DANGEROUS = """input include openin openout read write immediate filedump filesize filemoddate
+mdfivesum IfFileExists InputIfFileExists UseName use csname endcsname expandafter def gdef
+edef let newcommand renewcommand catcode lccode uccode scantokens ExplSyntaxOn ExplSyntaxOff
+begingroup endgroup string detokenize special usepackage makeatletter VerbatimInput
+lstinputlisting directlua""".split()
+
+
+def test_allowlist_excludes_dangerous_words():
+    assert len(server.ALLOWLIST) > 1000
+    assert sorted(set(DANGEROUS) & server.ALLOWLIST) == []
+
+
+BYPASSES = {
+    "usename": r"\UseName{input}{/etc/hostname}",
+    "begin-input": r"\begin{input}{/etc/hostname}",
+    "expl3": r"\ExplSyntaxOn \use:c {input} {/etc/hostname} \ExplSyntaxOff",
+    "filedump": r"\mathrm{\filedump length 60 {/proc/self/environ}}",
+    "filesize": r"\filesize{/etc/passwd}",
+    "iffileexists": r"\IfFileExists{/etc/passwd}{YES}{NO}",
+    "verbatim": r"\VerbatimInput{/etc/hostname}",
+    "hat-hat": r"^^5cinput{/etc/hostname}",
+    "at": r"\@@input /etc/hostname",
+}
+
+
+@pytest.mark.parametrize("name", sorted(BYPASSES))
+def test_file_access_bypasses_show_source(base_url, name):
+    src = BYPASSES[name]
+    headers, pdf = render(base_url, f"Probe ${src}$ end. Good $z^2$.\n")
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "1"
+    assert src.split("{")[0].strip() in text, text
+    hostname = Path("/etc/hostname").read_text().strip()
+    assert hostname not in text and "root:" not in text and "PATH=" not in text
+
+
+def test_spike_sheet_formulas_all_compile(base_url):
+    md = (Path(__file__).parent / "data" / "spike_items.md").read_text()
+    refused = [m for m in server.collect_math(json.loads(subprocess.run(
+        ["quarto", "pandoc", "-f", server.MD_FORMAT, "-t", "json"], input=md, capture_output=True, text=True, check=True
+    ).stdout)) if not server.formula_allowed(m[1])]
+    assert refused == []
+    headers, pdf = render(base_url, md)
+    assert headers["X-Typeset-Fallback"] == "0"
+    assert "\\frac" not in pdftext(pdf)
+
+
+def test_chemistry_module_samples_compile(base_url):
+    headers, pdf = render(base_url, "An $S_N2$ step, $\\beta$ decay and a nitro group $-\\text{NO}_2$.\n")
+    assert headers["X-Typeset-Fallback"] == "0"
+    assert "\\text" not in pdftext(pdf)
+
+
+def test_slow_first_render_is_retried_not_degraded(base_url, monkeypatch):
+    monkeypatch.setattr(server, "FIRST_RENDER_SHARE", 0.002)  # cap ~0.24 s: always hit
+    md = "Formula $x^2 + \\frac{a}{b}$.\n\n![A red box](box.png)\n"
+    headers, pdf = render(base_url, md, images={"box.png": base64.b64encode(png()).decode()})
+    assert headers["X-Typeset-Fallback"] == "0"
+    text = pdftext(pdf)
+    assert "x^2" not in text and "\\frac" not in text
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(pdf)
+        f.flush()
+        listing = subprocess.run(["pdfimages", "-list", f.name], capture_output=True, text=True, check=True).stdout
+    assert len(listing.strip().splitlines()) - 2 == 1, listing

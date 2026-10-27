@@ -55,7 +55,7 @@ RUN mkdir -p /tmp/warm && cp /app/header.tex /app/unicode.tex /tmp/warm/ \
 
 RUN pip install pytest==8.3.3
 
-COPY server.py /app/server.py
+COPY server.py allowlist.txt /app/
 COPY tests /app/tests
 
 # Formulas are LaTeX from content generation: run unprivileged.
