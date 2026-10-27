@@ -43,11 +43,49 @@ export interface StudentArtifact {
 
 export type FlashcardRating = "hard" | "good" | "easy";
 
-export interface QuizResultRow {
-  question_index: number;
-  selected_index: number;
-  correct_index: number;
-  is_correct: boolean;
+export interface QuizCheckResult {
+  index: number;
+  response: number | string;
+  correct: boolean;
+  correct_answer: string;
+  correct_index: number | null;
+  explanation: string;
+}
+
+export interface QuizAttemptQuestion {
+  index: number;
+  type: "mcq" | "fill_blank";
+  question: string;
+  options: string[] | null;
+  result: QuizCheckResult | null;
+}
+
+export interface QuizAttemptStart {
+  status: "started" | "resumed";
+  attempt_id: string;
+  attempt_number: number;
+  source: "studio" | "chat";
+  total_count: number;
+  checked_count: number;
+  correct_count: number;
+  started_at: string;
+  questions: QuizAttemptQuestion[];
+}
+
+export interface QuizPreparing {
+  status: "preparing";
+  message: string;
+}
+
+export interface QuizReviewRow {
+  index: number;
+  type: "mcq" | "fill_blank";
+  question: string;
+  options: string[] | null;
+  response: number | string;
+  correct: boolean;
+  correct_answer: string;
+  correct_index: number | null;
   explanation: string;
 }
 
@@ -56,7 +94,8 @@ export interface QuizResult {
   score_percent: number;
   correct_count: number;
   total_count: number;
-  results: QuizResultRow[];
+  completed_at: string;
+  review: QuizReviewRow[];
   best_score_percent: number;
   latest_score_percent: number;
 }
@@ -102,11 +141,17 @@ export const workspaceApi = {
       `/api/student/artifacts/${id}/flashcard-ratings/${cardIndex}`,
       { method: "PUT", body: { value } },
     ),
-  submitQuiz: (id: string, answers: Record<number, number>) =>
-    apiFetch<QuizResult>(`/api/student/artifacts/${id}/quiz-attempts`, {
+  startQuiz: (id: string) =>
+    apiFetch<QuizAttemptStart | QuizPreparing>(`/api/student/artifacts/${id}/quiz-attempts`, {
       method: "POST",
-      body: { answers },
     }),
+  checkQuizAnswer: (attemptId: string, index: number, response: number | string) =>
+    apiFetch<QuizCheckResult>(`/api/student/quiz-attempts/${attemptId}/answers`, {
+      method: "POST",
+      body: { index, response },
+    }),
+  completeQuiz: (attemptId: string) =>
+    apiFetch<QuizResult>(`/api/student/quiz-attempts/${attemptId}/complete`, { method: "POST" }),
   quizAttempts: (id: string) =>
     apiFetch<QuizAttemptsResponse>(`/api/student/artifacts/${id}/quiz-attempts`),
 };

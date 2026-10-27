@@ -46,19 +46,6 @@ export function useQuizAttempts(id: string, enabled = true) {
   });
 }
 
-export function useQuizSubmit(id: string, slug: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (answers: Record<number, number>) => workspaceApi.submitQuiz(id, answers),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["student", "quiz-attempts", id] });
-      void qc.invalidateQueries({ queryKey: ["student", "workspace", slug] });
-      void qc.invalidateQueries({ queryKey: ["student", "catalog"] });
-      void qc.invalidateQueries({ queryKey: ["student", "artifact", id] });
-    },
-  });
-}
-
 /** Persist per-artifact progress; refresh the shell + catalog on completion. */
 export function useArtifactProgress(id: string, slug: string) {
   const qc = useQueryClient();
