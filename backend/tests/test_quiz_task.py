@@ -12,9 +12,11 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from typing import Any
 
+import httpx
 import pytest
 import sqlalchemy as sa
 from celery.exceptions import Retry
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -31,7 +33,7 @@ from app.models import (
     UserRole,
 )
 from app.models.artifact_version import ArtifactVersion
-from app.pipeline.provider import NotebookRef, TransientProviderError
+from app.pipeline.provider import GenerationTimeout, NotebookRef, TransientProviderError
 from app.services import quiz_generation as qg
 from app.services.quiz_generation import SourceTextUnavailable
 from app.tasks import quiz
@@ -632,14 +634,13 @@ def test_avoid_list_is_built_from_previous_sets(
     assert all(r.startswith("duplicate:") for r in reasons)
 
 
-def test_seen_questions_keep_the_most_recent_sixty(
-    db_session: Session, setup: tuple[Artifact, User]
-) -> None:
-    artifact, user = setup
+def _used_sets(
+    db: Session, artifact: Artifact, user: User, count: int
+) -> list[list[dict[str, Any]]]:
     now = dt.datetime.now(tz=dt.UTC)
-    sets = [[mcq() for _ in range(10)] for _ in range(7)]
+    sets = [[mcq() for _ in range(10)] for _ in range(count)]
     for i, questions in enumerate(sets):
-        db_session.add(
+        db.add(
             QuizQuestionSet(
                 artifact_id=artifact.id,
                 user_id=user.id,
@@ -649,13 +650,175 @@ def test_seen_questions_keep_the_most_recent_sixty(
                 created_at=now - dt.timedelta(days=10 - i),
             )
         )
-    db_session.commit()
+    db.commit()
+    return sets
+
+
+def test_seen_questions_lists_all_and_limit_keeps_the_most_recent(
+    db_session: Session, setup: tuple[Artifact, User]
+) -> None:
+    artifact, user = setup
+    sets = _used_sets(db_session, artifact, user, 7)
 
     seen = quiz.seen_questions(db_session, artifact, user.id)
-
-    assert len(seen) == 60
+    assert len(seen) == 80  # 7 used sets + the 10 Studio questions
     assert seen[:10] == [q["question"] for q in sets[6]]
-    assert seen[-10:] == [q["question"] for q in sets[1]]
+
+    recent = quiz.seen_questions(db_session, artifact, user.id, limit=60)
+    assert len(recent) == 60
+    assert recent[-10:] == [q["question"] for q in sets[1]]
+
+
+def test_an_old_seen_question_beyond_the_avoid_list_is_still_dropped(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the prompt's avoid list is capped at 60; validation checks every seen question."""
+    artifact, user = setup
+    version = db_session.get(ArtifactVersion, artifact.published_version_id)
+    assert version is not None
+    studio_text = version.content_json["questions"][0]["question"]  # type: ignore[index]
+    sets = _used_sets(db_session, artifact, user, 7)
+    oldest_chat = sets[0][0]["question"]
+    fresh = [mcq() for _ in range(10)]
+    chat = FakeChat(answer([mcq(studio_text), mcq(oldest_chat), *fresh]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    assert studio_text not in chat.prompts[0]  # beyond the 60 most recent
+    assert oldest_chat not in chat.prompts[0]
+    qs = next(s for s in _sets(db_session, artifact, user) if s.status is QuizSetStatus.ready)
+    assert [q["question"] for q in qs.questions] == [q["question"] for q in fresh]
+    reasons = [d["reason"] for d in qs.validation_report["rounds"][0]["dropped"]]
+    assert len(reasons) == 2
+    assert all(r.startswith("duplicate:") for r in reasons)
+    assert qs.validation_report["seen"] == 80
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TransientProviderError("timeout"),
+        GenerationTimeout("503 Service Unavailable"),
+        httpx.ConnectError("connection refused"),
+        httpx.ReadError("connection reset"),
+    ],
+    ids=["transient", "5xx", "connect", "read"],
+)
+def test_chat_unavailable_is_retried(
+    error: Exception,
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+    retries: list[dict[str, Any]],
+) -> None:
+    artifact, user = setup
+    with pytest.raises(Retry):
+        _run(monkeypatch, FakeChat(error), artifact, user)
+    assert len(retries) == 1
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.preparing
+
+
+def test_connector_unreachable_on_the_re_ask_with_fewer_than_five_retries(
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+    retries: list[dict[str, Any]],
+) -> None:
+    artifact, user = setup
+    chat = FakeChat(answer([mcq()]), httpx.ConnectError("refused"))
+    with pytest.raises(Retry):
+        _run(monkeypatch, chat, artifact, user)
+    assert len(retries) == 1
+
+
+def test_a_set_no_longer_preparing_when_done_is_superseded(
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact, user = setup
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    def fail_it() -> None:  # e.g. replaced as abandoned while chat was answering
+        [qs] = _sets(db_session, artifact, user)
+        qs.status = QuizSetStatus.failed
+        qs.validation_report = {"error": "abandoned"}
+        db_session.commit()
+
+    chat.on_query = fail_it
+
+    assert _run(monkeypatch, chat, artifact, user) == "superseded"
+
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.failed
+    assert qs.questions == []
+    assert qs.validation_report == {"error": "abandoned"}
+
+
+def test_finish_on_a_failed_set_writes_nothing(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User]
+) -> None:
+    artifact, user = setup
+    qs = QuizQuestionSet(
+        artifact_id=artifact.id,
+        user_id=user.id,
+        source=QuizSetSource.chat,
+        status=QuizSetStatus.failed,
+        validation_report={"error": "x"},
+    )
+    db_session.add(qs)
+    db_session.commit()
+
+    written = quiz._finish(qs.id, quiz._Result(questions=[mcq() for _ in range(5)], report={}))
+
+    assert written is False
+    db_session.refresh(qs)
+    assert qs.status is QuizSetStatus.failed
+    assert qs.validation_report == {"error": "x"}
+
+
+def test_a_database_blip_when_storing_keeps_the_questions(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    real_write = quiz._write
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def flaky(set_id: uuid.UUID, result: Any) -> bool:
+        calls.append(1)
+        if len(calls) < 3:
+            raise OperationalError("UPDATE", {}, Exception("server closed the connection"))
+        return real_write(set_id, result)
+
+    monkeypatch.setattr(quiz, "_write", flaky)
+    monkeypatch.setattr("app.tasks.quiz.time.sleep", sleeps.append)
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    assert len(calls) == 3
+    assert sleeps == [quiz.FINISH_BACKOFF_SEC, quiz.FINISH_BACKOFF_SEC * 2]
+    assert len(chat.prompts) == 1
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.ready
+    assert len(qs.questions) == 10
+
+
+def test_a_database_outage_when_storing_raises_after_the_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def down(*_: Any) -> bool:
+        raise OperationalError("UPDATE", {}, Exception("down"))
+
+    monkeypatch.setattr(quiz, "_write", down)
+    monkeypatch.setattr("app.tasks.quiz.time.sleep", lambda _s: None)
+    with pytest.raises(OperationalError):
+        quiz._finish(uuid.uuid4(), quiz._Result())
 
 
 def test_studio_set_rows_are_not_listed_twice(

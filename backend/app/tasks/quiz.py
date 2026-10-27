@@ -12,7 +12,8 @@ Studio quiz's question count, default 10) avoiding the student's most recent 60 
 questions; parse and validate; ask once more for any shortfall; store the set `ready`
 (at least 5 questions, at most N) or `failed`, with the validation report either way.
 
-A transient provider error, unreadable source PDFs or a database connection error is
+Chat unavailable (a transient provider error, a 5xx/408 answer, the connector unreachable),
+unreadable source PDFs or a database connection error is
 retried with exponential back-off (30 s, 1, 2, 4, 8 min); the set stays `preparing`
 meanwhile and is marked `failed` when the retries run out. Artifact status is never
 touched. A `preparing` set older than `STALE_AFTER` (its worker died) is failed and
@@ -22,10 +23,12 @@ replaced by the next call.
 from __future__ import annotations
 
 import datetime as dt
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from celery import Task, shared_task
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -40,6 +43,7 @@ from app.models.quiz_question_set import QuizQuestionSet
 from app.pipeline.factory import get_content_provider
 from app.pipeline.provider import (
     ContentProvider,
+    GenerationTimeout,
     NotebookRef,
     ProviderError,
     TransientProviderError,
@@ -57,7 +61,11 @@ RETRY_BASE_SEC = 30
 STALE_AFTER = dt.timedelta(hours=2)
 
 _PENDING_WHERE = text("source = 'chat' AND status IN ('preparing', 'ready')")
-_RETRYABLE = (TransientProviderError, qg.SourceTextUnavailable, OperationalError)
+#: chat unavailable (timeout, locked session, 5xx/408, connector unreachable during a restart)
+_CHAT_UNAVAILABLE = (TransientProviderError, GenerationTimeout, httpx.TransportError)
+_RETRYABLE = (*_CHAT_UNAVAILABLE, qg.SourceTextUnavailable, OperationalError)
+FINISH_ATTEMPTS = 4
+FINISH_BACKOFF_SEC = 0.5
 
 
 class _Done(Exception):
@@ -98,10 +106,13 @@ def studio_questions(artifact: Artifact) -> list[dict[str, Any]]:
     return list(version.content_json.get("questions", []))
 
 
-def seen_questions(db: Session, artifact: Artifact, user_id: uuid.UUID) -> list[str]:
-    """Question texts the student has seen for this quiz, most recent first, at most
-    `qg.MAX_AVOID`: the questions of their used sets (newest set first), then the Studio
-    quiz (always their attempt 1). Exact repeats are listed once."""
+def seen_questions(
+    db: Session, artifact: Artifact, user_id: uuid.UUID, limit: int | None = None
+) -> list[str]:
+    """Every question text the student has seen for this quiz, most recent first: the
+    questions of their used sets (newest set first), then the Studio quiz (always their
+    attempt 1). Exact repeats are listed once. `limit` keeps the most recent ones only
+    (the prompt's avoid list is the first `qg.MAX_AVOID`; validation uses all of them)."""
     sets = db.scalars(
         select(QuizQuestionSet)
         .where(
@@ -118,7 +129,7 @@ def seen_questions(db: Session, artifact: Artifact, user_id: uuid.UUID) -> list[
             t = q.get("question") if isinstance(q, dict) else None
             if isinstance(t, str) and t.strip() and t not in texts:
                 texts.append(t)
-    return texts[: qg.MAX_AVOID]
+    return texts if limit is None else texts[:limit]
 
 
 def enqueue_prepare(artifact_id: uuid.UUID | str, user_id: uuid.UUID | str) -> None:
@@ -184,7 +195,9 @@ def prepare_quiz_set(self: Task, artifact_id: str, user_id: str, set_id: str | N
         _finish(claimed, _Result(report={"error": f"{type(exc).__name__}: {exc}"}))
         return "failed"
 
-    _finish(claimed, result)
+    if not _finish(claimed, result):
+        log.warning("quiz.superseded", set_id=str(claimed), **ctx)
+        return "superseded"
     outcome = "ready" if result.ready else "failed"
     log.info(
         "quiz.prepared",
@@ -309,7 +322,7 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
         kept_texts = [q["question"] for q in kept]
         try:
             answer = provider.query(nb, qg.build_prompt(short, kept_texts + job.seen))
-        except ProviderError as exc:
+        except (ProviderError, httpx.TransportError) as exc:
             if len(kept) < qg.MIN_SERVED:
                 raise  # transient: retry the whole preparation; otherwise the set fails
             report["reask_error"] = f"{type(exc).__name__}: {exc}"  # serve round 1's
@@ -329,12 +342,28 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
     return _Result(questions=served, report=report)
 
 
-def _finish(set_id: uuid.UUID, result: _Result) -> None:
-    """Store the outcome on the set, if it is still `preparing`."""
+def _finish(set_id: uuid.UUID, result: _Result) -> bool:
+    """Store the outcome on the set if it is still `preparing`; False when it no longer
+    is (nothing written). A database connection error is retried a few times with a short
+    back-off so questions that already cost chat queries are not thrown away."""
+    for attempt in range(FINISH_ATTEMPTS):
+        try:
+            return _write(set_id, result)
+        except OperationalError as exc:
+            if attempt == FINISH_ATTEMPTS - 1:
+                raise
+            delay = FINISH_BACKOFF_SEC * 2**attempt
+            log.warning("quiz.finish_retry", set_id=str(set_id), delay=delay, error=str(exc))
+            time.sleep(delay)
+    raise AssertionError("unreachable")
+
+
+def _write(set_id: uuid.UUID, result: _Result) -> bool:
     with session_scope() as db:
         qs = db.get(QuizQuestionSet, set_id, with_for_update=True)
         if qs is None or qs.status is not QuizSetStatus.preparing:
-            return
+            return False
         qs.status = QuizSetStatus.ready if result.ready else QuizSetStatus.failed
         qs.questions = result.questions if result.ready else []
         qs.validation_report = result.report
+        return True
