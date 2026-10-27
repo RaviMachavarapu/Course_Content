@@ -148,3 +148,26 @@ describe("siunitx parity with the PDF (numbers as written)", () => {
     expect(visible("\\micro")).toBe("\u00b5");
   });
 });
+
+describe("numbers as written: rendered structure", () => {
+  it("a comma in a number is an ordinary character (no space after it)", () => {
+    const h = html("\\num{1,500}");
+    // the comma is wrapped in an ordinary atom: no punctuation space (mspace) follows
+    expect(h).toContain('<span class="mord"><span class="mpunct">,</span></span>');
+    expect(h).not.toContain("mspace");
+    expect(mathml("\\num{1,500}")).toContain("<mn>1,500</mn>");
+    expect(visible("\\num{1,500}")).toBe("1,500");
+  });
+  it("letters in a number are upright", () => {
+    expect(mathml("\\num{1.5e3}")).toContain('<mi mathvariant="normal">e</mi>');
+    expect(html("\\num{1.5e3}")).not.toContain("mathnormal");
+    expect(visible("\\SI{1.5e3}{\\metre}")).toBe("1.5e3m");
+  });
+  it("other numbers print unchanged", () => {
+    expect(visible("\\num{.5}")).toBe(".5");
+    expect(visible("\\num{12345}")).toBe("12345");
+    expect(visible("\\num{−5}")).toBe("−5");
+    expect(visible("\\num{-5}")).toBe("−5");
+    expect(html("\\num{12345}")).not.toContain("mspace");
+  });
+});

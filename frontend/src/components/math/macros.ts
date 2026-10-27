@@ -192,10 +192,11 @@ export function unitToLatex(src: string): string {
   return groups.join("\\,");
 }
 
-/** siunitx number with `parse-numbers=false` (as the PDF typesets it): exactly
- * as written — `1,500`, `.5` and `1.5e3` are not reformatted. */
+/** siunitx number with `parse-numbers=false`, as the PDF typesets it: exactly
+ * as written (`1,500`, `.5`, `1.5e3` are not reformatted), upright, and a
+ * comma is an ordinary character (no punctuation space after it). */
 export function numToLatex(src: string): string {
-  return `{${src.trim()}}`;
+  return `\\mathrm{${src.trim().replace(/,/g, "{,}")}}`;
 }
 
 const SI = (ctx: Ctx): string => {
