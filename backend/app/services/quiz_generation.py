@@ -11,6 +11,8 @@ Question shapes kept by `validate` (extra keys are dropped):
      "explanation", "source_quote"}
 """
 
+# ruff: noqa: RUF001, RUF002, RUF003 (Greek letters and math symbols are intentional)
+
 from __future__ import annotations
 
 import bisect
@@ -46,15 +48,48 @@ _NON_ALNUM_RE = re.compile(r"[\W_]+")
 _WS_RE = re.compile(r"\s+")
 _DELIMITERS = ("\\(", "\\)", "\\[", "\\]", "$")
 _LTX_WRAP_RE = re.compile(
-    r"\\(?:text|textrm|textbf|textit|mathrm|mathbf|mathit|operatorname|ce)\s*\{([^{}]*)\}"
+    r"\\(text|textrm|textbf|textit|mathrm|mathbf|mathit|operatorname|ce)\s*\{([^{}]*)\}"
 )
-_LTX_CMD_RE = re.compile(r"\\[A-Za-z]+")
-_LTX_PUNCT_RE = re.compile(r"[\^_{}]")
+_LTX_FRAC_RE = re.compile(r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
+_LTX_SQRT_RE = re.compile(r"\\sqrt\s*\{([^{}]*)\}")
+_LTX_DEGREE_RE = re.compile(r"\^\s*\{?\s*\\circ\s*\}?")
+_LTX_CMD_RE = re.compile(r"\\([A-Za-z]+) ?")
+_LTX_ESCAPED_RE = re.compile(r"\\([%&#])")
+_LTX_SPACING_RE = re.compile(r"\\[,;:! ]")
+_SCRIPT_RUN_RE = re.compile("[\u2070\u00b9\u00b2\u00b3\u2074-\u207e\u207f]+")
+_SUBSCRIPT_RUN_RE = re.compile("[\u2080-\u208e]+")
+_SYMBOL_WS_RE = re.compile(
+    r"\s*([\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a=<>+/^-])\s*"
+)
+_SIGNATURE_RE = re.compile(
+    r"[0-9<>=+^\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a\u0370-\u03ff]"
+)
 _CONTROL_RE = re.compile(r"[\x00-\x09\x0b-\x1f]")
 #: a JSON `\n` escape directly followed by a letter: LaTeX `\nu`, `\neq`, `\nabla`
 _NEWLINE_LETTER_RE = re.compile(r"(?<!\\)(?:\\\\)*\\n[A-Za-z]")
 #: a backslash that is not part of a valid JSON escape (LaTeX written unescaped)
 _BAD_ESCAPE_RE = re.compile(r'\\(["\\/]|u[0-9a-fA-F]{4})|\\')
+
+
+_GREEK = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε", "varepsilon": "ϵ",
+    "zeta": "ζ", "eta": "η", "theta": "θ", "vartheta": "ϑ", "iota": "ι", "kappa": "κ",
+    "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ", "pi": "π", "varpi": "ϖ", "rho": "ρ",
+    "varrho": "ϱ", "sigma": "σ", "varsigma": "ς", "tau": "τ", "upsilon": "υ", "phi": "φ",
+    "varphi": "ϕ", "chi": "χ", "psi": "ψ", "omega": "ω", "Gamma": "Γ", "Delta": "Δ",
+    "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ", "Pi": "Π", "Sigma": "Σ", "Upsilon": "Υ",
+    "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+}  # fmt: skip
+_SYMBOLS = {
+    "pm": "±", "mp": "∓", "leq": "≤", "le": "≤", "geq": "≥", "ge": "≥", "neq": "≠", "ne": "≠",
+    "approx": "≈", "times": "×", "cdot": "·", "div": "÷", "to": "→", "rightarrow": "→",
+    "leftarrow": "←", "rightleftharpoons": "⇌", "leftrightharpoons": "⇌", "infty": "∞",
+    "circ": "°", "degree": "°", "partial": "∂", "nabla": "∇", "sum": "∑", "int": "∫",
+    "neg": " not ", "lnot": " not ", "not": " not ", "quad": " ", "qquad": " ",
+}  # fmt: skip
+_IGNORED = frozenset({"left", "right", "displaystyle", "big", "Big", "bigg", "Bigg", "limits"})
+_SUPER = dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ", "0123456789+-=()n", strict=True))
+_SUB = dict(zip("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎", "0123456789+-=()", strict=True))
 
 
 # -- prompt ---------------------------------------------------------------------
@@ -173,28 +208,91 @@ def parse_questions(answer: str) -> list[dict[str, Any]]:
 # -- normalisation --------------------------------------------------------------
 
 
-def strip_latex(s: str) -> str:
-    """Drop LaTeX markup: delimiters, `\\text{X}`-style wrappers unwrapped to X, other
-    `\\commands`, and `^ _ { }`."""
+def _translate(s: str, unknown: str) -> tuple[str, bool]:
+    """LaTeX -> plain text by translation: Greek letters and operators become Unicode,
+    `\\frac{a}{b}` -> a/b, `\\sqrt{x}` -> √x, `\\text{X}`-style wrappers unwrap to X, negations
+    become "not", delimiters go. A command not known: dropped (`unknown="drop"`) or kept as
+    its bare name (`"keep"`). Returns (text, saw_unknown_command). `^` and `_` stay."""
     for d in _DELIMITERS:
         s = s.replace(d, " ")
+    s = _LTX_DEGREE_RE.sub("°", s)
+    s = _LTX_SPACING_RE.sub(" ", s)
+    s = _LTX_ESCAPED_RE.sub(r"\1", s)
     prev = None
     while prev != s:
         prev = s
-        s = _LTX_WRAP_RE.sub(r"\1", s)
-    return _LTX_PUNCT_RE.sub("", _LTX_CMD_RE.sub(" ", s))
+        s = _LTX_FRAC_RE.sub(r"\1/\2", s)
+        s = _LTX_SQRT_RE.sub(r"√\1", s)
+
+        def wrap(m: re.Match[str]) -> str:
+            body: str = m.group(2)
+            if m.group(1) == "ce":
+                body = body.replace("<=>", "⇌").replace("->", "→").replace("<-", "←")
+            return body
+
+        s = _LTX_WRAP_RE.sub(wrap, s)
+    saw_unknown = False
+
+    def command(m: re.Match[str]) -> str:
+        nonlocal saw_unknown
+        name = m.group(1)
+        if name in _GREEK:
+            return _GREEK[name]
+        if name in _SYMBOLS:
+            return _SYMBOLS[name]
+        if name in _IGNORED:
+            return ""
+        saw_unknown = True
+        return f" {name} " if unknown == "keep" else " "
+
+    return _LTX_CMD_RE.sub(command, s), saw_unknown
+
+
+def has_unsupported_notation(s: str) -> bool:
+    """True if `s` has a LaTeX command that `normalize_answer` cannot translate."""
+    return _translate(s, "keep")[1]
+
+
+def _lower(s: str) -> str:
+    """Lowercase except capital Greek letters (so ΔG and δG stay different)."""
+    return "".join(c if "Α" <= c <= "Ω" else c.lower() for c in s)
 
 
 def normalize_text(s: str) -> str:
-    """LaTeX stripped, lowercase, every run of non-alphanumerics -> one space (quote and
-    duplicate matching)."""
-    return _NON_ALNUM_RE.sub(" ", strip_latex(unicodedata.normalize("NFKC", s)).lower()).strip()
+    """LaTeX translated (unknown commands dropped), lowercase, every run of non-alphanumerics
+    -> one space (quote matching)."""
+    text = _translate(unicodedata.normalize("NFKC", s), "drop")[0]
+    return _NON_ALNUM_RE.sub(" ", _lower(text)).strip()
+
+
+def _dup_key(s: str) -> tuple[str, str]:
+    """(text key, signature) for duplicate detection. The key keeps ^ and comparison
+    symbols; the signature is just digits, symbols and Greek letters in order, so
+    `\\Delta G < 0` and `\\Delta G > 0` are never duplicates."""
+    text = _translate(unicodedata.normalize("NFKC", s), "drop")[0]
+    text = _lower(text).replace("_", "").replace("{", "").replace("}", "")
+    text = re.sub(
+        r"[^\w<>=+^\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a]+",
+        " ",
+        text,
+    )
+    text = text.strip()
+    return text, "".join(_SIGNATURE_RE.findall(text))
 
 
 def normalize_answer(s: str) -> str:
-    """Fill-blank comparison form: NFKC, lowercase, LaTeX markup removed, whitespace
-    collapsed, surrounding punctuation stripped."""
-    t = _WS_RE.sub(" ", strip_latex(unicodedata.normalize("NFKC", s).lower())).strip()
+    """Fill-blank comparison form: Unicode super/subscripts mapped (`²` -> `^2`, `₂` -> `2`),
+    NFKC, LaTeX translated (`\\alpha` -> α, `\\leq` -> ≤, `\\frac{1}{2}` -> 1/2), lowercase
+    (capital Greek kept), `_` and braces dropped but `^` kept, whitespace collapsed (and removed
+    around operators), surrounding punctuation stripped."""
+    t = _SCRIPT_RUN_RE.sub(lambda m: "^" + "".join(_SUPER[c] for c in m.group(0)), s)
+    t = _SUBSCRIPT_RUN_RE.sub(lambda m: "".join(_SUB[c] for c in m.group(0)), t)
+    t = unicodedata.normalize("NFKC", t)
+    t = _lower(_translate(t, "keep")[0])
+    t = t.replace("<=>", "⇌").replace("->", "→").replace(">=", "≥").replace("<=", "≤")
+    t = t.replace("!=", "≠")
+    t = re.sub(r"[_{}]", "", t)
+    t = _SYMBOL_WS_RE.sub(r"\1", _WS_RE.sub(" ", t).strip())
     start, end = 0, len(t)
     while start < end and unicodedata.category(t[start]).startswith("P"):
         start += 1
@@ -253,6 +351,8 @@ def _shape(q: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
         answer = _text(q.get("answer"))
         if not answer:
             return None, "answer: missing or empty"
+        if has_unsupported_notation(answer):
+            return None, "answer: unsupported notation"
         if not normalize_answer(answer):
             return None, "answer: empty after normalisation"
         accepted = q.get("accepted_answers")
@@ -261,6 +361,8 @@ def _shape(q: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
         if not isinstance(accepted, list) or not all(isinstance(a, str) for a in accepted):
             return None, "accepted_answers: need a list of strings"
         out["answer"] = answer
+        if any(has_unsupported_notation(a) for a in accepted):
+            return None, "answer: unsupported notation"
         out["accepted_answers"] = [a.strip() for a in accepted if normalize_answer(a)]
     out["explanation"] = _text(q.get("explanation"))
     out["source_quote"] = _text(q.get("source_quote"))
@@ -321,7 +423,7 @@ def validate(
     question's `source_quote` must be found in it (None = module has no PDFs, not checked).
     """
     index = _SourceIndex(source_text) if source_text is not None else None
-    taken = [normalize_text(s) for s in seen]
+    taken = [_dup_key(s) for s in seen]
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
 
@@ -334,8 +436,11 @@ def validate(
         if q is None:
             dropped.append({"index": i, "question": shown, "reason": reason})
             continue
-        norm = normalize_text(q["question"])
-        if any(SequenceMatcher(None, norm, t).ratio() >= DUPLICATE_RATIO for t in taken):
+        norm = _dup_key(q["question"])
+        if any(
+            norm[1] == t[1] and SequenceMatcher(None, norm[0], t[0]).ratio() >= DUPLICATE_RATIO
+            for t in taken
+        ):
             dropped.append(
                 {
                     "index": i,

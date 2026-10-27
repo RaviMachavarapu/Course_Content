@@ -296,8 +296,8 @@ def test_validate_does_not_mutate_input() -> None:
     ("raw", "expected"),
     [
         ("  Racemic   Mixture. ", "racemic mixture"),
-        ("\\(\\text{sp}^2\\)", "sp2"),  # edge punctuation, backslash too, is stripped
-        ("$sp^2$", "sp2"),
+        ("\\(\\text{sp}^2\\)", "sp^2"),  # edge punctuation, backslash too, is stripped
+        ("$sp^2$", "sp^2"),
         ("“Quoted”", "quoted"),
         ("\uff33\uff2e\uff11", "sn1"),  # NFKC full-width
         ("(Hello)", "hello"),
@@ -549,7 +549,8 @@ def test_latex_variants_are_near_duplicates() -> None:
 def test_grading_matches_latex_and_plain() -> None:
     q = blank(answer="\\(\\text{sp}^2\\) hybridised", accepted_answers=[])
     assert qg.fill_blank_correct(q, "sp^2 hybridised")
-    assert qg.fill_blank_correct(q, "SP2 Hybridised.")
+    assert qg.fill_blank_correct(q, "SP^2 Hybridised.")
+    assert not qg.fill_blank_correct(q, "sp2 hybridised")
     assert not qg.fill_blank_correct(q, "sp3 hybridised")
 
 
@@ -572,3 +573,121 @@ def test_module_source_text_warns_for_scans(
     module = _module_with_pdfs(db_session, media_storage, tmp_path, [scan])
     assert qg.module_source_text(module) is None
     assert any("no text layer" in w for w in warnings)
+
+
+# -- fix round 2: translation, not deletion ----------------------------------
+
+WRONG_PAIRS = [
+    (r"\(x^2\)", "x_2"),
+    (r"\(x^2\)", "x2"),
+    (r"\(10^{-3}\)", "10^3"),
+    (r"\(10^{-3}\)", "10-3"),
+    (r"\(10^{-3}\)", "103"),
+    (r"\(\Delta H\)", "H"),
+    (r"\(\alpha\)-helix", "helix"),
+    (r"\(\alpha\)-helix", "beta-helix"),
+    (r"\(\leq 5\)", "5"),
+    (r"\(\leq 5\)", ">= 5"),
+    (r"\(\pm 2\)", "2"),
+    (r"\(\frac{1}{2}\)", "12"),
+    (r"\(\sqrt{2}\)", "2"),
+    (r"\(2\times 10^{5}\)", "2 105"),
+    (r"\(\text{Fe}^{3+}\)", "Fe3"),
+    (r"\(\text{Fe}^{3+}\)", "Fe2+"),
+    (r"\(\text{Fe}^{3+}\)", "Fe^{2+}"),
+    (r"\(\Delta G\)", "\u03b4G"),
+]
+
+
+@pytest.mark.parametrize(("answer", "typed"), WRONG_PAIRS)
+def test_wrong_answers_are_graded_wrong(answer: str, typed: str) -> None:
+    assert not qg.fill_blank_correct({"answer": answer, "accepted_answers": []}, typed)
+
+
+@pytest.mark.parametrize(
+    ("answer", "typed"),
+    [
+        (r"\(\alpha\)", "\u03b1"),
+        (r"\(\alpha\)", r"\alpha"),
+        (r"\(\Delta H\)", "\u0394H"),
+        (r"\(\alpha\)-helix", "\u03b1-helix"),
+        (r"\(\leq 5\)", "\u2264 5"),
+        (r"\(\leq 5\)", "<= 5"),
+        (r"\(\pm 2\)", "\u00b1 2"),
+        (r"\(\frac{1}{2}\)", "1/2"),
+        (r"\(\sqrt{2}\)", "\u221a2"),
+        (r"\(10^{-3}\)", "10\u207b\u00b3"),
+        (r"\(\text{H}_2\text{O}\)", "H2O"),
+        (r"\(\text{H}_2\text{O}\)", "H\u2082O"),
+        (r"\(\text{S}_\text{N}2\)", "SN2"),
+        (r"\(\text{CO}_3^{2-}\)", "CO3^2-"),
+        (r"\(\text{CO}_3^{2-}\)", "CO\u2083\u00b2\u207b"),
+        (r"\(\text{sp}^2\) hybridised", "sp^2 hybridised"),
+        (r"\(\text{Fe}^{3+}\)", "Fe^3+"),
+        (r"\(25^\circ\text{C}\)", "25\u00b0C"),
+        (r"\(A \rightleftharpoons B\)", "A \u21cc B"),
+    ],
+)
+def test_right_answers_are_graded_right(answer: str, typed: str) -> None:
+    assert qg.fill_blank_correct({"answer": answer, "accepted_answers": []}, typed)
+
+
+def test_greek_answer_is_valid_not_dropped() -> None:
+    for a in (r"\(\alpha\)", r"\(\Delta\)", r"\(\pi\)"):
+        assert len(qg.validate([blank(answer=a)], seen=[], source_text=None)[0]) == 1
+
+
+def test_unknown_command_in_answer_is_unsupported() -> None:
+    kept, dropped = qg.validate([blank(answer=r"\(\hbar\omega\)")], seen=[], source_text=None)
+    assert kept == [] and dropped[0]["reason"] == "answer: unsupported notation"
+    kept, dropped = qg.validate([blank(accepted_answers=[r"\(\hbar\)"])], seen=[], source_text=None)
+    assert kept == [] and "unsupported notation" in dropped[0]["reason"]
+
+
+def test_mcq_options_with_commands_stay_distinct() -> None:
+    for opts in (
+        [r"\(\alpha\)-helix", r"\(\beta\)-helix", "sheet", "coil"],
+        [r"\(x^2\)", r"\(x_2\)", "x", "2x"],
+        [r"\(\leq 5\)", r"\(\geq 5\)", "5 only", "none"],
+        [r"\(\Delta G < 0\)", r"\(\Delta G > 0\)", r"\(\Delta H < 0\)", "none"],
+        [r"\(\hbar\)", r"\(\hslash\)", "a", "b"],
+    ):
+        kept, dropped = qg.validate([mcq(options=opts)], seen=[], source_text=None)
+        assert len(kept) == 1, (opts, dropped)
+
+
+def test_negated_latex_quote_rejected() -> None:
+    quote = r"\(\text{S}_\text{N}1\) reactions are \(\neg\) generally carried out in polar protic solvents"
+    kept, dropped = qg.validate([mcq(source_quote=quote)], seen=[], source_text=SOURCE)
+    assert kept == [] and "quote" in dropped[0]["reason"]
+
+
+def test_comparison_questions_are_not_duplicates() -> None:
+    seen = [r"Which statement is true when \(\Delta G < 0\) for a reaction at constant T?"]
+    kept, _ = qg.validate(
+        [
+            mcq(
+                question=r"Which statement is true when \(\Delta G > 0\) for a reaction at constant T?"
+            )
+        ],
+        seen=seen,
+        source_text=None,
+    )
+    assert len(kept) == 1
+    kept, _ = qg.validate(
+        [
+            mcq(
+                question=r"Which statement is true when \(\Delta G < 0\) for a reaction at constant T?"
+            )
+        ],
+        seen=seen,
+        source_text=None,
+    )
+    assert kept == []
+
+
+def test_superscript_vs_subscript_questions_are_not_duplicates() -> None:
+    kept, _ = qg.validate(
+        [mcq(question=r"What is \(x^2\) here?")], seen=[r"What is \(x_2\) here?"], source_text=None
+    )
+    assert len(kept) == 1
