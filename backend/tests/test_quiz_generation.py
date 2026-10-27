@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Course, Module, ModuleSourceFile
 from app.models.enums import ModuleSourceType
-from app.pipeline.fixture import FIXTURE_CHAT_ANSWER, FixtureProvider
+from app.pipeline.fixture import FIXTURE_CHAT_ANSWER, FIXTURE_SOURCE_TEXT, FixtureProvider
 from app.pipeline.provider import NotebookRef
 from app.services import quiz_generation as qg
 from app.storage.keys import source_key
@@ -104,6 +104,12 @@ def test_parse_repairs_unescaped_latex_backslashes() -> None:
 @pytest.mark.parametrize("answer", ["", "no json here", "[1, 2, 3]", "[{broken", "{}"])
 def test_parse_no_array_returns_empty(answer: str) -> None:
     assert qg.parse_questions(answer) == []
+
+
+def test_fixture_answer_validates_fully_with_fixture_source_text() -> None:
+    qs = qg.parse_questions(FIXTURE_CHAT_ANSWER)
+    kept, dropped = qg.validate(qs, seen=[], source_text=FIXTURE_SOURCE_TEXT)
+    assert len(kept) == 7 and dropped == []
 
 
 def test_fixture_provider_answer_parses_and_validates() -> None:
@@ -230,7 +236,7 @@ def test_duplicates_within_the_batch_keep_first() -> None:
 
 def test_quote_exact_substring_after_normalisation() -> None:
     src = "The  Quick brown-fox jumps, over the lazy dog."
-    q = mcq(source_quote="quick BROWN fox jumps")
+    q = mcq(source_quote="quick BROWN fox jumps over the lazy dog")
     kept, _ = qg.validate([q], seen=[], source_text=src)
     assert len(kept) == 1
 
@@ -270,10 +276,8 @@ def test_quote_not_checked_without_pdf_sources() -> None:
 def test_real_chat_answer_against_real_source() -> None:
     qs = qg.parse_questions(ANSWER)
     kept, dropped = qg.validate(qs, seen=[], source_text=SOURCE)
-    # the live test found 7/10 verbatim + 3/10 with words split by extraction
-    assert len(kept) + len(dropped) == 10
-    assert len(kept) >= 7
-    assert all("quote" in d["reason"] for d in dropped)
+    # 7/10 verbatim; 3/10 only after LaTeX stripping / spaceless matching
+    assert (len(kept), dropped) == (10, [])
     kept_none, dropped_none = qg.validate(qs, seen=[], source_text=None)
     assert len(kept_none) == 10 and dropped_none == []
 
@@ -292,8 +296,8 @@ def test_validate_does_not_mutate_input() -> None:
     ("raw", "expected"),
     [
         ("  Racemic   Mixture. ", "racemic mixture"),
-        ("\\(\\text{sp}^2\\)", "text{sp}^2"),  # edge punctuation, backslash too, is stripped
-        ("$sp^2$", "sp^2"),
+        ("\\(\\text{sp}^2\\)", "sp2"),  # edge punctuation, backslash too, is stripped
+        ("$sp^2$", "sp2"),
         ("“Quoted”", "quoted"),
         ("\uff33\uff2e\uff11", "sn1"),  # NFKC full-width
         ("(Hello)", "hello"),
@@ -309,7 +313,7 @@ def test_normalize_answer(raw: str, expected: str) -> None:
 def test_is_correct_blank_matches_answer_or_accepted() -> None:
     q = blank(answer="Oxygen", accepted_answers=["O", "O2"])
     assert qg.fill_blank_correct(q, " oxygen. ")
-    assert qg.fill_blank_correct(q, "$O_2$".replace("_", ""))
+    assert qg.fill_blank_correct(q, "$O_2$")
     assert qg.fill_blank_correct(q, "o")
     assert not qg.fill_blank_correct(q, "oxygen gas")
     assert not qg.fill_blank_correct(q, "")
@@ -403,3 +407,168 @@ def test_module_source_text_skips_unreadable_file(
 # keep json import used (answers are JSON text)
 def test_answer_fixture_is_json_text() -> None:
     assert isinstance(json.loads(ANSWER), list)
+
+
+# -- fix round 1 -------------------------------------------------------------
+
+
+def _one(question_fields: str) -> dict[str, Any]:
+    qs = qg.parse_questions(f"[{{{question_fields}}}]")
+    assert len(qs) == 1
+    return qs[0]
+
+
+def test_parse_single_backslash_latex_that_forms_valid_escapes() -> None:
+    raw = (
+        r'[{"type":"fill_blank","question":"Rate = ____","answer":"$\frac{1}{2}k$",'
+        r'"accepted_answers":["$\beta$","$\nu$","$\text{S}_\text{N}2$","$\neq$"]}]'
+    ).replace("\\\\", "\\")
+    assert "\\\\" not in raw
+    q = qg.parse_questions(raw)[0]
+    assert q["answer"] == "$\\frac{1}{2}k$"
+    assert q["accepted_answers"] == ["$\\beta$", "$\\nu$", "$\\text{S}_\\text{N}2$", "$\\neq$"]
+
+
+def test_parse_properly_escaped_latex_is_untouched() -> None:
+    raw = (
+        r'[{"type":"mcq","question":"\\(\\text{S}_\\text{N}2\\) and \\nu and \\beta","options":[]}]'
+    )
+    assert (
+        qg.parse_questions(raw)[0]["question"] == "\\(\\text{S}_\\text{N}2\\) and \\nu and \\beta"
+    )
+
+
+def test_parse_ordinary_newline_kept() -> None:
+    q = qg.parse_questions('[{"type":"mcq","question":"a\\n2) B?"}]')[0]
+    assert q["question"] == "a\n2) B?"
+
+
+def test_parse_drops_questions_with_control_characters() -> None:
+    assert qg.parse_questions('[{"type":"mcq","question":"a\\u0001b"}]') == []
+
+
+def test_parse_objects_fallback_citations_and_trailing_comma() -> None:
+    raw = (
+        '[{"type":"mcq","question":"Q1?"} [1], {"type":"mcq","question":"Q2?"} [2,3], '
+        '{"type":"mcq","question":"Q3?"},]'
+    )
+    assert [q["question"] for q in qg.parse_questions(raw)] == ["Q1?", "Q2?", "Q3?"]
+
+
+def test_parse_objects_fallback_with_single_backslashes() -> None:
+    raw = r'[{"type":"mcq","question":"\(x\)?"} [1], {"type":"mcq","question":"b?"}]'.replace(
+        "\\\\", "\\"
+    )
+    assert [q["question"] for q in qg.parse_questions(raw)] == ["\\(x\\)?", "b?"]
+
+
+def test_prompt_tells_model_to_escape_backslashes() -> None:
+    assert "doubled" in qg.build_prompt(10, []) and "\\\\(" in qg.build_prompt(10, [])
+
+
+def test_underscore_runs_rewritten_to_four() -> None:
+    kept, dropped = qg.validate(
+        [blank(question="A ___ b"), blank(question="Other ________ c")], seen=[], source_text=None
+    )
+    assert [k["question"] for k in kept] == ["A ____ b", "Other ____ c"] and dropped == []
+    kept, dropped = qg.validate([blank(question="A ___ and ____")], seen=[], source_text=None)
+    assert kept == [] and "blank" in dropped[0]["reason"]
+
+
+def test_blank_answer_must_survive_normalisation() -> None:
+    kept, dropped = qg.validate([blank(answer="\\(\\)")], seen=[], source_text=None)
+    assert kept == [] and "answer" in dropped[0]["reason"]
+    kept, _ = qg.validate([blank(accepted_answers=["$$", "ok"])], seen=[], source_text=None)
+    assert kept[0]["accepted_answers"] == ["ok"]
+
+
+def test_quote_latex_stripped_and_spaceless_fallback() -> None:
+    src = "Actually the carbocation formed in the slow step being sp2 hybridised is planar. SN1 reactions are generally carried out in polar protic solvents."
+    split = "S N 1 reactions are generally carried out in polar protic solvents. sp 2 stuff"
+    for quote in (
+        r"Actually the carbocation formed in the slow step being \(\text{sp}^2\) hybridised is planar",
+        r"\(\text{S}_\text{N}1\) reactions are generally carried out in polar protic solvents",
+    ):
+        assert len(qg.validate([mcq(source_quote=quote)], seen=[], source_text=src)[0]) == 1
+    quote = "SN1 reactions are generally carried out in polar protic solvents"
+    assert len(qg.validate([mcq(source_quote=quote)], seen=[], source_text=split)[0]) == 1
+
+
+# ruff: noqa: E501
+FABRICATED = [
+    "Thus, in the transition state, carbon is simultaneously bonded to six atoms.",
+    "Thus, in the transition state, carbon is simultaneously bonded to four atoms.",
+    "SN1 reactions are generally carried out in polar aprotic solvents.",
+    "SN2 reactions are generally carried out in polar protic solvents (like water, alcohol, acetic acid, etc.).",
+    "the carbocation formed in the slow step being sp3 hybridised is planar",
+    "no effect on reactivity of haloarenes is observed by the presence of electron withdrawing group at para-position.",
+    "C-Cl bond length in haloarene is 177 pm",
+    "chlorobenzene is converted to phenol at 523 K and 300 atmospheres",
+    r"\(\text{S}_\text{N}2\) reactions are generally carried out in polar protic solvents",
+]
+
+
+@pytest.mark.parametrize("quote", FABRICATED)
+def test_fabricated_quotes_rejected_against_real_source(quote: str) -> None:
+    kept, dropped = qg.validate([mcq(source_quote=quote)], seen=[], source_text=SOURCE)
+    assert kept == [] and "quote" in dropped[0]["reason"]
+
+
+@pytest.mark.parametrize("quote", ["", "the", "carbon", "carbon is bonded", "a b c d"])
+def test_short_quotes_dropped(quote: str) -> None:
+    kept, dropped = qg.validate(
+        [mcq(source_quote=quote)], seen=[], source_text="carbon is bonded a b c d"
+    )
+    assert kept == [] and "quote" in dropped[0]["reason"]
+    if quote:
+        assert "too short" in dropped[0]["reason"]
+
+
+def test_short_but_long_enough_in_characters_is_accepted() -> None:
+    src = "Racemisation happens readily."
+    assert (
+        len(
+            qg.validate(
+                [mcq(source_quote="Racemisation happens readily")], seen=[], source_text=src
+            )[0]
+        )
+        == 1
+    )
+
+
+def test_latex_variants_are_near_duplicates() -> None:
+    seen = ["Which solvent is used for SN1 reactions?"]
+    kept, dropped = qg.validate(
+        [mcq(question="Which solvent is used for \\(\\text{S}_\\text{N}1\\) reactions?")],
+        seen=seen,
+        source_text=None,
+    )
+    assert kept == [] and "duplicate" in dropped[0]["reason"]
+
+
+def test_grading_matches_latex_and_plain() -> None:
+    q = blank(answer="\\(\\text{sp}^2\\) hybridised", accepted_answers=[])
+    assert qg.fill_blank_correct(q, "sp^2 hybridised")
+    assert qg.fill_blank_correct(q, "SP2 Hybridised.")
+    assert not qg.fill_blank_correct(q, "sp3 hybridised")
+
+
+def test_module_source_text_raises_when_every_pdf_unreadable(
+    db_session: Session, media_storage: Storage, tmp_path: Path
+) -> None:
+    module = _module_with_pdfs(db_session, media_storage, tmp_path, [b"nope", b"also nope"])
+    with pytest.raises(qg.SourceTextUnavailable):
+        qg.module_source_text(module)
+    with pytest.raises(qg.SourceTextUnavailable):  # failures are not cached as "no PDFs"
+        qg.module_source_text(module)
+
+
+def test_module_source_text_warns_for_scans(
+    db_session: Session, media_storage: Storage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(qg.log, "warning", lambda msg, *a, **k: warnings.append(msg % a))
+    scan = _make_pdf(tmp_path / "a.pdf", [(0, 0)]).read_bytes()
+    module = _module_with_pdfs(db_session, media_storage, tmp_path, [scan])
+    assert qg.module_source_text(module) is None
+    assert any("no text layer" in w for w in warnings)

@@ -29,9 +29,23 @@ _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 DEFAULT_FIXTURE_ID = "sample-neural-nets"
 
 
+_FIXTURE_FACTS = [
+    "Paris is the capital and largest city of France.",
+    "Mars is often called the Red Planet because of its iron oxide dust.",
+    "A hexagon is a polygon that has exactly six sides.",
+    "Plants absorb carbon dioxide from the air during photosynthesis.",
+    "Water is a molecule made of two hydrogen atoms and one oxygen atom.",
+    "The chemical symbol for the element gold is Au.",
+    "A triangle is a polygon with three sides and three angles.",
+]
+#: stands in for a module's PDF text: every fixture source_quote is a sentence of it
+FIXTURE_SOURCE_TEXT = "Fixture course notes. " + " ".join(_FIXTURE_FACTS) + " End of notes."
+
+
 def _fixture_chat_answer() -> str:
     """A canned chat answer: prose around a JSON array of 4 MCQ + 3 fill-blank questions
-    (7 distinct questions, no source quotes, so it validates with or without PDF text)."""
+    (7 distinct questions). Each `source_quote` is a sentence of `FIXTURE_SOURCE_TEXT`, so it
+    validates fully with that text and with `source_text=None`."""
     mcq = [
         ("What is the capital of France?", ["Paris", "Lyon", "Nice", "Lille"], 0),
         ("Which planet is known as the Red Planet?", ["Venus", "Mars", "Jupiter", "Saturn"], 1),
@@ -54,9 +68,9 @@ def _fixture_chat_answer() -> str:
             "options": opts,
             "correct_index": ci,
             "explanation": f"The answer is {opts[ci]}.",
-            "source_quote": "",
+            "source_quote": _FIXTURE_FACTS[i],
         }
-        for q, opts, ci in mcq
+        for i, (q, opts, ci) in enumerate(mcq)
     ]
     items += [
         {
@@ -65,9 +79,9 @@ def _fixture_chat_answer() -> str:
             "answer": a,
             "accepted_answers": acc,
             "explanation": f"The answer is {a}.",
-            "source_quote": "",
+            "source_quote": _FIXTURE_FACTS[len(mcq) + j],
         }
-        for q, a, acc in blanks
+        for j, (q, a, acc) in enumerate(blanks)
     ]
     return "Here are your questions:\n" + json.dumps(items, indent=2)
 
