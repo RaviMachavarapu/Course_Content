@@ -130,3 +130,20 @@ describe("SlidesViewer", () => {
     expect(screen.getByTestId("slide-image")).toHaveAttribute("src", "/api/media/s1.png");
   });
 });
+
+describe("SlidesViewer handout PDF link", () => {
+  it("links the handout PDF when present, leaving the pptx button", async () => {
+    const a = artifact();
+    a.media.push({ kind: "slides_handout_pdf", url: "/api/media/h.pdf", page_index: null });
+    installFetch(a);
+    renderViewer();
+    expect(await screen.findByTestId("btn-sd5")).toHaveAttribute("href", "/api/media/h.pdf");
+    expect(screen.getByTestId("btn-sd4")).toHaveAttribute("href", "/api/media/deck.pptx");
+  });
+  it("hides the link when absent", async () => {
+    installFetch(artifact());
+    renderViewer();
+    await screen.findByTestId("slide-image");
+    expect(screen.queryByTestId("btn-sd5")).toBeNull();
+  });
+});

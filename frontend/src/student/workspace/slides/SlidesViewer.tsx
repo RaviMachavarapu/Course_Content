@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
@@ -139,6 +140,12 @@ export function SlidesViewer({
                 Download .pptx
               </a>
             )}
+            <PdfDownloadLink
+              media={data.media}
+              kind="slides_handout_pdf"
+              testid="btn-sd5"
+              label="Handout PDF"
+            />
           </div>
         </div>
       </div>

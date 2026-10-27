@@ -133,3 +133,23 @@ describe("InfographicViewer", () => {
     });
   });
 });
+
+describe("InfographicViewer PDF link", () => {
+  it("links the infographic PDF when present", async () => {
+    installFetch({
+      ...ARTIFACT,
+      media: [
+        ...ARTIFACT.media,
+        { kind: "infographic_pdf", url: "/api/media/i.pdf", page_index: null },
+      ],
+    });
+    renderViewer();
+    expect(await screen.findByTestId("btn-if6")).toHaveAttribute("href", "/api/media/i.pdf");
+  });
+  it("hides the link when absent", async () => {
+    installFetch();
+    renderViewer();
+    await screen.findByTestId("btn-if5");
+    expect(screen.queryByTestId("btn-if6")).toBeNull();
+  });
+});

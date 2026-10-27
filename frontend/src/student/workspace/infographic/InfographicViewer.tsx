@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
@@ -118,6 +119,7 @@ export function InfographicViewer({
             Download .png
           </a>
         )}
+        <PdfDownloadLink media={data.media} kind="infographic_pdf" testid="btn-if6" />
         <Button
           data-testid="btn-if5"
           loading={progress.isPending}

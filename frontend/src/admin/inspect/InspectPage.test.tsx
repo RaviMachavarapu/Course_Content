@@ -99,3 +99,17 @@ describe("InspectPage", () => {
     await screen.findByText("1");
   });
 });
+
+describe("InspectPage PDF link", () => {
+  it("links the type's PDF when the version has it", async () => {
+    installFetch(() => BODY);
+    renderPage();
+    expect(await screen.findByTestId("btn-ai3")).toHaveAttribute("href", "/api/media/r.pdf");
+  });
+  it("hides the link when the version has no PDF", async () => {
+    installFetch(() => ({ ...BODY, viewing: { ...V2, media: [] } }));
+    renderPage();
+    await screen.findByRole("heading", { name: "The Report" });
+    expect(screen.queryByTestId("btn-ai3")).toBeNull();
+  });
+});

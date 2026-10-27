@@ -49,6 +49,13 @@ function artifact(type: string, over: Record<string, unknown> = {}) {
   };
 }
 
+const PDF_BY_TYPE: Record<string, [string, string]> = {
+  flashcards: ["flashcards_pdf", "btn-sr16"],
+  quiz: ["quiz_pdf", "btn-sr17"],
+  infographic: ["infographic_pdf", "btn-sr18"],
+  slide_deck: ["slides_handout_pdf", "btn-sr19"],
+};
+
 function stagingBody(over: Record<string, unknown>[] = []) {
   const map = new Map(over.map((a) => [a.type, a]));
   return {
@@ -111,6 +118,32 @@ describe("StagingPage", () => {
     expect(screen.getByTestId("btn-sr9")).toHaveAttribute("href", "/api/media/x.mp3");
     expect(screen.getByTestId("btn-sr10")).toHaveAttribute("href", "/api/media/x.pptx");
     expect(screen.getByTestId("btn-sr11")).toHaveAttribute("href", "/api/media/x.png");
+  });
+
+  it("offers each type's Quarto PDF when present and hides it when absent", async () => {
+    const withPdf = Object.entries(PDF_BY_TYPE).map(([type, [kind]]) => {
+      const a = artifact(type);
+      a.current_version.media = [
+        ...a.current_version.media,
+        { kind, url: `/api/media/${kind}.pdf`, size_bytes: 9, page_index: null },
+      ];
+      return a;
+    });
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody(withPdf) }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    for (const [kind, testid] of Object.values(PDF_BY_TYPE)) {
+      expect(screen.getByTestId(testid)).toHaveAttribute("href", `/api/media/${kind}.pdf`);
+    }
+  });
+
+  it("shows no Quarto PDF buttons when none exist", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    for (const [, testid] of Object.values(PDF_BY_TYPE)) {
+      expect(screen.queryByTestId(testid)).toBeNull();
+    }
   });
 
   it("shows the module's link and PDFs under the title", async () => {

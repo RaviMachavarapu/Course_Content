@@ -172,3 +172,22 @@ describe("QuizViewer", () => {
     expect(screen.getByTestId("btn-qz1-1")).toHaveAttribute("aria-pressed", "false");
   });
 });
+
+describe("QuizViewer PDF link", () => {
+  it("links the quiz PDF when present", async () => {
+    const orig = ARTIFACT.media;
+    onTestFinished(() => {
+      ARTIFACT.media = orig;
+    });
+    ARTIFACT.media = [{ kind: "quiz_pdf", url: "/api/media/q.pdf", page_index: null }] as never;
+    installFetch();
+    renderViewer();
+    expect(await screen.findByTestId("btn-qz7")).toHaveAttribute("href", "/api/media/q.pdf");
+  });
+  it("hides the link when absent", async () => {
+    installFetch();
+    renderViewer();
+    await screen.findByText("Question 1 of 2");
+    expect(screen.queryByTestId("btn-qz7")).toBeNull();
+  });
+});

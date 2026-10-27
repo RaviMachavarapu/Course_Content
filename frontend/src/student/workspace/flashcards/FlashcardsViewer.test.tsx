@@ -139,3 +139,18 @@ describe("FlashcardsViewer", () => {
     });
   });
 });
+
+describe("FlashcardsViewer PDF link", () => {
+  const pdf = { kind: "flashcards_pdf", url: "/api/media/fc.pdf", page_index: null };
+  it("links the flashcards PDF when present", async () => {
+    installFetch({ ...artifact(), media: [pdf] });
+    renderViewer();
+    expect(await screen.findByTestId("btn-fc7")).toHaveAttribute("href", "/api/media/fc.pdf");
+  });
+  it("hides the link when absent", async () => {
+    installFetch(artifact());
+    renderViewer();
+    await screen.findByTestId("btn-fc1");
+    expect(screen.queryByTestId("btn-fc7")).toBeNull();
+  });
+});

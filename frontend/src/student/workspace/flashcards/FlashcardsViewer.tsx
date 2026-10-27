@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, ErrorState, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { cn } from "@/lib/cn";
 import { MathText } from "@/components/math/MathText";
 import type { FlashcardRating } from "../api";
@@ -93,6 +94,9 @@ export function FlashcardsViewer({
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
+      <div className="flex justify-end">
+        <PdfDownloadLink media={data.media} kind="flashcards_pdf" testid="btn-fc7" />
+      </div>
       <button
         type="button"
         data-testid="btn-fc1"

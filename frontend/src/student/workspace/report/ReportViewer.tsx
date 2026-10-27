@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { MathText } from "@/components/math/MathText";
 import { MathHtml } from "@/components/math/MathHtml";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
@@ -39,7 +40,6 @@ export function ReportViewer({
 
   const content = (data.content_json ?? {}) as ReportContent;
   const sections = content.sections ?? [];
-  const pdfUrl = data.media.find((m) => m.kind === "report_pdf")?.url;
 
   return (
     <div className="relative mx-auto max-w-3xl pb-24">
@@ -102,17 +102,13 @@ export function ReportViewer({
         </Button>
       </div>
 
-      {pdfUrl && (
-        <a
-          href={pdfUrl}
-          download
-          data-testid="btn-rp3"
-          className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-tertiary px-5 py-3 font-label-md text-label-md text-on-tertiary shadow-level-2"
-        >
-          <Icon name="download" className="text-[18px]" />
-          Download .pdf
-        </a>
-      )}
+      <PdfDownloadLink
+        media={data.media}
+        kind="report_pdf"
+        testid="btn-rp3"
+        label="Download .pdf"
+        className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-tertiary px-5 py-3 font-label-md text-label-md text-on-tertiary shadow-level-2"
+      />
     </div>
   );
 }
