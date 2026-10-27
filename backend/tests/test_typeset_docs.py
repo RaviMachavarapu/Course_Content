@@ -29,6 +29,7 @@ from app.pipeline.parsers.notebooklm import parse_notebooklm
 from app.render.typeset_docs import (
     PDF_KINDS,
     StoredImage,
+    _split_math,
     build_document,
     build_documents,
     build_flashcards,
@@ -38,6 +39,7 @@ from app.render.typeset_docs import (
     build_slide_deck,
     course_media_loader,
     html_to_markdown,
+    plain_title,
     text_to_markdown,
 )
 from app.storage.service import Storage
@@ -86,6 +88,43 @@ def _png(color: str = "red", size: tuple[int, int] = (4, 3)) -> bytes:
 )
 def test_text_to_markdown(text: str, expected: str) -> None:
     assert text_to_markdown(text) == expected
+
+
+# Same inputs as PARITY in frontend/src/components/math/MathText.test.tsx.
+_PARITY: list[tuple[str, list[tuple[bool, str, bool]]]] = [
+    (
+        "rate \\(S_N2\\) here",
+        [(False, "rate ", False), (True, "S_N2", False), (False, " here", False)],
+    ),
+    ("\\[x^2\\]", [(True, "x^2", True)]),
+    (
+        "$a$ and \\(b\\) and \\[c\\] and $$d$$",
+        [
+            (True, "a", False),
+            (False, " and ", False),
+            (True, "b", False),
+            (False, " and ", False),
+            (True, "c", True),
+            (False, " and ", False),
+            (True, "d", True),
+        ],
+    ),
+    ("\\\\(x\\)", [(False, "\\\\(x\\)", False)]),
+    ("open \\(x never closed", [(False, "open \\(x never closed", False)]),
+    ("\\(\\)", [(False, "\\(\\)", False)]),
+    ("\\(a\\\\ b\\)", [(True, "a\\\\ b", False)]),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), _PARITY)
+def test_split_math_parity(text: str, expected: list[tuple[bool, str, bool]]) -> None:
+    assert _split_math(text) == expected
+
+
+def test_bracket_delimiters_become_dollars_in_the_pdf_markdown() -> None:
+    assert text_to_markdown("rate \\(S_N2\\) here") == "rate $S_N2$ here"
+    assert text_to_markdown("\\[x^2\\]") == "$$x^2$$"
+    assert plain_title("\\(S_N2\\) rates") == "S_N2 rates"
 
 
 def test_text_control_characters() -> None:

@@ -182,6 +182,18 @@ def _split_math(text: str) -> list[tuple[bool, str, bool]]:
             buf.append("$")
             i += 2
             continue
+        if c == "\\" and text[i + 1 : i + 2] == "\\" and text[i + 2 : i + 3] in ("(", "["):
+            buf.append("\\\\")  # an escaped backslash: the bracket after it is text
+            i += 2
+            continue
+        if c == "\\" and text[i + 1 : i + 2] in ("(", "["):
+            display = text[i + 1] == "["
+            end = _bracket_end(text, i + 2, "]" if display else ")")
+            if end > i + 2:
+                flush()
+                out.append((True, text[i + 2 : end], display))
+                i = end + 2
+                continue
         if c == "$":
             if i + 1 < n and text[i + 1] == "$":
                 end = _display_end(text, i + 2)
@@ -201,6 +213,17 @@ def _split_math(text: str) -> list[tuple[bool, str, bool]]:
         i += 1
     flush()
     return out
+
+
+def _bracket_end(s: str, start: int, close: str) -> int:
+    j = start
+    while j < len(s) - 1:
+        if s[j] == "\\":
+            if s[j + 1] == close:
+                return j
+            j += 1
+        j += 1
+    return -1
 
 
 def _display_end(s: str, start: int) -> int:

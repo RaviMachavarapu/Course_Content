@@ -8,7 +8,8 @@ const isDigit = (c: string | undefined) => c !== undefined && /[0-9]/.test(c);
 /**
  * Split plain text into text and formula segments. `$$…$$` is display math,
  * `$…$` inline (opening `$` followed by a non-space, closing `$` preceded by a
- * non-space and not followed by a digit); `\$` is a literal dollar.
+ * non-space and not followed by a digit); `\$` is a literal dollar;
+ * `\(…\)` is inline and `\[…\]` display math (NotebookLM's style).
  */
 export function splitMath(text: string): Segment[] {
   // old rows may lack the field: treat anything that isn't a string as empty
@@ -26,6 +27,26 @@ export function splitMath(text: string): Segment[] {
       buf += "$";
       i += 2;
       continue;
+    }
+    if (c === "\\" && input[i + 1] === "\\" && (input[i + 2] === "(" || input[i + 2] === "[")) {
+      buf += "\\\\"; // an escaped backslash: the bracket after it is plain text
+      i += 2;
+      continue;
+    }
+    if (c === "\\" && (input[i + 1] === "(" || input[i + 1] === "[")) {
+      const display = input[i + 1] === "[";
+      const end = findBracketEnd(input, i + 2, display ? "]" : ")");
+      if (end > i + 2) {
+        flush();
+        out.push({
+          kind: "math",
+          latex: input.slice(i + 2, end),
+          display,
+          raw: input.slice(i, end + 2),
+        });
+        i = end + 2;
+        continue;
+      }
     }
     if (c === "$") {
       if (input[i + 1] === "$") {
@@ -61,6 +82,16 @@ export function splitMath(text: string): Segment[] {
   }
   flush();
   return out;
+}
+
+function findBracketEnd(s: string, from: number, close: string): number {
+  for (let j = from; j < s.length - 1; j++) {
+    if (s[j] === "\\") {
+      if (s[j + 1] === close) return j;
+      j += 1;
+    }
+  }
+  return -1;
 }
 
 function findDisplayEnd(s: string, from: number): number {

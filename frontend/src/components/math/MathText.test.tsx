@@ -51,6 +51,42 @@ describe("MathText", () => {
   });
 });
 
+// Parity table: backend/tests/test_typeset_docs.py::test_split_math_parity uses the same inputs.
+const PARITY: [string, [boolean, string, boolean][]][] = [
+  ["rate \\(S_N2\\) here", [[false, "rate ", false], [true, "S_N2", false], [false, " here", false]]],
+  ["\\[x^2\\]", [[true, "x^2", true]]],
+  ["$a$ and \\(b\\) and \\[c\\] and $$d$$", [
+    [true, "a", false], [false, " and ", false], [true, "b", false], [false, " and ", false],
+    [true, "c", true], [false, " and ", false], [true, "d", true],
+  ]],
+  ["\\\\(x\\)", [[false, "\\\\(x\\)", false]]],
+  ["open \\(x never closed", [[false, "open \\(x never closed", false]]],
+  ["\\(\\)", [[false, "\\(\\)", false]]],
+  ["\\(a\\\\ b\\)", [[true, "a\\\\ b", false]]],
+];
+
+describe("splitMath \\( \\) and \\[ \\]", () => {
+  it.each(PARITY)("%j", (input, expected) => {
+    const got = splitMath(input).map((s) =>
+      s.kind === "math" ? [true, s.latex, s.display] : [false, s.text, false],
+    );
+    expect(got).toEqual(expected);
+  });
+  it("keeps the original delimiters in raw", () => {
+    const segs = splitMath("\\(x\\) \\[y\\]");
+    expect(segs.filter((s) => s.kind === "math").map((s) => (s as { raw: string }).raw)).toEqual([
+      "\\(x\\)",
+      "\\[y\\]",
+    ]);
+  });
+  it("renders them as formulas", () => {
+    const { container } = render(<MathText text={"a \\(S_N2\\) b \\[x^2\\]"} />);
+    expect(container.querySelectorAll(".katex").length).toBe(2);
+    expect(container.querySelector(".katex-display")).not.toBeNull();
+    expect(container.textContent).not.toContain("\\(");
+  });
+});
+
 describe("renderMathInHtml", () => {
   it("draws math elements and leaves code alone", () => {
     const out = renderMathInHtml(
