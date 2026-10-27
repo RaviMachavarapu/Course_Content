@@ -107,7 +107,9 @@ def build_prompt(n: int, avoid: list[str]) -> str:
         f"{n_blank} fill-in-the-blank (one blank written as ____; the answer is a single word, a "
         "short phrase or a plain number taken from the source, never a formula, equation, "
         "chemical formula or symbol). Any question whose answer is a formula, equation, "
-        "chemical formula or symbol must be multiple-choice instead.",
+        "chemical formula or symbol must be multiple-choice instead. In accepted_answers list the "
+        "common acceptable variants of a fill-in-the-blank answer (plural or singular, alternative "
+        "spellings, hyphenated or spaced forms, a number with or without a space before its unit).",
         "Write every formula, chemical formula and symbol in LaTeX between \\( and \\), "
         "copied exactly from the source. Because the answer is JSON, write every backslash "
         'inside a JSON string doubled, e.g. "\\\\(\\\\text{sp}^2\\\\)" for \\(\\text{sp}^2\\).',
@@ -299,32 +301,61 @@ def normalize_formula(s: str) -> str:
     return t[start:end].strip()
 
 
-_TRAILING_PUNCT = ".,;:!?\"'‘’“”«»"
-_LEADING_QUOTES = "\"'‘’“”«»"
+_CHAR_MAP = str.maketrans(
+    {
+        "\u2212": "-",  # minus sign
+        "\u2013": "-",  # en dash
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u2032": "'",  # prime
+        "\u201c": '"',
+        "\u201d": '"',
+    }
+)
+_QUOTES = "\"'«»"
+_TRAILING_PUNCT = ".,;:!?" + _QUOTES
 _LEADING_DOT_RE = re.compile(r"(?<![\w.])\.(?=\d)")
 _LETTER_DIGIT_RE = re.compile(r"[^\W\d_]\d")
 _FORMULA_CHARS = frozenset("$\\^_{}√/")
-_PLAIN_PUNCT = frozenset(" -+.,%°'’")
+_PLAIN_PUNCT = frozenset(" -+.,%°'")
+
+
+def _canonical(s: str) -> str:
+    """NFKC, then curly quotes/apostrophes and primes -> straight, minus and en dash -> `-`."""
+    return unicodedata.normalize("NFKC", s).translate(_CHAR_MAP)
+
+
+def _strip_trailing(t: str) -> str:
+    """Strip trailing sentence punctuation and quotes, but keep a run of `'` right after a
+    digit (a prime: 3', 3'')."""
+    while t and t[-1] in _TRAILING_PUNCT + " ":
+        if t[-1] == "'" and t.rstrip("'")[-1:].isdigit():
+            break
+        t = t[:-1]
+    return t
 
 
 def normalize_answer(s: str) -> str:
-    """Typed fill-blank answer, case preserved (spec 4.4): NFKC, minus sign -> `-`, whitespace
-    collapsed and trimmed, surrounding quotes and trailing sentence punctuation (`. , ; : ! ?`)
-    stripped (signs, `%` and `°` kept), a leading `.` before a digit -> `0.`."""
-    t = unicodedata.normalize("NFKC", s).replace("−", "-")
-    t = _WS_RE.sub(" ", t).strip()
-    t = t.lstrip(_LEADING_QUOTES).rstrip(_TRAILING_PUNCT + " ").strip()
+    """Typed fill-blank answer, case preserved (spec 4.4): NFKC, curly quotes -> straight,
+    minus sign and en dash -> `-`, whitespace collapsed and trimmed, surrounding quotes and
+    trailing sentence punctuation (`. , ; : ! ?`) stripped (signs, `%`, `°` and a prime
+    right after a digit kept), a leading `.` before a digit -> `0.`."""
+    t = _WS_RE.sub(" ", _canonical(s)).strip()
+    while len(t) >= 2 and t[0] in _QUOTES and t[0] == t[-1]:
+        t = t[1:-1].strip()
+    t = _strip_trailing(t.lstrip(_QUOTES + " ")).strip()
     return _LEADING_DOT_RE.sub("0.", t)
 
 
 def is_formula_answer(s: str) -> bool:
-    """True if `s` is not words or a plain number: formula notation (`$ \\ ^ _ { } √ /`),
-    a chemical-formula-like token (a letter right before a digit: H2O, CO2, Fe3), or any
-    character outside letters, digits, spaces and `- + . , % ° '`."""
+    """True if `s` (NFKC-normalised) is not words or a plain number: formula notation
+    (`$ \\ ^ _ { } √ /`), a chemical-formula-like token (a letter right before a digit: H2O,
+    CO2, Fe3), or any character outside letters, digits, spaces and `- + . , % ° '`."""
+    s = _canonical(s)
     if _FORMULA_CHARS & set(s) or _LETTER_DIGIT_RE.search(s):
         return True
     for c in s:
-        if c in _PLAIN_PUNCT:
+        if c in _PLAIN_PUNCT or c.isspace():
             continue
         cat = unicodedata.category(c)
         if not (cat[0] in "LM" or cat == "Nd"):
@@ -332,15 +363,39 @@ def is_formula_answer(s: str) -> bool:
     return False
 
 
-def _case_sensitive(norm: str) -> bool:
+def _inner_upper(t: str) -> bool:
     """An uppercase letter that does not start a word (CO, NaCl, pH, mRNA)."""
-    return any(c.isupper() and i > 0 and norm[i - 1].isalpha() for i, c in enumerate(norm))
+    return any(c.isupper() and i > 0 and t[i - 1].isalpha() for i, c in enumerate(t))
+
+
+def _has_greek(t: str) -> bool:
+    return any(c.isalpha() and unicodedata.name(c, "").startswith("GREEK") for c in t)
+
+
+def _symbol_shape(t: str) -> bool:
+    """A single 1-2 letter token starting with a capital, signs allowed (C, Co, Na, Na+)."""
+    letters = [c for c in t if c.isalpha()]
+    return (
+        1 <= len(letters) <= 2 and letters[0].isupper() and all(c.isalpha() or c in "+-" for c in t)
+    )
+
+
+def _case_sensitive(want: str, got: str) -> bool:
+    """Spec 4.4: case matters when the stored or typed answer has a non-word-initial capital,
+    the stored answer has a Greek letter, or either side is element-symbol shaped (the typed
+    side too, so `C` never matches a stored `c`)."""
+    return (
+        _inner_upper(want)
+        or _inner_upper(got)
+        or _has_greek(want)
+        or _symbol_shape(want)
+        or _symbol_shape(got)
+    )
 
 
 def fill_blank_correct(question: dict[str, Any], response: str) -> bool:
     """Grade a typed fill-blank response: exact match after `normalize_answer` against the
-    answer or any accepted answer; case-insensitive unless that answer holds an uppercase
-    letter that is not the first letter of a word."""
+    answer or any accepted answer; case-insensitive unless `_case_sensitive` (spec 4.4)."""
     got = normalize_answer(response)
     if not got:
         return False
@@ -350,7 +405,7 @@ def fill_blank_correct(question: dict[str, Any], response: str) -> bool:
         want = normalize_answer(a)
         if not want:
             continue
-        if (want == got) if _case_sensitive(want) else (want.casefold() == got.casefold()):
+        if want == got or (not _case_sensitive(want, got) and want.casefold() == got.casefold()):
             return True
     return False
 

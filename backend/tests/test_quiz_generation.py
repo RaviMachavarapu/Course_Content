@@ -688,6 +688,37 @@ def test_probe_pairs_dropped_or_graded_wrong(answer: str, typed: str) -> None:
         ("+5", "5", False),
         ("\u201cracemic\u201d", "racemic", True),
         ("\uff33odium", "Sodium", True),  # NFKC
+        # spec 4.4 symmetric case rule (fix round 4)
+        ("Co", "CO", False),
+        ("No", "NO", False),
+        ("Na", "NA", False),
+        ("C", "c", False),
+        ("H", "h", False),
+        ("c", "C", False),
+        ("Na+", "na+", False),
+        ("\u03b4", "\u0394", False),
+        ("\u03b4+", "\u0394+", False),
+        ("\u03c3", "\u03a3", False),
+        ("\u03c0", "\u03a0", False),
+        ("\u0394", "\u0394", True),
+        ("Co", "Co", True),
+        ("C", "C", True),
+        ("Paris", "PARIS", False),
+        ("racemic mixture", "Racemic Mixture", True),
+        ("Racemic Mixture", "racemic mixture", True),
+        # primes, curly quotes, en dash
+        ("3'", "3", False),
+        ("3", "3'", False),
+        ("3\u2019", "3'", True),
+        ("3\u2032", "3'", True),
+        ("3''", "3'", False),
+        ("3'.", "3'", True),
+        ("'5'", "5", True),
+        ("Zaitsev\u2019s rule", "Zaitsev's rule", True),
+        ("Zaitsev's rule", "Zaitsev\u2019s rule", True),
+        ("Zaitsev's rule", "Zaitsevs rule", False),
+        ("2\u20133", "2-3", True),
+        ("2-3", "2\u20133", True),
     ],
 )
 def test_grading_per_spec(answer: str, typed: str, expected: bool) -> None:
@@ -733,6 +764,18 @@ def test_empty_after_normalisation_dropped_and_empty_accepted_removed() -> None:
     assert kept == [] and "answer" in dropped[0]["reason"]
     kept, _ = qg.validate([blank(accepted_answers=["O", " ", "..."])], seen=[], source_text=None)
     assert kept[0]["accepted_answers"] == ["O"]
+
+
+@pytest.mark.parametrize("answer", ["2\u00a0000", "2\u202f000", "3\u2032", "2\u20133"])
+def test_nfkc_and_dash_answers_are_not_formulas(answer: str) -> None:
+    assert not qg.is_formula_answer(answer)
+    kept, dropped = qg.validate([blank(answer=answer)], seen=[], source_text=None)
+    assert len(kept) == 1, dropped
+
+
+def test_prompt_asks_for_accepted_variants() -> None:
+    p = qg.build_prompt(10, [])
+    assert "accepted_answers" in p and "plural" in p and "spellings" in p and "hyphenated" in p
 
 
 def test_prompt_forbids_formula_blank_answers() -> None:
