@@ -42,6 +42,7 @@ MCQ_SHARE = 0.6
 
 _BLANK_RE = re.compile(r"_{3,}")
 BLANK = "____"
+FORMULA_REASON = "answer: formula — ask as multiple-choice"
 MIN_QUOTE_WORDS = 5
 MIN_QUOTE_CHARS = 20
 _NON_ALNUM_RE = re.compile(r"[\W_]+")
@@ -62,7 +63,7 @@ _SYMBOL_WS_RE = re.compile(
     r"\s*([\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a=<>+/^-])\s*"
 )
 _SIGNATURE_RE = re.compile(
-    r"[0-9<>=+^\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a\u0370-\u03ff]"
+    r"[0-9<>=+^_\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a\u0370-\u03ff]"
 )
 _CONTROL_RE = re.compile(r"[\x00-\x09\x0b-\x1f]")
 #: a JSON `\n` escape directly followed by a letter: LaTeX `\nu`, `\neq`, `\nabla`
@@ -103,8 +104,10 @@ def build_prompt(n: int, avoid: list[str]) -> str:
     parts = [
         f"Create {n} NEW quiz questions strictly from the sources: {n_mcq} multiple-choice "
         "(exactly 4 distinct options, exactly one correct) and "
-        f"{n_blank} fill-in-the-blank (one blank written as ____, the answer is a short "
-        "exact phrase from the source).",
+        f"{n_blank} fill-in-the-blank (one blank written as ____; the answer is a single word, a "
+        "short phrase or a plain number taken from the source, never a formula, equation, "
+        "chemical formula or symbol). Any question whose answer is a formula, equation, "
+        "chemical formula or symbol must be multiple-choice instead.",
         "Write every formula, chemical formula and symbol in LaTeX between \\( and \\), "
         "copied exactly from the source. Because the answer is JSON, write every backslash "
         'inside a JSON string doubled, e.g. "\\\\(\\\\text{sp}^2\\\\)" for \\(\\text{sp}^2\\).',
@@ -248,11 +251,6 @@ def _translate(s: str, unknown: str) -> tuple[str, bool]:
     return _LTX_CMD_RE.sub(command, s), saw_unknown
 
 
-def has_unsupported_notation(s: str) -> bool:
-    """True if `s` has a LaTeX command that `normalize_answer` cannot translate."""
-    return _translate(s, "keep")[1]
-
-
 def _lower(s: str) -> str:
     """Lowercase except capital Greek letters (so ΔG and δG stay different)."""
     return "".join(c if "Α" <= c <= "Ω" else c.lower() for c in s)
@@ -270,7 +268,7 @@ def _dup_key(s: str) -> tuple[str, str]:
     symbols; the signature is just digits, symbols and Greek letters in order, so
     `\\Delta G < 0` and `\\Delta G > 0` are never duplicates."""
     text = _translate(unicodedata.normalize("NFKC", s), "drop")[0]
-    text = _lower(text).replace("_", "").replace("{", "").replace("}", "")
+    text = _lower(text).replace("{", "").replace("}", "")
     text = re.sub(
         r"[^\w<>=+^\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a]+",
         " ",
@@ -280,8 +278,8 @@ def _dup_key(s: str) -> tuple[str, str]:
     return text, "".join(_SIGNATURE_RE.findall(text))
 
 
-def normalize_answer(s: str) -> str:
-    """Fill-blank comparison form: Unicode super/subscripts mapped (`²` -> `^2`, `₂` -> `2`),
+def normalize_formula(s: str) -> str:
+    """Comparison key for MCQ options (not grading): Unicode super/subscripts mapped,
     NFKC, LaTeX translated (`\\alpha` -> α, `\\leq` -> ≤, `\\frac{1}{2}` -> 1/2), lowercase
     (capital Greek kept), `_` and braces dropped but `^` kept, whitespace collapsed (and removed
     around operators), surrounding punctuation stripped."""
@@ -301,18 +299,64 @@ def normalize_answer(s: str) -> str:
     return t[start:end].strip()
 
 
+_TRAILING_PUNCT = ".,;:!?\"'‘’“”«»"
+_LEADING_QUOTES = "\"'‘’“”«»"
+_LEADING_DOT_RE = re.compile(r"(?<![\w.])\.(?=\d)")
+_LETTER_DIGIT_RE = re.compile(r"[^\W\d_]\d")
+_FORMULA_CHARS = frozenset("$\\^_{}√/")
+_PLAIN_PUNCT = frozenset(" -+.,%°'’")
+
+
+def normalize_answer(s: str) -> str:
+    """Typed fill-blank answer, case preserved (spec 4.4): NFKC, minus sign -> `-`, whitespace
+    collapsed and trimmed, surrounding quotes and trailing sentence punctuation (`. , ; : ! ?`)
+    stripped (signs, `%` and `°` kept), a leading `.` before a digit -> `0.`."""
+    t = unicodedata.normalize("NFKC", s).replace("−", "-")
+    t = _WS_RE.sub(" ", t).strip()
+    t = t.lstrip(_LEADING_QUOTES).rstrip(_TRAILING_PUNCT + " ").strip()
+    return _LEADING_DOT_RE.sub("0.", t)
+
+
+def is_formula_answer(s: str) -> bool:
+    """True if `s` is not words or a plain number: formula notation (`$ \\ ^ _ { } √ /`),
+    a chemical-formula-like token (a letter right before a digit: H2O, CO2, Fe3), or any
+    character outside letters, digits, spaces and `- + . , % ° '`."""
+    if _FORMULA_CHARS & set(s) or _LETTER_DIGIT_RE.search(s):
+        return True
+    for c in s:
+        if c in _PLAIN_PUNCT:
+            continue
+        cat = unicodedata.category(c)
+        if not (cat[0] in "LM" or cat == "Nd"):
+            return True
+    return False
+
+
+def _case_sensitive(norm: str) -> bool:
+    """An uppercase letter that does not start a word (CO, NaCl, pH, mRNA)."""
+    return any(c.isupper() and i > 0 and norm[i - 1].isalpha() for i, c in enumerate(norm))
+
+
 def fill_blank_correct(question: dict[str, Any], response: str) -> bool:
     """Grade a typed fill-blank response: exact match after `normalize_answer` against the
-    answer or any accepted answer."""
+    answer or any accepted answer; case-insensitive unless that answer holds an uppercase
+    letter that is not the first letter of a word."""
     got = normalize_answer(response)
     if not got:
         return False
-    accepted = [question.get("answer", ""), *question.get("accepted_answers", [])]
-    return any(normalize_answer(a) == got for a in accepted if isinstance(a, str) and a.strip())
+    for a in [question.get("answer", ""), *question.get("accepted_answers", [])]:
+        if not isinstance(a, str):
+            continue
+        want = normalize_answer(a)
+        if not want:
+            continue
+        if (want == got) if _case_sensitive(want) else (want.casefold() == got.casefold()):
+            return True
+    return False
 
 
 def _option_key(option: str) -> str:
-    return normalize_answer(option) or option.strip().lower()
+    return normalize_formula(option) or option.strip().lower()
 
 
 # -- validate -------------------------------------------------------------------
@@ -351,8 +395,8 @@ def _shape(q: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
         answer = _text(q.get("answer"))
         if not answer:
             return None, "answer: missing or empty"
-        if has_unsupported_notation(answer):
-            return None, "answer: unsupported notation"
+        if is_formula_answer(answer):
+            return None, FORMULA_REASON
         if not normalize_answer(answer):
             return None, "answer: empty after normalisation"
         accepted = q.get("accepted_answers")
@@ -361,8 +405,8 @@ def _shape(q: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
         if not isinstance(accepted, list) or not all(isinstance(a, str) for a in accepted):
             return None, "accepted_answers: need a list of strings"
         out["answer"] = answer
-        if any(has_unsupported_notation(a) for a in accepted):
-            return None, "answer: unsupported notation"
+        if any(is_formula_answer(a) for a in accepted):
+            return None, FORMULA_REASON
         out["accepted_answers"] = [a.strip() for a in accepted if normalize_answer(a)]
     out["explanation"] = _text(q.get("explanation"))
     out["source_quote"] = _text(q.get("source_quote"))
@@ -438,7 +482,8 @@ def validate(
             continue
         norm = _dup_key(q["question"])
         if any(
-            norm[1] == t[1] and SequenceMatcher(None, norm[0], t[0]).ratio() >= DUPLICATE_RATIO
+            not (len(norm[1]) == len(t[1]) and norm[1] != t[1])
+            and SequenceMatcher(None, norm[0], t[0]).ratio() >= DUPLICATE_RATIO
             for t in taken
         ):
             dropped.append(

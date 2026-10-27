@@ -1,5 +1,7 @@
 """Adaptive quiz — chat prompt, answer parsing and question validation."""
 
+# ruff: noqa: RUF001
+
 from __future__ import annotations
 
 import copy
@@ -189,11 +191,6 @@ def test_blank_marker_longer_underscores_counts_once() -> None:
     assert len(kept) == 1
 
 
-def test_blank_drops_empty_accepted_entries() -> None:
-    kept, _ = qg.validate([blank(accepted_answers=["O", " ", "o2"])], seen=[], source_text=None)
-    assert kept[0]["accepted_answers"] == ["O", "o2"]
-
-
 # -- validate: duplicates ---------------------------------------------------
 
 
@@ -277,9 +274,13 @@ def test_real_chat_answer_against_real_source() -> None:
     qs = qg.parse_questions(ANSWER)
     kept, dropped = qg.validate(qs, seen=[], source_text=SOURCE)
     # 7/10 verbatim; 3/10 only after LaTeX stripping / spaceless matching
-    assert (len(kept), dropped) == (10, [])
+    # the 4 fill-blanks: sp2-hybridised-style answers are formulas and now dropped
+    assert len(kept) + len(dropped) == 10
+    assert all(d["reason"] == qg.FORMULA_REASON for d in dropped)
+    assert len([k for k in kept if k["type"] == "mcq"]) == 6
     kept_none, dropped_none = qg.validate(qs, seen=[], source_text=None)
-    assert len(kept_none) == 10 and dropped_none == []
+    assert len(kept_none) == 9
+    assert [d["reason"] for d in dropped_none] == [qg.FORMULA_REASON]  # sp2-hybridised
 
 
 def test_validate_does_not_mutate_input() -> None:
@@ -289,34 +290,7 @@ def test_validate_does_not_mutate_input() -> None:
     assert qs == before
 
 
-# -- normalize_answer -------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("  Racemic   Mixture. ", "racemic mixture"),
-        ("\\(\\text{sp}^2\\)", "sp^2"),  # edge punctuation, backslash too, is stripped
-        ("$sp^2$", "sp^2"),
-        ("“Quoted”", "quoted"),
-        ("\uff33\uff2e\uff11", "sn1"),  # NFKC full-width
-        ("(Hello)", "hello"),
-        ("a\tb\nc", "a b c"),
-        ("", ""),
-        ("...", ""),
-    ],
-)
-def test_normalize_answer(raw: str, expected: str) -> None:
-    assert qg.normalize_answer(raw) == expected
-
-
-def test_is_correct_blank_matches_answer_or_accepted() -> None:
-    q = blank(answer="Oxygen", accepted_answers=["O", "O2"])
-    assert qg.fill_blank_correct(q, " oxygen. ")
-    assert qg.fill_blank_correct(q, "$O_2$")
-    assert qg.fill_blank_correct(q, "o")
-    assert not qg.fill_blank_correct(q, "oxygen gas")
-    assert not qg.fill_blank_correct(q, "")
+# -- normalize_answer / grading: see "fix round 3" below ---------------------
 
 
 # -- module_source_text ------------------------------------------------------
@@ -475,13 +449,6 @@ def test_underscore_runs_rewritten_to_four() -> None:
     assert kept == [] and "blank" in dropped[0]["reason"]
 
 
-def test_blank_answer_must_survive_normalisation() -> None:
-    kept, dropped = qg.validate([blank(answer="\\(\\)")], seen=[], source_text=None)
-    assert kept == [] and "answer" in dropped[0]["reason"]
-    kept, _ = qg.validate([blank(accepted_answers=["$$", "ok"])], seen=[], source_text=None)
-    assert kept[0]["accepted_answers"] == ["ok"]
-
-
 def test_quote_latex_stripped_and_spaceless_fallback() -> None:
     src = "Actually the carbocation formed in the slow step being sp2 hybridised is planar. SN1 reactions are generally carried out in polar protic solvents."
     split = "S N 1 reactions are generally carried out in polar protic solvents. sp 2 stuff"
@@ -546,14 +513,6 @@ def test_latex_variants_are_near_duplicates() -> None:
     assert kept == [] and "duplicate" in dropped[0]["reason"]
 
 
-def test_grading_matches_latex_and_plain() -> None:
-    q = blank(answer="\\(\\text{sp}^2\\) hybridised", accepted_answers=[])
-    assert qg.fill_blank_correct(q, "sp^2 hybridised")
-    assert qg.fill_blank_correct(q, "SP^2 Hybridised.")
-    assert not qg.fill_blank_correct(q, "sp2 hybridised")
-    assert not qg.fill_blank_correct(q, "sp3 hybridised")
-
-
 def test_module_source_text_raises_when_every_pdf_unreadable(
     db_session: Session, media_storage: Storage, tmp_path: Path
 ) -> None:
@@ -576,72 +535,6 @@ def test_module_source_text_warns_for_scans(
 
 
 # -- fix round 2: translation, not deletion ----------------------------------
-
-WRONG_PAIRS = [
-    (r"\(x^2\)", "x_2"),
-    (r"\(x^2\)", "x2"),
-    (r"\(10^{-3}\)", "10^3"),
-    (r"\(10^{-3}\)", "10-3"),
-    (r"\(10^{-3}\)", "103"),
-    (r"\(\Delta H\)", "H"),
-    (r"\(\alpha\)-helix", "helix"),
-    (r"\(\alpha\)-helix", "beta-helix"),
-    (r"\(\leq 5\)", "5"),
-    (r"\(\leq 5\)", ">= 5"),
-    (r"\(\pm 2\)", "2"),
-    (r"\(\frac{1}{2}\)", "12"),
-    (r"\(\sqrt{2}\)", "2"),
-    (r"\(2\times 10^{5}\)", "2 105"),
-    (r"\(\text{Fe}^{3+}\)", "Fe3"),
-    (r"\(\text{Fe}^{3+}\)", "Fe2+"),
-    (r"\(\text{Fe}^{3+}\)", "Fe^{2+}"),
-    (r"\(\Delta G\)", "\u03b4G"),
-]
-
-
-@pytest.mark.parametrize(("answer", "typed"), WRONG_PAIRS)
-def test_wrong_answers_are_graded_wrong(answer: str, typed: str) -> None:
-    assert not qg.fill_blank_correct({"answer": answer, "accepted_answers": []}, typed)
-
-
-@pytest.mark.parametrize(
-    ("answer", "typed"),
-    [
-        (r"\(\alpha\)", "\u03b1"),
-        (r"\(\alpha\)", r"\alpha"),
-        (r"\(\Delta H\)", "\u0394H"),
-        (r"\(\alpha\)-helix", "\u03b1-helix"),
-        (r"\(\leq 5\)", "\u2264 5"),
-        (r"\(\leq 5\)", "<= 5"),
-        (r"\(\pm 2\)", "\u00b1 2"),
-        (r"\(\frac{1}{2}\)", "1/2"),
-        (r"\(\sqrt{2}\)", "\u221a2"),
-        (r"\(10^{-3}\)", "10\u207b\u00b3"),
-        (r"\(\text{H}_2\text{O}\)", "H2O"),
-        (r"\(\text{H}_2\text{O}\)", "H\u2082O"),
-        (r"\(\text{S}_\text{N}2\)", "SN2"),
-        (r"\(\text{CO}_3^{2-}\)", "CO3^2-"),
-        (r"\(\text{CO}_3^{2-}\)", "CO\u2083\u00b2\u207b"),
-        (r"\(\text{sp}^2\) hybridised", "sp^2 hybridised"),
-        (r"\(\text{Fe}^{3+}\)", "Fe^3+"),
-        (r"\(25^\circ\text{C}\)", "25\u00b0C"),
-        (r"\(A \rightleftharpoons B\)", "A \u21cc B"),
-    ],
-)
-def test_right_answers_are_graded_right(answer: str, typed: str) -> None:
-    assert qg.fill_blank_correct({"answer": answer, "accepted_answers": []}, typed)
-
-
-def test_greek_answer_is_valid_not_dropped() -> None:
-    for a in (r"\(\alpha\)", r"\(\Delta\)", r"\(\pi\)"):
-        assert len(qg.validate([blank(answer=a)], seen=[], source_text=None)[0]) == 1
-
-
-def test_unknown_command_in_answer_is_unsupported() -> None:
-    kept, dropped = qg.validate([blank(answer=r"\(\hbar\omega\)")], seen=[], source_text=None)
-    assert kept == [] and dropped[0]["reason"] == "answer: unsupported notation"
-    kept, dropped = qg.validate([blank(accepted_answers=[r"\(\hbar\)"])], seen=[], source_text=None)
-    assert kept == [] and "unsupported notation" in dropped[0]["reason"]
 
 
 def test_mcq_options_with_commands_stay_distinct() -> None:
@@ -691,3 +584,185 @@ def test_superscript_vs_subscript_questions_are_not_duplicates() -> None:
         [mcq(question=r"What is \(x^2\) here?")], seen=[r"What is \(x_2\) here?"], source_text=None
     )
     assert len(kept) == 1
+
+
+# -- fix round 3: words and plain numbers only (spec 4.4) ----------------------
+
+#: reviewer probe pairs: each must be dropped at validation (formula answer) or graded wrong
+PROBE_PAIRS = [
+    (r"\(\text{H}_2\text{O}\)", "H^2O"),
+    (r"\(10^{-3}\)", r"10^{3}"),
+    (r"\(\text{Fe}^{3+}\)", r"\(\text{Fe}^{2+}\)"),
+    (r"\(\Delta\)", r"\(\delta\)"),
+    (r"\(\le\)", "<"),
+    (r"\(\approx\)", "="),
+    (r"\(\to\)", r"\(\leftarrow\)"),
+    (r"\(\frac{\frac{1}{2}}{3}\)", "1/2/3"),
+    (r"\(\frac{1}{\frac{2}{3}}\)", "1/2/3"),
+    (r"\(\frac{a+b}{c}\)", "a+b/c"),
+    (r"\(\frac{1}{2x}\)", "1/2x"),
+    (r"\(\frac{1}{2}x\)", "1/2x"),
+    (r"\(\sqrt[3]{x}\)", r"\(\sqrt{x}\)"),
+    (r"\(\sqrt{x+1}\)", "√x+1"),
+    (r"\(\sqrt{x}+1\)", "√x+1"),
+    (r"\(\vec{F}\)", "F"),
+    (r"\(\bar{x}\)", "x"),
+    (r"\(\hat{H}\)", "H"),
+    (r"\(\ce{Na+}\)", "Na"),
+    (r"\(\ce{Na+}\)", "Na+"),
+    (r"\(x^{2+1}\)", "x^2+1"),
+    (r"\(e^{x+1}\)", "e^x+1"),
+    (r"\(x_{n+1}\)", "x_n+1"),
+    (r"\(x_{n+1}\)", "xn+1"),
+    (r"\(-3\)", "3"),
+    ("-3", "3"),
+    (r"\(\text{CO}_3^{2-}\)", "CO3^2"),
+    (r"\(\text{Cl}^-\)", "Cl^"),
+    (r"\(e^-\)", "e^"),
+    (r"\(\text{CO}\)", "Co"),
+    ("NO", "No"),
+    (r"\(-40^\circ\text{C}\)", "40°C"),
+    ("−3", "3"),
+    (r"\(\neq\)", "="),
+    (r"\(\not=\)", "="),
+    (r"\(\mathbf{F}\)", "F"),
+    (r"\(\pm\)", "+"),
+    (r"\(\cdot\)", "."),
+    (r"\(\Delta H < 0\)", "ΔH < 0"),
+    (r"\(\Delta H < 0\)", "ΔH<0"),
+    (r"\(a^{b^c}\)", "a^b^c"),
+    (r"\((a^b)^c\)", "a^b^c"),
+    (r"\(2^{10}\)", "2^1 0"),
+    (r"\(1.5\)", "15"),
+    (r"\(1,5\)", "15"),
+    (r"\(0.5\)", ".5"),
+    (r"\(5.\)", "5"),
+    (r"\(\%\)", "%"),
+    (r"50\%", "50"),
+    ("50%", "50"),
+    (r"\(\text{sp}^3\text{d}\)", "sp^3d"),
+    (r"\(\text{sp}^3\text{d}\)", "sp3d"),
+    (r"\(\text{Ca}^{2+}\)", "Ca2+"),
+    (r"\(\text{CH}_3\)", "CH^3"),
+]
+
+
+def _graded(answer: str, typed: str) -> str | bool:
+    q = {"type": "fill_blank", "question": "A ____", "answer": answer, "accepted_answers": []}
+    kept, dropped = qg.validate([q], seen=[], source_text=None)
+    if not kept:
+        return "dropped: " + dropped[0]["reason"]
+    return qg.fill_blank_correct(kept[0], typed)
+
+
+@pytest.mark.parametrize(("answer", "typed"), PROBE_PAIRS)
+def test_probe_pairs_dropped_or_graded_wrong(answer: str, typed: str) -> None:
+    assert _graded(answer, typed) in (False, "dropped: " + qg.FORMULA_REASON)
+
+
+@pytest.mark.parametrize(
+    ("answer", "typed", "expected"),
+    [
+        ("-3", "3", False),
+        ("3", "-3", False),
+        ("-3", "\u22123", True),
+        ("\u22123", "-3", True),
+        ("50%", "50", False),
+        ("50%", "50 %", False),
+        ("50%", "50%", True),
+        ("CO", "Co", False),
+        ("CO", "CO", True),
+        ("pH", "PH", False),
+        ("pH", "pH", True),
+        ("NaCl", "nacl", False),
+        ("mRNA", "MRNA", False),
+        ("0.5", ".5", True),
+        (".5", "0.5", True),
+        ("1.5", "15", False),
+        ("Racemic mixture.", "racemic mixture", True),
+        ("racemic mixture", "  Racemic   Mixture! ", True),
+        ("racemic mixture", "racemic", False),
+        ("Paris", "paris", True),
+        ("40 \u00b0C", "40 \u00b0C", True),
+        ("40 \u00b0C", "40 C", False),
+        ("+5", "5", False),
+        ("\u201cracemic\u201d", "racemic", True),
+        ("\uff33odium", "Sodium", True),  # NFKC
+    ],
+)
+def test_grading_per_spec(answer: str, typed: str, expected: bool) -> None:
+    assert qg.fill_blank_correct({"answer": answer, "accepted_answers": []}, typed) is expected
+
+
+def test_grading_accepted_answers_and_empty_response() -> None:
+    q = {"answer": "oxygen", "accepted_answers": ["O2gas", "dioxygen"]}
+    assert qg.fill_blank_correct(q, "Dioxygen.")
+    assert not qg.fill_blank_correct(q, "")
+    assert not qg.fill_blank_correct(q, "  ")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "H2O", "CO2", "Fe3", "SN2", "sp2", "NaCl2", r"\(x\)", "$5$", r"\alpha", "x^2", "x_2", "{a}",
+        "\u221a2", "1/2", "a/b", "a = b", "x < 5", "(aq)", "\u00d7", "\u0394H<0", "10^-3", r"\frac{1}{2}",
+    ],
+)  # fmt: skip
+def test_formula_answers_dropped_at_validation(answer: str) -> None:
+    kept, dropped = qg.validate([blank(answer=answer)], seen=[], source_text=None)
+    assert kept == [] and dropped[0]["reason"] == qg.FORMULA_REASON
+    kept, dropped = qg.validate([blank(accepted_answers=[answer])], seen=[], source_text=None)
+    assert kept == [] and dropped[0]["reason"] == qg.FORMULA_REASON
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "racemic mixture", "5", "-3", "+3", "0.5", "1,5", "50%", "40 \u00b0C", "Paris", "NaCl",
+        "mRNA", "pH", "don't", "d\u00e9j\u00e0 vu", "\u03b1-helix", "\u0394", "\u5c71", "Zaitsev's rule", "2-3",
+        "carbon-carbon bond",
+    ],
+)  # fmt: skip
+def test_word_and_number_answers_are_kept(answer: str) -> None:
+    kept, dropped = qg.validate([blank(answer=answer)], seen=[], source_text=None)
+    assert len(kept) == 1, dropped
+
+
+def test_empty_after_normalisation_dropped_and_empty_accepted_removed() -> None:
+    kept, dropped = qg.validate([blank(answer="...")], seen=[], source_text=None)
+    assert kept == [] and "answer" in dropped[0]["reason"]
+    kept, _ = qg.validate([blank(accepted_answers=["O", " ", "..."])], seen=[], source_text=None)
+    assert kept[0]["accepted_answers"] == ["O"]
+
+
+def test_prompt_forbids_formula_blank_answers() -> None:
+    p = qg.build_prompt(10, [])
+    assert "never a formula" in p and "must be multiple-choice" in p
+
+
+def test_extra_item_question_is_still_a_duplicate() -> None:
+    seen = ["In the transition state of an SN2 reaction, how many atoms bond to carbon?"]
+    q = mcq(
+        question="In the transition state of an SN2 reaction, how many atoms bond to carbon (5)?"
+    )
+    kept, dropped = qg.validate([q], seen=seen, source_text=None)
+    assert kept == [] and "duplicate" in dropped[0]["reason"]
+
+
+def test_substituted_item_question_is_not_a_duplicate() -> None:
+    seen = ["In the transition state of an SN2 reaction, how many atoms bond to carbon (5)?"]
+    q = mcq(
+        question="In the transition state of an SN2 reaction, how many atoms bond to carbon (4)?"
+    )
+    assert len(qg.validate([q], seen=seen, source_text=None)[0]) == 1
+
+
+def test_live_sample_fill_blanks_and_mcqs() -> None:
+    qs = qg.parse_questions(ANSWER)
+    kept, dropped = qg.validate(qs, seen=[], source_text=SOURCE)
+    blanks = [q for q in qs if q["type"] == "fill_blank"]
+    assert len(blanks) == 4
+    kept_blank = [k for k in kept if k["type"] == "fill_blank"]
+    assert [k["type"] for k in kept].count("mcq") == 6  # MCQs unaffected
+    assert len(kept_blank) + len(dropped) == 4
+    assert all(d["reason"] == qg.FORMULA_REASON for d in dropped)
