@@ -60,7 +60,7 @@ class ArtifactMediaOut(BaseModel):
 
 class QuizCheckRequest(BaseModel):
     index: int = Field(ge=0)
-    # MCQ: the chosen option index (0-3); fill-blank: the typed text
+    # MCQ: the chosen option's position as shown in this attempt (0-3); fill-blank: the text
     response: StrictInt | Annotated[str, StringConstraints(strict=True, max_length=500)]
 
 
@@ -71,7 +71,7 @@ class QuizCheckOut(BaseModel):
     response: int | str
     correct: bool
     correct_answer: str
-    correct_index: int | None = None  # MCQ only
+    correct_index: int | None = None  # MCQ only: position as shown in this attempt
     explanation: str = ""
 
 

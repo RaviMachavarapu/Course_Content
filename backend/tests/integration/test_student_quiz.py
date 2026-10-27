@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import random
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import app.api.student.quiz as quiz_api
 from app.cli import seed_admin
 from app.models.artifact import Artifact
 from app.models.enums import ArtifactType, QuizSetSource, QuizSetStatus
@@ -25,6 +27,7 @@ from app.pipeline import orchestrator
 from app.pipeline.fixture import FixtureProvider
 from app.services.publish import publish_module
 
+REAL_RNG = quiz_api._rng  # captured before the identity-order fixture patches it
 PROVIDER = FixtureProvider()
 TYPES = [ArtifactType.quiz, ArtifactType.report]
 SECRET_KEYS = ("correct_index", "answer", "accepted_answers", "explanation", "source_quote", "hint")
@@ -35,6 +38,27 @@ UNAVAILABLE = "New questions aren't available right now — please try again lat
 @pytest.fixture(autouse=True)
 def _no_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.api.admin.courses._dispatch_all", lambda *a, **k: None)
+
+
+class _KeepOrder:
+    """Stands in for the option-shuffling RNG: options stay in stored order."""
+
+    def shuffle(self, x: list[Any]) -> None:
+        return None
+
+
+class _Reverse:
+    """A deterministic shuffle that moves every option of a 4-option question."""
+
+    def shuffle(self, x: list[Any]) -> None:
+        x.reverse()
+
+
+@pytest.fixture(autouse=True)
+def _identity_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Most tests read answers straight from the stored set; the shuffle tests below
+    # swap in their own RNG.
+    monkeypatch.setattr(quiz_api, "_rng", _KeepOrder())
 
 
 @pytest.fixture(autouse=True)
@@ -357,8 +381,6 @@ def test_fill_blank_grading_uses_the_helper(
     _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
     _add_set(db_session, ctx, QuizSetStatus.ready)
 
-    import app.api.student.quiz as quiz_api
-
     graded: list[str] = []
     real = quiz_api.fill_blank_correct
 
@@ -628,3 +650,164 @@ def test_a_non_quiz_artifact_is_not_found(
     )
     assert report is not None
     assert client.post(f"/api/student/artifacts/{report.id}/quiz-attempts").status_code == 404
+
+
+# -- option shuffling ---------------------------------------------------------------------
+
+
+def _shown_position(q: dict[str, Any]) -> int:
+    """Where `_Reverse` shows the correct option of a 4-option question."""
+    return 3 - int(q["correct_index"])
+
+
+def _no_order_leak(payload: Any) -> None:
+    text = json.dumps(payload)
+    for key in ("option_orders", "order", "original_index", "permutation"):
+        assert f'"{key}"' not in text, key
+
+
+def test_rng_is_cryptographic() -> None:
+    assert isinstance(REAL_RNG, random.SystemRandom)
+
+
+def test_option_orders_are_permutations_and_vary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(quiz_api, "_rng", random.Random(20261027))
+    questions = [
+        {"type": "mcq", "question": "q", "options": ["a", "b", "c", "d"], "correct_index": 0},
+        {"type": "fill_blank", "question": "x ____", "answer": "y"},
+    ]
+    positions = []
+    for _ in range(400):
+        orders = quiz_api._new_option_orders(questions)
+        assert set(orders) == {"0"}  # fill-blank questions are never shuffled
+        assert sorted(orders["0"]) == [0, 1, 2, 3]
+        positions.append(orders["0"].index(0))  # display position of the correct option
+    counts = [positions.count(p) for p in range(4)]
+    assert all(c > 60 for c in counts), counts  # ~100 each: not always first
+
+
+def test_start_check_resume_and_complete_use_the_shown_order(
+    client: TestClient,
+    db_session: Session,
+    enqueued: list[tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    monkeypatch.setattr(quiz_api, "_rng", _Reverse())
+    started = _start(client, ctx).json()
+    _no_secrets(started)
+    _no_order_leak(started)
+    aid = started["attempt_id"]
+    for got, q in zip(started["questions"], ctx.questions, strict=True):
+        assert got["options"] == list(reversed(q["options"]))
+
+    attempt = db_session.get(QuizAttempt, uuid.UUID(aid))
+    assert attempt is not None
+    assert attempt.option_orders == {str(i): [3, 2, 1, 0] for i in range(len(ctx.questions))}
+    # stored content is untouched
+    assert _attempt_set(db_session, aid).questions == [{**q, "type": "mcq"} for q in ctx.questions]
+
+    # the shown position of the correct option is right
+    q0 = ctx.questions[0]
+    ok = _check(client, aid, 0, _shown_position(q0))
+    assert ok.status_code == 200
+    assert ok.json() == {
+        "index": 0,
+        "response": _shown_position(q0),
+        "correct": True,
+        "correct_answer": q0["options"][q0["correct_index"]],
+        "correct_index": _shown_position(q0),
+        "explanation": q0.get("explanation", ""),
+    }
+    _no_order_leak(ok.json())
+    # the stored (original) index of the correct option is now another option: wrong
+    q1 = ctx.questions[1]
+    bad = _check(client, aid, 1, q1["correct_index"]).json()
+    assert bad["correct"] is False
+    assert bad["correct_index"] == _shown_position(q1)
+    assert bad["correct_answer"] == q1["options"][q1["correct_index"]]
+    assert started["questions"][1]["options"][bad["correct_index"]] == bad["correct_answer"]
+
+    # a different RNG now must not change this attempt's order on resume
+    monkeypatch.setattr(quiz_api, "_rng", random.Random(7))
+    resumed = _start(client, ctx).json()
+    assert resumed["status"] == "resumed"
+    assert [q["options"] for q in resumed["questions"]] == [
+        q["options"] for q in started["questions"]
+    ]
+    assert resumed["questions"][0]["result"] == ok.json()
+    assert resumed["questions"][1]["result"] == bad
+    assert resumed["correct_count"] == 1
+    _no_order_leak(resumed)
+
+    for i, q in enumerate(ctx.questions[2:], start=2):
+        assert _check(client, aid, i, _shown_position(q)).json()["correct"] is True
+    done = _complete(client, aid).json()
+    _no_order_leak(done)
+    assert done["correct_count"] == len(ctx.questions) - 1
+    row1 = done["review"][1]
+    assert row1["options"] == started["questions"][1]["options"]
+    assert row1["response"] == q1["correct_index"]
+    assert row1["correct"] is False
+    assert row1["correct_index"] == _shown_position(q1)
+    assert row1["options"][row1["correct_index"]] == row1["correct_answer"]
+    assert done["review"][0]["correct_index"] == _shown_position(q0)
+
+
+def test_chat_sets_shuffle_mcq_only(
+    client: TestClient,
+    db_session: Session,
+    enqueued: list[tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    _add_set(db_session, ctx, QuizSetStatus.ready)
+    monkeypatch.setattr(quiz_api, "_rng", _Reverse())
+    body = _start(client, ctx).json()
+    assert body["source"] == "chat"
+    _no_secrets(body)
+    _no_order_leak(body)
+    assert body["questions"][0]["options"] == [
+        "No product",
+        "Meso compound",
+        "Single enantiomer",
+        "Racemate",
+    ]
+    assert body["questions"][1]["options"] is None
+    aid = body["attempt_id"]
+    attempt = db_session.get(QuizAttempt, uuid.UUID(aid))
+    assert attempt is not None and attempt.option_orders == {"0": [3, 2, 1, 0]}
+
+    assert _check(client, aid, 0, 0).json()["correct"] is False  # stored index 0, moved
+    assert _check(client, aid, 1, "racemate").json()["correct"] is True
+    assert _check(client, aid, 2, "4").json()["correct"] is True
+    done = _complete(client, aid).json()
+    assert done["review"][0]["correct_index"] == 3
+    assert done["review"][0]["correct_answer"] == "Racemate"
+    assert done["review"][0]["response"] == 0
+
+
+def test_open_attempt_without_stored_order_keeps_the_stored_order(
+    client: TestClient,
+    db_session: Session,
+    enqueued: list[tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    aid = _start(client, ctx).json()["attempt_id"]
+    attempt = db_session.get(QuizAttempt, uuid.UUID(aid))
+    assert attempt is not None
+    attempt.option_orders = None  # opened before shuffling existed
+    db_session.flush()
+
+    monkeypatch.setattr(quiz_api, "_rng", _Reverse())
+    resumed = _start(client, ctx).json()
+    assert resumed["status"] == "resumed"
+    assert [q["options"] for q in resumed["questions"]] == [q["options"] for q in ctx.questions]
+    for i, q in enumerate(ctx.questions):
+        res = _check(client, aid, i, q["correct_index"]).json()
+        assert res["correct"] is True and res["correct_index"] == q["correct_index"]
+    done = _complete(client, aid).json()
+    assert done["score_percent"] == 100.0
+    assert done["review"][0]["options"] == ctx.questions[0]["options"]

@@ -123,7 +123,7 @@ def build_prompt(n: int, avoid: list[str]) -> str:
         )
     parts.append(
         "Return ONLY a JSON array, no prose, using this shape: "
-        '[{"type":"mcq","question":"...","options":["...","...","...","..."],"correct_index":0,'
+        '[{"type":"mcq","question":"...","options":["...","...","...","..."],"correct_index":2,'
         '"explanation":"...","source_quote":"..."},'
         '{"type":"fill_blank","question":"... ____ ...","answer":"...","accepted_answers":["..."],'
         '"explanation":"...","source_quote":"..."}]'

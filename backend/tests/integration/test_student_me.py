@@ -124,6 +124,7 @@ def test_quiz_ace_and_flashcard_streak_achievements(
     version = next(v for v in quiz_artifact.versions if v.id == quiz_artifact.published_version_id)
     questions = version.content_json["questions"]
     monkeypatch.setattr("app.api.student.quiz.enqueue_prepare", lambda *a: None)
+    monkeypatch.setattr("app.api.student.quiz._new_option_orders", lambda qs: {})  # stored order
     started = client.post(f"/api/student/artifacts/{ids['quiz']}/quiz-attempts")
     assert started.status_code == 201
     attempt_id = started.json()["attempt_id"]

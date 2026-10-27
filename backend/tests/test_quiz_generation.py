@@ -70,6 +70,12 @@ def test_prompt_mix_and_avoid_list() -> None:
     assert "What is X?" not in qg.build_prompt(10, [])
 
 
+def test_prompt_example_does_not_put_the_answer_first() -> None:
+    p = qg.build_prompt(10, [])
+    assert '"correct_index":0' not in p
+    assert '"correct_index":2' in p
+
+
 def test_prompt_caps_avoid_list_at_60() -> None:
     p = qg.build_prompt(10, [f"seen question number {i}" for i in range(100)])
     assert "seen question number 59" in p

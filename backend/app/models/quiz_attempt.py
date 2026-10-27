@@ -27,6 +27,10 @@ class QuizAttempt(Base):
     )
     # {index: {response, correct, checked_at}} once answers are checked one by one.
     answers_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # {question index: [stored option indices in display order]} for MCQ questions,
+    # drawn once when the attempt starts (server-only; the student sees only the
+    # shuffled options). NULL (attempts opened before shuffling) = stored order.
+    option_orders: Mapped[dict[str, list[int]] | None] = mapped_column(JSONB, nullable=True)
     score_percent: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     correct_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

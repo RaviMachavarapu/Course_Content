@@ -12,11 +12,19 @@ Flow: start (or resume) an attempt → check one answer at a time → complete.
 
 Answer secrecy: a question's answer and explanation are only ever sent after the
 student has checked (locked) an answer for it in that attempt.
+
+Option order: NotebookLM tends to put the correct MCQ option first, so each
+attempt shuffles every MCQ's options once, when it starts (CSPRNG), and stores
+the order on the attempt (`option_orders`). Everything the student sends or
+receives (options, chosen `response`, revealed `correct_index`) is in that shown
+order; the stored question sets are never changed. The order itself is never
+sent.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import random
 import uuid
 from typing import Any, Literal
 
@@ -56,6 +64,9 @@ PREPARING_PATIENCE = dt.timedelta(minutes=15)
 
 QType = Literal["mcq", "fill_blank"]
 
+#: shuffles MCQ options per attempt; cryptographic so the order can't be predicted
+_rng: random.Random = random.SystemRandom()
+
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
@@ -93,13 +104,47 @@ def _check_out(index: int, q: dict[str, Any], entry: dict[str, Any]) -> QuizChec
     )
 
 
-def _attempt_questions(db: Session, attempt: QuizAttempt) -> tuple[list[dict[str, Any]], str]:
-    """The attempt's questions (full, server-side) and their source."""
+def _new_option_orders(questions: list[dict[str, Any]]) -> dict[str, list[int]]:
+    """A fresh random display order for each MCQ's options: {index: [stored indices]}."""
+    orders: dict[str, list[int]] = {}
+    for i, q in enumerate(questions):
+        if _qtype(q) == "mcq":
+            order = list(range(len(q.get("options", []))))
+            _rng.shuffle(order)
+            orders[str(i)] = order
+    return orders
+
+
+def _shown(q: dict[str, Any], order: Any) -> dict[str, Any]:
+    """The question with its options in display order and `correct_index` remapped to
+    the shown position. Anything but a valid permutation keeps the stored order."""
+    options = list(q.get("options", []))
+    if (
+        _qtype(q) != "mcq"
+        or not isinstance(order, list)
+        or sorted(order) != list(range(len(options)))
+    ):
+        return q
+    ci = q.get("correct_index")
+    shown = {**q, "options": [options[o] for o in order]}
+    shown["correct_index"] = order.index(ci) if ci in order else -1
+    return shown
+
+
+def _stored_questions(db: Session, attempt: QuizAttempt) -> tuple[list[dict[str, Any]], str]:
     qs = db.get(QuizQuestionSet, attempt.question_set_id) if attempt.question_set_id else None
     if qs is None:  # legacy attempt (before question sets)
         artifact = db.get(Artifact, attempt.artifact_id)
         return (studio_questions(artifact) if artifact else []), QuizSetSource.studio.value
     return list(qs.questions), qs.source.value
+
+
+def _attempt_questions(db: Session, attempt: QuizAttempt) -> tuple[list[dict[str, Any]], str]:
+    """The attempt's questions (full, server-side) as the student sees them (MCQ options
+    in this attempt's order), and their source."""
+    questions, source = _stored_questions(db, attempt)
+    orders = attempt.option_orders or {}
+    return [_shown(q, orders.get(str(i))) for i, q in enumerate(questions)], source
 
 
 def _start_out(db: Session, attempt: QuizAttempt, number: int, *, resumed: bool) -> QuizStartOut:
@@ -287,6 +332,7 @@ def start_attempt(
         artifact_id=artifact.id,
         question_set_id=qs.id,
         answers_json={},
+        option_orders=_new_option_orders(qs.questions),
         score_percent=0,
         correct_count=0,
         total_count=len(qs.questions),
