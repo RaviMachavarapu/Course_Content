@@ -10,8 +10,8 @@
   Google/MCP session needed), one fully published and one left in review so
   both the ingest→review→publish and the student-facing flows are visible
   immediately.
-- ``add-math-prompt-line`` — append the LaTeX instruction to the active
-  Flashcards, Quiz and Report templates (new version each; idempotent).
+- ``add-math-prompt-line`` — append the two LaTeX instruction lines to the active
+  Flashcards, Quiz and Report templates (one new version each; idempotent).
 - ``refresh-report-math`` — one-time: re-read every stored report from
   NotebookLM and rebuild its text/HTML with the formula-aware parser, in place.
 """
@@ -312,19 +312,26 @@ MATH_PROMPT_LINE = (
     "in LaTeX between $ signs (e.g. $S_N2$, $\\frac{1}{2}mv^2$, $\\ce{H2O}$), copied exactly "
     "from the source, never paraphrased or invented."
 )
+NOTATION_PROMPT_LINE = (
+    "Use standard LaTeX (e.g. \\frac{dx}{dt}, \\mathrm{m/s^2}, \\mathbf{F}) "
+    "rather than package shorthand such as \\dv, \\SI or \\qty."
+)
+PROMPT_LINES = (MATH_PROMPT_LINE, NOTATION_PROMPT_LINE)
 _MATH_PROMPT_TYPES = (ArtifactType.flashcards, ArtifactType.quiz, ArtifactType.report)
 
 
 def add_math_prompt_line(session: Session) -> dict[ArtifactType, str]:
-    """Append the LaTeX instruction to each active template as a new version,
-    unless it is already there."""
+    """Ensure each active template ends with the LaTeX lines (formula format, then
+    notation), appending whichever are missing as one new version each."""
     result: dict[ArtifactType, str] = {}
     for artifact_type in _MATH_PROMPT_TYPES:
         body = get_active_body(session, artifact_type)
-        if MATH_PROMPT_LINE in body:
+        missing = [line for line in PROMPT_LINES if line not in body]
+        if not missing:
             result[artifact_type] = "already present"
             continue
-        row = update_prompt(session, artifact_type, f"{body.rstrip()}\n\n{MATH_PROMPT_LINE}")
+        new_body = "\n\n".join([body.rstrip(), *missing])
+        row = update_prompt(session, artifact_type, new_body)
         result[artifact_type] = f"added v{row.version}"
     return result
 
@@ -444,7 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     math_line = sub.add_parser(
         "add-math-prompt-line",
-        help="append the LaTeX-formula instruction to the flashcards, quiz and report prompts",
+        help="append the LaTeX formula and notation lines to the flashcards, quiz, report prompts",
     )
     math_line.set_defaults(func=_cmd_add_math_prompt_line)
 
