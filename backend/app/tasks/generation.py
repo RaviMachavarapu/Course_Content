@@ -17,6 +17,8 @@ from app.models.enums import ArtifactType
 from app.pipeline.factory import get_content_provider
 from app.pipeline.orchestrator import run_artifact_generation, start_module_generation
 from app.pipeline.provider import TransientProviderError
+from app.render.typeset_docs import PDF_KINDS
+from app.tasks.pdf import build_artifact_pdf
 
 log = get_logger("tasks.generation")
 
@@ -58,6 +60,8 @@ def generate_artifact_task(
 ) -> str:
     provider = get_content_provider()
     failure: Exception | None = None
+    outcome = "outline_review"  # None: NotebookLM drafted a slide outline for review
+    pdf_version: str | None = None
     with session_scope() as session:
         try:
             version = run_artifact_generation(
@@ -68,15 +72,31 @@ def generate_artifact_task(
                 redo_note=redo_note,
                 resume=resume,
             )
-            # None: NotebookLM drafted a slide outline and waits for review.
-            return str(version.id) if version else "outline_review"
+            if version is not None:
+                outcome = str(version.id)
+                if version.artifact.type in PDF_KINDS:
+                    pdf_version = outcome
         except TransientProviderError as exc:
             if self.request.retries < _MAX_RETRIES:
                 raise  # rolled back, so the artifact stays processing until the retry
             failure = exc
         except Exception as exc:
             failure = exc
-    # The orchestrator marked the artifact/job failed before raising; leaving
-    # the `with` normally commits that, instead of rolling it back and leaving
-    # the card on "Generating…" forever. Re-raise so Celery records the failure.
-    raise failure
+    if failure is not None:
+        # The orchestrator marked the artifact/job failed before raising; leaving
+        # the `with` normally commits that, instead of rolling it back and leaving
+        # the card on "Generating…" forever. Re-raise so Celery records the failure.
+        raise failure
+    if pdf_version is not None:
+        _enqueue_pdf(pdf_version)
+    return outcome
+
+
+def _enqueue_pdf(version_id: str) -> None:
+    """Typeset the new version's PDF. Called after the generation session has
+    committed, so the task always finds the version. A broker error only means
+    no PDF yet (`rebuild-pdfs` builds it later), never a failed generation."""
+    try:
+        build_artifact_pdf.apply_async(args=[version_id], queue="text")
+    except Exception as exc:
+        log.warning("pdf.enqueue_failed", version_id=version_id, error=str(exc))

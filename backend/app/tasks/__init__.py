@@ -7,6 +7,7 @@ Importing this package registers every task with `celery_app` (worker/beat run
 from app.tasks import (
     generation,  # noqa: F401  (registers generate_module / generate_artifact)
     maintenance,  # noqa: F401  (registers app.tasks.media_gc)
+    pdf,  # noqa: F401  (registers app.tasks.build_artifact_pdf)
 )
 from app.tasks.celery_app import celery_app
 

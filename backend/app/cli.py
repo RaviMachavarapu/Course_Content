@@ -14,6 +14,9 @@
   Flashcards, Quiz and Report templates (one new version each; idempotent).
 - ``refresh-report-math`` — one-time: re-read every stored report from
   NotebookLM and rebuild its text/HTML with the formula-aware parser, in place.
+- ``rebuild-pdfs`` — typeset the PDF of every current and published version of
+  the report, flashcards, quiz, infographic and slide-deck artifacts (replacing
+  each version's previous PDF); ``--dry-run`` writes nothing.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import argparse
 import getpass
 import sys
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -35,10 +39,11 @@ from app.models.course import Course
 from app.models.enums import ArtifactType
 from app.models.module import Module
 from app.models.user import User, UserRole, normalize_email
-from app.pipeline import orchestrator
+from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.factory import get_content_provider
 from app.pipeline.fixture import FixtureProvider
 from app.pipeline.provider import ContentProvider, ProviderError, StudioJobRef
+from app.render.typeset_client import TypesetError, TypesetUnavailable
 from app.services.ingestion import detect_source_type
 from app.services.progress import record_artifact_progress
 from app.services.prompts import (
@@ -431,6 +436,86 @@ def _cmd_refresh_report_math(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pdf_versions(session: Session, types: Sequence[ArtifactType] | None) -> list[uuid.UUID]:
+    """The current and published version of every artifact with a PDF type."""
+    wanted = [t for t in (types or artifact_pdf.PDF_KINDS) if t in artifact_pdf.PDF_KINDS]
+    artifacts = session.scalars(
+        select(Artifact)
+        .join(Module, Module.id == Artifact.module_id)
+        .where(Artifact.type.in_(wanted))
+        .order_by(Module.course_id, Module.order_index, Artifact.type)
+    ).all()
+    ids: list[uuid.UUID] = []
+    for artifact in artifacts:
+        for vid in (artifact.current_version_id, artifact.published_version_id):
+            if vid is not None and vid not in ids:
+                ids.append(vid)
+    return ids
+
+
+def rebuild_pdfs(
+    session: Session,
+    *,
+    dry_run: bool = False,
+    types: Sequence[ArtifactType] | None = None,
+    version_id: uuid.UUID | None = None,
+    render: artifact_pdf.Render | None = None,
+) -> list[tuple[str, str]]:
+    """Typeset the PDF of each current/published version (or just `version_id`)
+    synchronously, with the same steps as the `build_artifact_pdf` task.
+
+    Returns ``(label, outcome)`` per version: ``built (fallback X)``,
+    ``skipped (reason)`` or ``failed (reason)``; with ``dry_run`` the document
+    is prepared (content checked) but nothing is typeset or written, and the
+    outcome is ``would build``. Each built PDF is committed on its own.
+    """
+    ids = [version_id] if version_id is not None else _pdf_versions(session, types)
+    results: list[tuple[str, str]] = []
+    for vid in ids:
+        version = session.get(ArtifactVersion, vid)
+        if version is None:
+            results.append((str(vid), "skipped (version not found)"))
+            continue
+        module = version.artifact.module
+        label = f"{module.title} / {version.artifact.type.value} r{version.revision} [{version.id}]"
+        try:
+            if dry_run:
+                artifact_pdf.prepare_pdf(session, vid)
+                results.append((label, "would build"))
+                continue
+            with session.begin_nested():
+                built = artifact_pdf.build_version_pdf(session, vid, render=render)
+            session.commit()
+            artifact_pdf.delete_files(built.stale_keys)
+            results.append((label, f"built (fallback {built.fallback})"))
+        except artifact_pdf.PdfSkipped as exc:
+            results.append((label, f"skipped ({exc})"))
+        except TypesetUnavailable as exc:
+            results.append((label, f"failed (typeset service unavailable: {exc!s:.200})"))
+        except TypesetError as exc:
+            results.append((label, f"failed ({exc!s:.200})"))
+        except Exception as exc:
+            results.append((label, f"failed ({type(exc).__name__}: {exc!s:.200})"))
+    return results
+
+
+def _cmd_rebuild_pdfs(args: argparse.Namespace) -> int:
+    types = [ArtifactType(args.type)] if args.type else None
+    version_id = uuid.UUID(args.version) if args.version else None
+    with session_scope() as session:
+        results = rebuild_pdfs(session, dry_run=args.dry_run, types=types, version_id=version_id)
+    for label, outcome in results:
+        print(f"{label}: {outcome}")
+    counts: dict[str, int] = {}
+    for _, outcome in results:
+        word = outcome.split(" (")[0]
+        counts[word] = counts.get(word, 0) + 1
+    summary = ", ".join(f"{n} {word}" for word, n in sorted(counts.items())) or "no versions"
+    prefix = "DRY RUN - nothing written. " if args.dry_run else ""
+    print(f"{prefix}rebuild-pdfs: {summary}")
+    return 1 if counts.get("failed") else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app.cli", description="Shikshak Dp admin CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -469,6 +554,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="report what would change without writing"
     )
     refresh.set_defaults(func=_cmd_refresh_report_math)
+
+    pdfs = sub.add_parser(
+        "rebuild-pdfs",
+        help="typeset the PDF of every current/published report, flashcards, quiz, "
+        "infographic and slide-deck version",
+    )
+    pdfs.add_argument(
+        "--dry-run", action="store_true", help="list what would be built without writing"
+    )
+    pdfs.add_argument(
+        "--type",
+        choices=[t.value for t in artifact_pdf.PDF_KINDS],
+        help="only this artifact type",
+    )
+    pdfs.add_argument("--version", help="only this artifact version id")
+    pdfs.set_defaults(func=_cmd_rebuild_pdfs)
 
     return parser
 

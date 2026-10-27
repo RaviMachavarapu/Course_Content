@@ -14,8 +14,9 @@ from app.models.course import Course
 from app.models.enums import ArtifactType, GenerationJobState, ModuleSourceType
 from app.models.generation_job import GenerationJob
 from app.models.module import Module
-from app.pipeline import orchestrator
+from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.fixture import FixtureProvider
+from app.render.typeset_client import TypesetResult
 
 PROVIDER = FixtureProvider()
 GEN_TYPES = [
@@ -96,6 +97,12 @@ def test_staging_shape_covers_all_states(client: TestClient, db_session: Session
         assert j is not None
         j.state = state
     db_session.flush()
+    # the report's PDF is typeset after generation (fake service here)
+    artifact_pdf.build_version_pdf(
+        db_session,
+        by_type[ArtifactType.report].current_version_id,
+        render=lambda *_: TypesetResult(pdf=b"%PDF-1.7", fallback="0"),
+    )
 
     resp = client.get(f"/api/admin/modules/{module.id}/staging")
     assert resp.status_code == 200

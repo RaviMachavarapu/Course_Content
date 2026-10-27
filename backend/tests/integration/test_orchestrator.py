@@ -107,8 +107,9 @@ def test_full_run_produces_ready_artifacts_with_media(
 
     report_v = db_session.get(ArtifactVersion, by_type[ArtifactType.report].current_version_id)
     assert report_v.content_json["title"]
-    assert {m.kind.value for m in report_v.media_files} == {"report_pdf"}
-    assert report_v.media_files[0].size_bytes > 1000
+    # its PDF is typeset afterwards by the build_artifact_pdf task, not here
+    assert report_v.media_files == []
+    assert report_v.content_html and "<h2" in report_v.content_html
 
     audio_v = db_session.get(
         ArtifactVersion, by_type[ArtifactType.audio_overview].current_version_id

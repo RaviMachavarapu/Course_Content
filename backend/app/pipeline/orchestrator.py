@@ -47,7 +47,8 @@ from app.pipeline.provider import (
 )
 from app.pipeline.renderers import RENDERERS, MediaBlob
 from app.render import RenderError
-from app.schemas.content import AudioOverviewContent
+from app.render.report_html import build_report_html
+from app.schemas.content import AudioOverviewContent, ReportContent
 from app.schemas.content_options import validate_options
 from app.services.prompts import get_active_body, get_active_template
 from app.storage.keys import media_key
@@ -486,8 +487,7 @@ def _content_and_media(
         # FixtureProvider: Studio-style HTML, rendered by us.
         content_json = parse_artifact(kind, raw.html, raw.extras)
         blobs = RENDERERS[kind](content_json, provider, studio_job)
-        rendered = next((b.content_html for b in blobs if b.content_html is not None), raw.html)
-        return content_json, blobs, rendered
+        return content_json, blobs, _report_html(kind, content_json) or raw.html
 
     row = raw.extras.get("row") or []
     if kind is ArtifactType.audio_overview:
@@ -514,12 +514,15 @@ def _content_and_media(
         )
         for ref in parsed.media
     ]
-    html: str | None = None
-    if kind is ArtifactType.report:
-        # NotebookLM gives text only; the downloadable PDF is ours (T020).
-        blobs += RENDERERS[kind](parsed.content, provider, studio_job)
-        html = next((b.content_html for b in blobs if b.content_html is not None), None)
-    return parsed.content, blobs, html
+    # NotebookLM gives a report as text only; its HTML is ours (T020).
+    return parsed.content, blobs, _report_html(kind, parsed.content)
+
+
+def _report_html(kind: ArtifactType, content_json: dict[str, Any]) -> str | None:
+    """The report's sanitised on-screen HTML (`content_html`); None for other types."""
+    if kind is not ArtifactType.report:
+        return None
+    return build_report_html(ReportContent.model_validate(content_json))
 
 
 def _await_terminal(provider: ContentProvider, job: StudioJobRef, timeout_sec: int) -> StudioStatus:

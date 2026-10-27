@@ -1,11 +1,8 @@
-"""T020 — report renderer (sanitised HTML + matching PDF)."""
+"""T020 — report renderer (sanitised HTML)."""
 
 from __future__ import annotations
 
-import pytest
-
-from app.render import RenderError
-from app.render.report_pdf import build_report_html, render_report
+from app.render.report_html import build_report_html
 from app.schemas.content import ReportContent, ReportSection
 
 CONTENT = ReportContent(
@@ -33,36 +30,6 @@ def test_build_html_is_deterministic_and_sanitised() -> None:
     assert "<strong>weighted</strong>" in a
     assert "<script" not in a.lower()
     assert "evil.example" not in a
-
-
-def test_render_report_produces_a_pdf_with_matching_html() -> None:
-    rendered = render_report(CONTENT)
-    assert rendered.pdf[:5] == b"%PDF-"
-    assert len(rendered.pdf) > 1000
-    assert rendered.html == build_report_html(CONTENT)
-
-
-def test_render_report_wraps_weasyprint_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Boom:
-        def __init__(self, *_a: object, **_k: object) -> None:
-            raise RuntimeError("bad font config")
-
-    monkeypatch.setattr("weasyprint.HTML", _Boom)
-    with pytest.raises(RenderError, match="bad font config"):
-        render_report(CONTENT)
-
-
-def test_render_report_empty_pdf_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Empty:
-        def __init__(self, *_a: object, **_k: object) -> None:
-            pass
-
-        def write_pdf(self) -> bytes:
-            return b""
-
-    monkeypatch.setattr("weasyprint.HTML", _Empty)
-    with pytest.raises(RenderError, match="no bytes"):
-        render_report(CONTENT)
 
 
 def test_titles_are_html_escaped() -> None:

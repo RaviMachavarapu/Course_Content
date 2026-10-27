@@ -6,7 +6,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 # System libraries:
-#  - libpango / libcairo / libgdk-pixbuf / fonts  -> WeasyPrint (report PDF, T020)
+#  - libpango / libcairo / libgdk-pixbuf / fonts  -> text and image rendering
+#    (were WeasyPrint's; report PDFs are now typeset by the `typeset` service)
 #  - build-essential / libpq-dev                   -> psycopg build fallback
 #  - libreoffice-impress + poppler-utils          -> slides: pptx -> pdf -> png (T018)
 #  - graphviz                                     -> infographic: dot -> svg/png (T019, D15)

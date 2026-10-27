@@ -24,7 +24,6 @@ dependencies = [
     # NotebookLM Document reports come back as Markdown.
     "markdown-it-py>=3.0,<4",
     "python-pptx>=1.0,<2",
-    "weasyprint>=63,<64",
     "pypdf>=5.0,<6",
     # Re-encodes slide/infographic images for the typeset service.
     "pillow>=11,<14",
@@ -78,7 +77,7 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["weasyprint.*", "pptx.*", "factory.*", "celery.*"]
+module = ["pptx.*", "factory.*", "celery.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

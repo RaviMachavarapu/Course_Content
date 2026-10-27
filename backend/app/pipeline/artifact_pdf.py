@@ -1,0 +1,192 @@
+"""Typeset (Quarto) PDF of one artifact version, stored as a MediaFile of it.
+
+Pure, synchronous steps (no Celery) shared by the `build_artifact_pdf` task
+(app/tasks/pdf.py) and `python -m app.cli rebuild-pdfs`:
+
+1. `prepare_pdf` reads the version's content and images and builds the document;
+2. the caller renders it with the typeset service (`render_pdf`), outside any
+   lock or long-held session;
+3. `store_pdf` stores it under the type's PDF kind, replacing a previous PDF of
+   that kind for the version; the caller deletes `stale_keys` after committing.
+
+None of this touches the artifact's status or last_error: a missing PDF never
+makes an artifact fail.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import uuid
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.logging import get_logger
+from app.models.artifact_version import ArtifactVersion
+from app.models.enums import ArtifactType, MediaFileKind
+from app.models.media_file import MediaFile
+from app.render.typeset_client import TypesetResult, render_pdf
+from app.render.typeset_docs import (
+    PDF_KINDS,
+    StoredImage,
+    TypesetDoc,
+    build_document,
+    course_media_loader,
+)
+from app.storage.keys import media_key
+from app.storage.service import STORAGE_EXTS, get_storage
+
+__all__ = [
+    "PDF_KINDS",
+    "BuiltPdf",
+    "PdfSkipped",
+    "PdfSource",
+    "Render",
+    "StoredPdf",
+    "build_version_pdf",
+    "delete_files",
+    "prepare_pdf",
+    "store_pdf",
+]
+
+log = get_logger("artifact_pdf")
+
+Render = Callable[[str, str, dict[str, bytes]], TypesetResult]
+
+#: the stored images each type's document uses (others are never read)
+_IMAGE_KINDS = (MediaFileKind.slide_png, MediaFileKind.infographic_png)
+
+#: visible title for types without their own: "<module title>: <label>"
+_LABELS: dict[ArtifactType, str] = {
+    ArtifactType.flashcards: "Flashcards",
+    ArtifactType.quiz: "Quiz",
+    ArtifactType.infographic: "Infographic",
+    ArtifactType.slide_deck: "Slides",
+}
+
+
+class PdfSkipped(Exception):
+    """This version has no PDF to build (audio, no content, or it is gone)."""
+
+
+@dataclass(frozen=True)
+class PdfSource:
+    version_id: uuid.UUID
+    kind: MediaFileKind
+    doc: TypesetDoc
+
+
+@dataclass(frozen=True)
+class StoredPdf:
+    media: MediaFile
+    #: files of the replaced PDF; delete them once the new row is committed
+    stale_keys: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class BuiltPdf:
+    media: MediaFile
+    fallback: str
+    stale_keys: list[str] = field(default_factory=list)
+
+
+def prepare_pdf(session: Session, version_id: uuid.UUID) -> PdfSource:
+    """The typeset document for `version_id`. Raises `PdfSkipped`, or the
+    content's validation error if its `content_json` doesn't fit its type."""
+    version = session.get(ArtifactVersion, version_id)
+    if version is None:
+        raise PdfSkipped("version not found")
+    artifact = version.artifact
+    kind = PDF_KINDS.get(artifact.type)
+    if kind is None:
+        raise PdfSkipped(f"{artifact.type.value} has no PDF")
+    if not version.content_json:
+        raise PdfSkipped("version has no content")
+    module = artifact.module
+
+    storage = get_storage()
+    media: list[StoredImage] = []
+    for m in version.media_files:
+        if m.kind not in _IMAGE_KINDS:
+            continue
+        try:
+            media.append(StoredImage(m.kind, m.page_index, storage.open(m.storage_key)))
+        except OSError as exc:
+            log.warning(
+                "pdf.image_unreadable",
+                version_id=str(version_id),
+                key=m.storage_key,
+                error=str(exc),
+            )
+
+    label = _LABELS.get(artifact.type)
+    doc = build_document(
+        artifact.type,
+        version.content_json,
+        media,
+        title=f"{module.title}: {label}" if label else None,
+        load_media=course_media_loader(session, module.course_id),
+    )
+    return PdfSource(version_id=version_id, kind=kind, doc=doc)
+
+
+def store_pdf(
+    session: Session, version_id: uuid.UUID, kind: MediaFileKind, pdf: bytes
+) -> StoredPdf:
+    """Store `pdf` as the version's `kind` MediaFile (flushed, not committed),
+    replacing any previous one. The key carries a checksum prefix, so a changed
+    PDF gets a new URL (media is served with an immutable cache header)."""
+    version = session.scalars(
+        select(ArtifactVersion).where(ArtifactVersion.id == version_id).with_for_update()
+    ).one_or_none()
+    if version is None:
+        raise PdfSkipped("version not found")
+    artifact = version.artifact
+    module = artifact.module
+    key = media_key(
+        course_id=module.course_id,
+        module_id=module.id,
+        artifact_id=artifact.id,
+        revision=version.revision,
+        kind=kind,
+        ext=STORAGE_EXTS[kind],
+        variant=hashlib.sha256(pdf).hexdigest()[:12],
+    )
+    storage = get_storage()
+    stored = storage.put(key, pdf, "application/pdf")
+
+    stale: list[str] = []
+    for old in session.scalars(
+        select(MediaFile).where(MediaFile.artifact_version_id == version_id, MediaFile.kind == kind)
+    ):
+        if old.storage_key != key:
+            stale.append(old.storage_key)
+        session.delete(old)
+    session.flush()
+    media = storage.build_media_file(stored, artifact_version_id=str(version_id), kind=kind)
+    session.add(media)
+    session.flush()
+    return StoredPdf(media=media, stale_keys=stale)
+
+
+def delete_files(keys: Iterable[str]) -> None:
+    """Remove replaced PDFs' files (after the new rows are committed)."""
+    storage = get_storage()
+    for key in keys:
+        try:
+            storage.delete(key)
+        except (OSError, ValueError) as exc:
+            log.warning("pdf.stale_file_not_deleted", key=key, error=str(exc))
+
+
+def build_version_pdf(
+    session: Session, version_id: uuid.UUID, *, render: Render | None = None
+) -> BuiltPdf:
+    """Prepare, render and store in one session (the rebuild command). Raises
+    `PdfSkipped`, `TypesetUnavailable`, `TypesetError` or a content error."""
+    source = prepare_pdf(session, version_id)
+    result = (render or render_pdf)(*source.doc)
+    stored = store_pdf(session, version_id, source.kind, result.pdf)
+    return BuiltPdf(media=stored.media, fallback=result.fallback, stale_keys=stored.stale_keys)
