@@ -65,7 +65,7 @@ MD_FORMAT = "markdown-raw_tex-raw_html-raw_attribute-citations"
 
 # pandoc's own LaTeX template (KOMA article), the preamble files after it.
 PANDOC_LATEX = [
-    "quarto", "pandoc", "doc.json", "-f", "json", "-t", "latex", "--standalone", "-o", "doc.tex",
+    "quarto", "pandoc", "doc.json", "-f", "json", "-t", "latex-smart", "--standalone", "-o", "doc.tex",
     "--include-in-header=header.tex", "--include-in-header=unicode.tex",
     "-V", "documentclass=scrartcl",
     "-V", "papersize=a4",

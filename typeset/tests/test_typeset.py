@@ -459,3 +459,20 @@ def test_siunitx_prints_numbers_as_written(base_url, src):
     # a comma in a number is not followed by math punctuation space
     if "," in src:
         assert "1,500" in raw, raw
+
+
+def test_typographic_punctuation_prints_as_written(base_url):
+    """pandoc's LaTeX writer must not rewrite punctuation (smart off): curly
+    quotes, dashes and the ellipsis stay as typed, ASCII stays ASCII."""
+    md = (
+        "Newton’s law — “force” – ‘x’ … end.\n\n"
+        # escaped as the backend's builders escape plain text
+        "ASCII \\\"q\\\" \\'s\\' a \\-\\- b \\-\\-\\- c done.\n"
+    )
+    headers, pdf = render(base_url, md)
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "0"
+    assert "Newton’s law — “force” – ‘x’ … end." in text, text
+    assert "ASCII \"q\" 's' a -- b --- c done." in text, text
+    for token in ["``", "''", "Newton's"]:
+        assert token not in text, (token, text)
