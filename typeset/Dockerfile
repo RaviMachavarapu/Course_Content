@@ -16,14 +16,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 # perl: tlmgr; xz-utils: TinyTeX archive; fonts-dejavu-core: Unicode text
 # coverage (µ → ≤ ≥ × ° Greek); fonts-noto-core: the Indic scripts of the
-# approved languages (Hindi/Marathi: Devanagari, Telugu, Tamil, Kannada; see
+# approved languages (Hindi/Marathi: Devanagari, Telugu, Tamil, Kannada, Malayalam; see
 # unicode.tex) -- only those families are kept; poppler-utils: pdftotext for
 # the tests.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl perl xz-utils fontconfig fonts-dejavu-core fonts-noto-core \
         poppler-utils \
     && find /usr/share/fonts/truetype/noto -type f \
-        ! -regex '.*/NotoSerif\(Devanagari\|Telugu\|Tamil\|Kannada\)-\(Regular\|Bold\)\.ttf' -delete \
+        ! -regex '.*/NotoSerif\(Devanagari\|Telugu\|Tamil\|Kannada\|Malayalam\)-\(Regular\|Bold\)\.ttf' -delete \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/quarto.deb \

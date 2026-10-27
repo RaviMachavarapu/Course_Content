@@ -62,17 +62,19 @@
   \providecommand{\bm}{}\renewcommand{\bm}[1]{\TypesetBoldSymbol{#1}}%
 }
 
-% Indic scripts (Hindi/Marathi: Devanagari; Telugu; Tamil; Kannada): DejaVu
+% Indic scripts (Hindi/Marathi: Devanagari; Telugu; Tamil; Kannada; Malayalam): DejaVu
 % has none of them, so runs of each script switch to its Noto font.
 \newfontfamily\devanagarifont{Noto Serif Devanagari}[Script=Devanagari,Scale=1]
 \newfontfamily\telugufont{Noto Serif Telugu}[Script=Telugu,Scale=1]
 \newfontfamily\tamilfont{Noto Serif Tamil}[Script=Tamil,Scale=1]
 \newfontfamily\kannadafont{Noto Serif Kannada}[Script=Kannada,Scale=1]
+\newfontfamily\malayalamfont{Noto Serif Malayalam}[Script=Malayalam,Scale=1]
 \XeTeXinterchartokenstate=1
 \newXeTeXintercharclass\IndicDeva
 \newXeTeXintercharclass\IndicTelu
 \newXeTeXintercharclass\IndicTaml
 \newXeTeXintercharclass\IndicKnda
+\newXeTeXintercharclass\IndicMlym
 \newcount\IndicChar
 \def\IndicSetClass#1#2#3{% first, last code point, class
   \IndicChar=#1\relax
@@ -87,6 +89,7 @@
 \IndicSetClass{"0C00}{"0C7F}{\IndicTelu}
 \IndicSetClass{"0B80}{"0BFF}{\IndicTaml}
 \IndicSetClass{"0C80}{"0CFF}{\IndicKnda}
+\IndicSetClass{"0D00}{"0D7F}{\IndicMlym}
 % ZWJ / ZWNJ shape conjuncts inside a word: never end a script run.
 \XeTeXcharclass"200C=4096
 \XeTeXcharclass"200D=4096
@@ -100,16 +103,25 @@
 \IndicTransitions\IndicTelu\telugufont
 \IndicTransitions\IndicTaml\tamilfont
 \IndicTransitions\IndicKnda\kannadafont
+\IndicTransitions\IndicMlym\malayalamfont
 \def\IndicSwitch#1#2#3{\XeTeXinterchartoks #1 #2 = {\endgroup\begingroup#3}}
 \IndicSwitch\IndicDeva\IndicTelu\telugufont
 \IndicSwitch\IndicDeva\IndicTaml\tamilfont
 \IndicSwitch\IndicDeva\IndicKnda\kannadafont
+\IndicSwitch\IndicDeva\IndicMlym\malayalamfont
 \IndicSwitch\IndicTelu\IndicDeva\devanagarifont
 \IndicSwitch\IndicTelu\IndicTaml\tamilfont
 \IndicSwitch\IndicTelu\IndicKnda\kannadafont
+\IndicSwitch\IndicTelu\IndicMlym\malayalamfont
 \IndicSwitch\IndicTaml\IndicDeva\devanagarifont
 \IndicSwitch\IndicTaml\IndicTelu\telugufont
 \IndicSwitch\IndicTaml\IndicKnda\kannadafont
+\IndicSwitch\IndicTaml\IndicMlym\malayalamfont
 \IndicSwitch\IndicKnda\IndicDeva\devanagarifont
 \IndicSwitch\IndicKnda\IndicTelu\telugufont
 \IndicSwitch\IndicKnda\IndicTaml\tamilfont
+\IndicSwitch\IndicKnda\IndicMlym\malayalamfont
+\IndicSwitch\IndicMlym\IndicDeva\devanagarifont
+\IndicSwitch\IndicMlym\IndicTelu\telugufont
+\IndicSwitch\IndicMlym\IndicTaml\tamilfont
+\IndicSwitch\IndicMlym\IndicKnda\kannadafont

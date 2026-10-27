@@ -388,17 +388,30 @@ INDIC = {
     "telugu": "తెలుగు",
     "tamil": "தமிழ்",
     "kannada": "ಕನ್ನಡ",
+    "malayalam": "മലയാളം",
 }
 
 
 def test_indic_scripts_render(base_url):
-    md = "बल $F = ma$ होता है। मराठी తెలుగు தமிழ் ಕನ್ನಡ\n\n**बल** and *తెలుగు*.\n"
+    md = "बल $F = ma$ होता है। मराठी తెలుగు தமிழ் ಕನ್ನಡ മലയാളം\n\n**बल** and *తెలుగు*.\n"
     headers, pdf = render(base_url, md)
     text = pdftext(pdf)
     assert headers["X-Typeset-Fallback"] == "0", text
     for name, word in INDIC.items():
         assert word in text, (name, word, text)
     assert "F = ma" not in text  # the formula is typeset (math spacing)
+
+
+def test_malayalam_uses_noto_malayalam(base_url):
+    headers, pdf = render(base_url, "മലയാളം ഒരു ഭാഷയാണ്. Next to తెలుగు and text.\n")
+    assert headers["X-Typeset-Fallback"] == "0", pdftext(pdf)
+    text = pdftext(pdf)
+    assert "മലയാളം" in text and "ഭാഷയാണ്" in text, text
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(pdf)
+        f.flush()
+        fonts = subprocess.run(["pdffonts", f.name], capture_output=True, text=True, check=True).stdout
+    assert "NotoSerifMalayalam" in fonts, fonts
 
 
 def test_missing_glyphs_are_reported_not_silent(base_url):
