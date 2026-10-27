@@ -95,6 +95,25 @@ services:
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
 
+  # Prepare students' fresh quiz question sets (NotebookLM chat) on their own
+  # queue, one at a time: chat queries never take a generation slot.
+  worker-quiz:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker -Q quiz --concurrency=1 --loglevel=info
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - media:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping 2>&1 | grep -q pong"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
   beat:
     build: ./backend
     command: celery -A app.tasks.celery_app beat --loglevel=info

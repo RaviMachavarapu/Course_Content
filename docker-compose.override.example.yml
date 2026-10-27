@@ -24,3 +24,7 @@ services:
   #   environment:
   #     CONTENT_PROVIDER: notebooklm
   #     MCP_ENDPOINT: http://mcp:7332
+  # worker-quiz:
+  #   environment:
+  #     CONTENT_PROVIDER: notebooklm
+  #     MCP_ENDPOINT: http://mcp:7332
