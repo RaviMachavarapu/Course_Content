@@ -78,8 +78,8 @@ describe("siunitx macros", () => {
     expect(visible("\\si{\\kilo\\gram}")).toBe("kg");
     expect(visible("\\unit{\\metre\\squared}")).toBe("m2");
     expect(visible("\\unit{\\metre\\per\\second\\squared}")).toBe("ms−2");
-    expect(visible("\\qty{3}{\\micro\\metre}")).toBe("3μm");
-    expect(visible("\\num{1.5e3}")).toBe("1.5×103");
+    expect(visible("\\qty{3}{\\micro\\metre}")).toBe("3µm");
+    expect(visible("\\num{1.5e3}")).toBe("1.5e3");
     expect(visible("\\num{12}")).toBe("12");
   });
   it("every named unit renders", () => {
@@ -119,5 +119,32 @@ describe("fix round 1", () => {
     expect(mathml("\\vb{\\omega}")).toContain("ω");
     expect(html("\\vb*{a}")).toContain("boldsymbol");
     expect(html("\\vb{F}")).toContain("mathbf");
+  });
+});
+
+describe("siunitx parity with the PDF (numbers as written)", () => {
+  it("per applies to the next unit only", () => {
+    expect(visible("\\si{\\joule\\per\\kilogram\\kelvin}")).toBe("Jkg−1K");
+    expect(visible("\\unit{\\metre\\per\\second\\squared}")).toBe("ms−2");
+    expect(visible("\\si{\\per\\second\\squared}")).toBe("s−2");
+  });
+  it("numbers print exactly as written", () => {
+    expect(visible("\\num{1,500}")).toBe("1,500");
+    expect(visible("\\num{12345}")).toBe("12345");
+    expect(visible("\\num{.5}")).toBe(".5");
+    expect(visible("\\num{1.5e3}")).toBe("1.5e3");
+    expect(visible("\\SI{1,500}{\\metre}")).toBe("1,500m");
+    expect(visible("\\SI{1.5e3}{\\metre}")).toBe("1.5e3m");
+  });
+  it("square and cubic are power prefixes inside units", () => {
+    expect(visible("\\si{\\square\\metre}")).toBe("m2");
+    expect(visible("\\si{\\cubic\\centi\\metre}")).toBe("cm3");
+    expect(visible("\\si{\\per\\cubic\\metre}")).toBe("m−3");
+    // outside a unit, \\square stays KaTeX's square symbol
+    expect(visible("\\square")).toBe("□");
+  });
+  it("micro is the micro sign U+00B5, as siunitx prints it", () => {
+    expect(visible("\\si{\\micro\\metre}")).toBe("\u00b5m");
+    expect(visible("\\micro")).toBe("\u00b5");
   });
 });

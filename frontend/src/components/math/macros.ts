@@ -134,13 +134,18 @@ const PREFIXES: Record<string, string> = {
   mega: "M",
   giga: "G",
   nano: "n",
-  micro: "\\mu ",
+  // siunitx prints the micro sign U+00B5 (not the Greek letter mu)
+  micro: "\u00b5",
 };
+/** Powers after a unit (`\metre\squared`) and before it (`\square\metre`). */
 const POWERS: Record<string, number> = { squared: 2, cubed: 3 };
+const POWER_PREFIXES: Record<string, number> = { square: 2, cubic: 3 };
 
 /**
  * Turn a unit argument into LaTeX the way siunitx prints it by default: upright,
- * units separated by a thin space, `\per` giving negative exponents. Plain text
+ * units separated by a thin space, `\per` giving the NEXT unit a negative
+ * exponent (`\joule\per\kilogram\kelvin` is J kg⁻¹ K), `\square`/`\cubic`
+ * before a unit and `\squared`/`\cubed` after it giving powers. Plain text
  * such as `m/s^2` is kept literally in upright type.
  */
 export function unitToLatex(src: string): string {
@@ -150,11 +155,12 @@ export function unitToLatex(src: string): string {
   if (rest) return `\\mathrm{${src}}`;
   const groups: string[] = [];
   let prefix = "";
-  let negative = false;
+  let negative = false; // a \per waiting for its unit
+  let power = 1; // a \square / \cubic waiting for its unit
   let pending: { sym: string; exp: number } | null = null;
   const flush = () => {
     if (!pending) return;
-    const e = negative ? -pending.exp : pending.exp;
+    const e = pending.exp;
     groups.push(e === 1 ? `\\mathrm{${pending.sym}}` : `\\mathrm{${pending.sym}}^{${e}}`);
     pending = null;
   };
@@ -163,15 +169,21 @@ export function unitToLatex(src: string): string {
     if (name === "per") {
       flush();
       negative = true;
+    } else if (name in POWER_PREFIXES) {
+      flush();
+      power = POWER_PREFIXES[name] ?? 1;
     } else if (name in PREFIXES) {
       flush();
       prefix += PREFIXES[name];
     } else if (name in UNITS) {
       flush();
-      pending = { sym: prefix + UNITS[name], exp: 1 };
+      pending = { sym: prefix + UNITS[name], exp: negative ? -power : power };
       prefix = "";
+      negative = false;
+      power = 1;
     } else if (name in POWERS && pending) {
-      pending.exp = POWERS[name] ?? 1;
+      const p = POWERS[name] ?? 1;
+      pending.exp = pending.exp < 0 ? -p : p;
     } else {
       return `\\mathrm{${src}}`;
     }
@@ -180,11 +192,10 @@ export function unitToLatex(src: string): string {
   return groups.join("\\,");
 }
 
-/** siunitx-ish number: `1.5e3` becomes 1.5 x 10^3. */
+/** siunitx number with `parse-numbers=false` (as the PDF typesets it): exactly
+ * as written — `1,500`, `.5` and `1.5e3` are not reformatted. */
 export function numToLatex(src: string): string {
-  const m = /^\s*([-+]?[\d.,]+)\s*[eE]\s*([-+]?\d+)\s*$/.exec(src);
-  if (m) return `${m[1]}\\times 10^{${Number(m[2])}}`;
-  return src.trim();
+  return `{${src.trim()}}`;
 }
 
 const SI = (ctx: Ctx): string => {
