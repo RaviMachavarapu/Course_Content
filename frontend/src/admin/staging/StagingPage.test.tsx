@@ -137,6 +137,21 @@ describe("StagingPage", () => {
     }
   });
 
+  it("shows both quiz PDFs: with answers and questions only", async () => {
+    const quiz = artifact("quiz");
+    quiz.current_version.media = [
+      ...quiz.current_version.media,
+      { kind: "quiz_pdf", url: "/api/media/answers.pdf", size_bytes: 9, page_index: null },
+      { kind: "quiz_questions_pdf", url: "/api/media/q.pdf", size_bytes: 9, page_index: null },
+    ];
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody([quiz]) }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    expect(screen.getByTestId("btn-sr17")).toHaveAttribute("href", "/api/media/answers.pdf");
+    expect(screen.getByTestId("btn-sr20")).toHaveAttribute("href", "/api/media/q.pdf");
+    expect(screen.getByTestId("btn-sr20")).toHaveTextContent("questions .pdf");
+  });
+
   it("shows no Quarto PDF buttons when none exist", async () => {
     installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
     renderPage();

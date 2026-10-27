@@ -61,7 +61,7 @@ export function QuizViewer({
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       <div className="flex justify-end">
-        <PdfDownloadLink media={data.media} kind="quiz_pdf" testid="btn-qz7" />
+        <PdfDownloadLink media={data.media} kind="quiz_questions_pdf" testid="btn-qz7" />
       </div>
       <div className="flex items-center justify-between">
         <span className="font-label-md text-label-md text-on-surface-variant">

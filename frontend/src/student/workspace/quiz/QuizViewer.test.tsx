@@ -174,15 +174,31 @@ describe("QuizViewer", () => {
 });
 
 describe("QuizViewer PDF link", () => {
-  it("links the quiz PDF when present", async () => {
+  it("links the questions-only PDF, never the answer-key one", async () => {
     const orig = ARTIFACT.media;
     onTestFinished(() => {
       ARTIFACT.media = orig;
     });
-    ARTIFACT.media = [{ kind: "quiz_pdf", url: "/api/media/q.pdf", page_index: null }] as never;
+    ARTIFACT.media = [
+      { kind: "quiz_pdf", url: "/api/media/answers.pdf", page_index: null },
+      { kind: "quiz_questions_pdf", url: "/api/media/q.pdf", page_index: null },
+    ] as never;
     installFetch();
     renderViewer();
     expect(await screen.findByTestId("btn-qz7")).toHaveAttribute("href", "/api/media/q.pdf");
+  });
+  it("does not link the answer-key PDF on its own", async () => {
+    const orig = ARTIFACT.media;
+    onTestFinished(() => {
+      ARTIFACT.media = orig;
+    });
+    ARTIFACT.media = [
+      { kind: "quiz_pdf", url: "/api/media/answers.pdf", page_index: null },
+    ] as never;
+    installFetch();
+    renderViewer();
+    await screen.findByText("Question 1 of 2");
+    expect(screen.queryByTestId("btn-qz7")).toBeNull();
   });
   it("hides the link when absent", async () => {
     installFetch();
