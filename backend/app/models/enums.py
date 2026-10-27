@@ -109,3 +109,15 @@ class SourceUploadStatus(_StrEnum):
     receiving = "receiving"
     complete = "complete"
     claimed = "claimed"
+
+
+class QuizSetSource(_StrEnum):
+    studio = "studio"
+    chat = "chat"
+
+
+class QuizSetStatus(_StrEnum):
+    preparing = "preparing"
+    ready = "ready"
+    used = "used"
+    failed = "failed"

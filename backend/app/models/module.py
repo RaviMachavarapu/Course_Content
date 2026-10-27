@@ -4,7 +4,7 @@ import datetime as dt
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -39,6 +39,10 @@ class Module(Base, TimestampMixin):
     sources_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     sources_failed_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Retakes get fresh chat-generated questions (off: the Studio quiz is reused).
+    quiz_fresh_retakes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
     )
     status: Mapped[ModuleStatus] = mapped_column(
         module_status_enum, nullable=False, default=ModuleStatus.processing

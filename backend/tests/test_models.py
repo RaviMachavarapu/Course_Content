@@ -16,6 +16,10 @@ from app.models import (
     ModuleSourceFile,
     ModuleSourceType,
     PromptTemplate,
+    QuizAttempt,
+    QuizQuestionSet,
+    QuizSetSource,
+    QuizSetStatus,
     SourceUpload,
     SourceUploadStatus,
     User,
@@ -159,3 +163,105 @@ def test_source_upload_defaults(db_session: Session) -> None:
     assert upload.received_bytes == 0
     assert upload.status is SourceUploadStatus.receiving
     assert upload.created_at is not None
+
+
+def _quiz_setup(db: Session) -> tuple[Artifact, User]:
+    module = _course_with_module(db)
+    artifact = Artifact(module=module, type=ArtifactType.quiz)
+    user = User(
+        email=f"s{id(db)}@x.org", role=UserRole.student, password_hash="x", display_name="S"
+    )
+    db.add_all([artifact, user])
+    db.flush()
+    return artifact, user
+
+
+def test_module_quiz_fresh_retakes_defaults_true(db_session: Session) -> None:
+    module = _course_with_module(db_session)
+    db_session.flush()
+    assert module.quiz_fresh_retakes is True
+
+
+def test_quiz_question_set_defaults(db_session: Session) -> None:
+    artifact, user = _quiz_setup(db_session)
+    qs = QuizQuestionSet(
+        artifact_id=artifact.id, user_id=user.id, source=QuizSetSource.studio, questions=[]
+    )
+    db_session.add(qs)
+    db_session.flush()
+    assert qs.status == QuizSetStatus.preparing
+    assert qs.validation_report == {}
+    assert qs.created_at is not None
+
+
+def test_one_pending_or_ready_chat_set_per_student_and_quiz(db_session: Session) -> None:
+    artifact, user = _quiz_setup(db_session)
+
+    def chat(status: QuizSetStatus) -> QuizQuestionSet:
+        return QuizQuestionSet(
+            artifact_id=artifact.id,
+            user_id=user.id,
+            source=QuizSetSource.chat,
+            status=status,
+            questions=[],
+        )
+
+    # used / failed chat sets and studio sets never conflict
+    db_session.add_all(
+        [chat(QuizSetStatus.used), chat(QuizSetStatus.used), chat(QuizSetStatus.failed)]
+    )
+    db_session.add_all(
+        [
+            QuizQuestionSet(
+                artifact_id=artifact.id,
+                user_id=user.id,
+                source=QuizSetSource.studio,
+                status=QuizSetStatus.ready,
+                questions=[],
+            )
+            for _ in range(2)
+        ]
+    )
+    db_session.add(chat(QuizSetStatus.preparing))
+    db_session.flush()
+    db_session.add(chat(QuizSetStatus.ready))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_quiz_attempt_links_set_and_set_null_on_delete(db_session: Session) -> None:
+    artifact, user = _quiz_setup(db_session)
+    qs = QuizQuestionSet(
+        artifact_id=artifact.id, user_id=user.id, source=QuizSetSource.studio, questions=[]
+    )
+    db_session.add(qs)
+    db_session.flush()
+    attempt = QuizAttempt(user_id=user.id, artifact_id=artifact.id, question_set_id=qs.id)
+    db_session.add(attempt)
+    db_session.flush()
+    assert attempt.completed_at is None
+    db_session.delete(qs)
+    db_session.flush()
+    db_session.refresh(attempt)
+    assert attempt.question_set_id is None
+
+
+def test_deleting_an_artifact_cascades_to_question_sets(db_session: Session) -> None:
+    artifact, user = _quiz_setup(db_session)
+    db_session.add(
+        QuizQuestionSet(
+            artifact_id=artifact.id, user_id=user.id, source=QuizSetSource.studio, questions=[]
+        )
+    )
+    db_session.flush()
+    aid = artifact.id
+    db_session.delete(artifact)
+    db_session.flush()
+    assert (
+        db_session.scalar(
+            sa.select(sa.func.count())
+            .select_from(QuizQuestionSet)
+            .where(QuizQuestionSet.artifact_id == aid)
+        )
+        == 0
+    )
