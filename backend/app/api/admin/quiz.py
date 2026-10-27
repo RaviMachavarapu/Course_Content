@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, status
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
+from app.models.enums import QuizSetSource
 from app.models.module import Module
 from app.models.quiz_question_set import QuizQuestionSet
 from app.models.user import User
@@ -45,6 +46,8 @@ class QuizSetOut(BaseModel):
     dropped: int
     dropped_questions: list[DroppedOut]
     error: str | None
+    #: round 2 (re-ask) chat failure; round 1's questions were served
+    warning: str | None
     questions: list[dict[str, Any]]
 
 
@@ -73,7 +76,9 @@ def _out(row: QuizQuestionSet, user: User) -> QuizSetOut:
                         reason=str(d.get("reason", "")),
                     )
                 )
-    error = row.validation_report.get("error") if isinstance(row.validation_report, dict) else None
+    report = row.validation_report if isinstance(row.validation_report, dict) else {}
+    error = report.get("error")
+    warning = report.get("reask_error")
     return QuizSetOut(
         id=row.id,
         source=row.source.value,
@@ -85,23 +90,29 @@ def _out(row: QuizQuestionSet, user: User) -> QuizSetOut:
         dropped=len(dropped),
         dropped_questions=dropped,
         error=str(error) if error else None,
+        warning=str(warning) if warning else None,
         questions=row.questions,
     )
 
 
 @router.get("/artifacts/{artifact_id}/quiz-sets", response_model=list[QuizSetOut])
 def list_quiz_sets(
-    artifact_id: uuid.UUID, db: DbDep, limit: int = Query(20, ge=1, le=100)
+    artifact_id: uuid.UUID,
+    db: DbDep,
+    limit: int = Query(20, ge=1, le=100),
+    source: Literal["chat", "all"] = Query("chat"),
 ) -> list[QuizSetOut]:
+    """Chat-generated sets by default; `source=all` adds the per-attempt Studio copies."""
     if db.get(Artifact, artifact_id) is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Artifact not found")
-    rows = db.execute(
+    query = (
         select(QuizQuestionSet, User)
         .join(User, User.id == QuizQuestionSet.user_id)
         .where(QuizQuestionSet.artifact_id == artifact_id)
-        .order_by(desc(QuizQuestionSet.created_at))
-        .limit(limit)
-    ).all()
+    )
+    if source == "chat":
+        query = query.where(QuizQuestionSet.source == QuizSetSource.chat)
+    rows = db.execute(query.order_by(desc(QuizQuestionSet.created_at)).limit(limit)).all()
     return [_out(s, u) for s, u in rows]
 
 

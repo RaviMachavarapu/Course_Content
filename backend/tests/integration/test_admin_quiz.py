@@ -58,14 +58,13 @@ def _admin(client: TestClient, db: Session) -> dict[str, str]:
 def _set(
     db: Session, artifact: Artifact, student: User, age_min: int, **kw: object
 ) -> QuizQuestionSet:
-    row = QuizQuestionSet(
-        artifact_id=artifact.id,
-        user_id=student.id,
-        source=QuizSetSource.chat,
-        status=QuizSetStatus.used,
-        created_at=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=age_min),
+    fields: dict[str, object] = {
+        "source": QuizSetSource.chat,
+        "status": QuizSetStatus.used,
+        "created_at": dt.datetime.now(dt.UTC) - dt.timedelta(minutes=age_min),
         **kw,
-    )
+    }
+    row = QuizQuestionSet(artifact_id=artifact.id, user_id=student.id, **fields)
     db.add(row)
     db.flush()
     return row
@@ -113,10 +112,52 @@ def test_sets_newest_first_with_reasons(client: TestClient, db_session: Session)
     assert newest["student"] == {"display_name": "Stu Dent", "email": "s@example.com"}
     assert newest["source"] == "chat" and newest["status"] == "used"
     assert oldest["kept"] == 0 and oldest["dropped_questions"] == []
+    assert newest["warning"] is None and oldest["warning"] is None
     assert (
         client.get(f"/api/admin/artifacts/{artifact.id}/quiz-sets?limit=1").json()[0]["id"]
         == (newest["id"])
     )
+
+
+def test_sets_default_to_chat_and_all_includes_studio(
+    client: TestClient, db_session: Session
+) -> None:
+    _, artifact, student = _setup(db_session)
+    chat = _set(db_session, artifact, student, 10, questions=[], validation_report={})
+    studio = _set(
+        db_session,
+        artifact,
+        student,
+        5,
+        questions=[],
+        validation_report={},
+        source=QuizSetSource.studio,
+    )
+    _admin(client, db_session)
+    url = f"/api/admin/artifacts/{artifact.id}/quiz-sets"
+    assert [r["id"] for r in client.get(url).json()] == [str(chat.id)]
+    assert [r["id"] for r in client.get(f"{url}?source=chat").json()] == [str(chat.id)]
+    assert [r["id"] for r in client.get(f"{url}?source=all").json()] == [
+        str(studio.id),
+        str(chat.id),
+    ]
+    assert client.get(f"{url}?source=bogus").status_code == 422
+
+
+def test_sets_surface_the_reask_error_as_a_warning(client: TestClient, db_session: Session) -> None:
+    _, artifact, student = _setup(db_session)
+    _set(
+        db_session,
+        artifact,
+        student,
+        5,
+        questions=[],
+        validation_report={"rounds": [], "reask_error": "GenerationTimeout: chat took too long"},
+    )
+    _admin(client, db_session)
+    (row,) = client.get(f"/api/admin/artifacts/{artifact.id}/quiz-sets").json()
+    assert row["warning"] == "GenerationTimeout: chat took too long"
+    assert row["error"] is None
 
 
 def test_sets_unknown_artifact_404(client: TestClient, db_session: Session) -> None:

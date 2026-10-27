@@ -514,11 +514,12 @@ def test_retake_while_preparing(
     _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
     _add_set(db_session, ctx, QuizSetStatus.preparing)
     enqueued.clear()
-    resp = _start(client, ctx)
-    assert resp.status_code == 202
-    assert resp.json() == PREPARING
+    for _ in range(3):  # the client polls every 3 s while a fresh set is preparing
+        resp = _start(client, ctx)
+        assert resp.status_code == 202
+        assert resp.json() == PREPARING
     assert _attempt_count(db_session, ctx) == 1
-    assert enqueued == [(ctx.quiz_id, str(ctx.student_id))]
+    assert enqueued == []  # already being prepared: polling never enqueues again
 
 
 def test_retake_with_no_set_yet_is_preparing(

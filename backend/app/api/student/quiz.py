@@ -199,11 +199,15 @@ def _latest_chat_status(
     )
 
 
-def _waiting(db: Session, artifact_id: uuid.UUID, user_id: uuid.UUID, *, available: bool) -> Any:
-    """No ready set: commit (nothing to write), enqueue preparation (idempotent), and
-    tell the student to wait (202) or to come back later (409)."""
+def _waiting(
+    db: Session, artifact_id: uuid.UUID, user_id: uuid.UUID, *, available: bool, enqueue: bool
+) -> Any:
+    """No ready set: commit (nothing to write), enqueue preparation (idempotent) unless a
+    fresh set is already preparing, and tell the student to wait (202) or to come back
+    later (409)."""
     db.commit()
-    enqueue_prepare(artifact_id, user_id)
+    if enqueue:
+        enqueue_prepare(artifact_id, user_id)
     if available:
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -258,9 +262,10 @@ def start_attempt(
             preparing = _chat_set(db, artifact.id, uid, QuizSetStatus.preparing)
             if preparing is not None:
                 recent = _now() - preparing.created_at < PREPARING_PATIENCE
-                return _waiting(db, artifact.id, uid, available=recent)
+                # a fresh set is on its way: the client's 3 s polls must not re-enqueue
+                return _waiting(db, artifact.id, uid, available=recent, enqueue=not recent)
             failed = _latest_chat_status(db, artifact.id, uid) is QuizSetStatus.failed
-            return _waiting(db, artifact.id, uid, available=not failed)
+            return _waiting(db, artifact.id, uid, available=not failed, enqueue=True)
         qs.status = QuizSetStatus.used
     else:
         questions = [{**q, "type": "mcq"} for q in studio_questions(artifact)]

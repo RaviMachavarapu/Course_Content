@@ -18,7 +18,7 @@
  * NOT YET LIVE-VERIFIED: the exact shape `callTool()` returns for each of
  * these specific tools (structuredContent vs. a text-JSON content block) is
  * inferred from the general MCP tool-result spec, not confirmed against a
- * real authenticated session. `unwrapToolResult` below defensively handles
+ * real authenticated session. `unwrapToolResult` (tools.js) defensively handles
  * both shapes; if the real server returns something else, that function is
  * the one place to fix.
  */
@@ -28,6 +28,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StudioError, createArtifact, download, outlineAction } from "./studio.js";
 import { PathNotAllowed, readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
+import { callMcpTool } from "./tools.js";
 
 const PORT = process.env.PORT || 7332;
 const MCP_PACKAGE = process.env.NOTEBOOKLM_MCP_PACKAGE || "notebooklm-mcp-server@4.0.2";
@@ -36,21 +37,6 @@ let client = null;
 let connecting = null;
 let lastError = null;
 let lastOkAt = null;
-
-function unwrapToolResult(result) {
-  if (result && result.structuredContent !== undefined) return result.structuredContent;
-  if (result && Array.isArray(result.content)) {
-    const textBlock = result.content.find((c) => c.type === "text");
-    if (textBlock) {
-      try {
-        return JSON.parse(textBlock.text);
-      } catch {
-        return { text: textBlock.text };
-      }
-    }
-  }
-  return result;
-}
 
 async function getClient() {
   if (client) return client;
@@ -78,12 +64,9 @@ async function getClient() {
 
 async function callTool(name, args) {
   const c = await getClient();
-  const result = await c.callTool({ name, arguments: args ?? {} });
-  if (result?.isError) {
-    throw new Error(`tool ${name} failed: ${JSON.stringify(result.content ?? result)}`);
-  }
+  const data = await callMcpTool(c, name, args);
   lastOkAt = new Date().toISOString();
-  return unwrapToolResult(result);
+  return data;
 }
 
 const app = express();

@@ -86,7 +86,7 @@ services:
       - ./backend:/app
       - media:/data/media
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping 2>&1 | grep -q pong"]
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME 2>&1 | grep -q pong"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -100,12 +100,15 @@ services:
   worker-quiz:
     build: ./backend
     command: celery -A app.tasks.celery_app worker -Q quiz --concurrency=1 --loglevel=info
+    # A running chat preparation can finish on a warm shutdown; with acks_late a
+    # SIGKILL would orphan its 'preparing' set.
+    stop_grace_period: 6m
     environment: *backend-env
     volumes:
       - ./backend:/app
       - media:/data/media
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping 2>&1 | grep -q pong"]
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME 2>&1 | grep -q pong"]
       interval: 15s
       timeout: 10s
       retries: 5

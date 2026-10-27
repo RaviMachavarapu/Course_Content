@@ -16,6 +16,7 @@ const SET = {
   dropped: 1,
   dropped_questions: [{ round: 1, index: 2, question: "Bad one?", reason: "duplicate of seen" }],
   error: null,
+  warning: null,
   questions: [
     {
       type: "mcq",
@@ -53,6 +54,20 @@ describe("QuizSetsPanel", () => {
     expect(screen.getByText(/Answer:/)).toHaveTextContent("Answer: 4");
     expect(screen.getByText("Bad one?")).toBeInTheDocument();
     expect(screen.getByText(/duplicate of seen/)).toBeInTheDocument();
+  });
+
+  it("shows the re-ask warning in the expanded set", async () => {
+    renderPanel([{ ...SET, warning: "GenerationTimeout: chat took too long" }]);
+    await userEvent.click(await screen.findByRole("button", { name: /Stu Dent/ }));
+    expect(screen.getByTestId("quiz-set-warning")).toHaveTextContent(
+      "GenerationTimeout: chat took too long",
+    );
+  });
+
+  it("shows no warning line when there is none", async () => {
+    renderPanel([SET]);
+    await userEvent.click(await screen.findByRole("button", { name: /Stu Dent/ }));
+    expect(screen.queryByTestId("quiz-set-warning")).not.toBeInTheDocument();
   });
 
   it("shows an empty state", async () => {

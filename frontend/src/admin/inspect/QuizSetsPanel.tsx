@@ -30,6 +30,8 @@ export interface QuizSetItem {
     reason: string;
   }[];
   error: string | null;
+  /** round 2 (re-ask) chat failure; round 1's questions were served */
+  warning: string | null;
   questions: QuizSetQuestion[];
 }
 
@@ -69,6 +71,11 @@ function SetRow({ set }: { set: QuizSetItem }): JSX.Element {
       {open && (
         <div className="mt-2 flex flex-col gap-3">
           {set.error && <p className="text-error">{set.error}</p>}
+          {set.warning && (
+            <p className="text-label-sm text-on-surface-variant" data-testid="quiz-set-warning">
+              Warning — re-ask failed: {set.warning}
+            </p>
+          )}
           <ol className="list-decimal space-y-2 pl-5">
             {set.questions.map((q, i) => (
               <li key={i}>

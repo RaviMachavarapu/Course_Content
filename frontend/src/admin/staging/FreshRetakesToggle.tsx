@@ -9,12 +9,14 @@ export function FreshRetakesToggle({ moduleId }: { moduleId: string }): JSX.Elem
   const qc = useQueryClient();
   const key = ["admin", "quiz-settings", moduleId];
   const url = `/api/admin/modules/${moduleId}/quiz-settings`;
-  const { data } = useQuery({ queryKey: key, queryFn: () => apiFetch<QuizSettings>(url) });
+  const { data, isError } = useQuery({ queryKey: key, queryFn: () => apiFetch<QuizSettings>(url) });
   const save = useMutation({
     mutationFn: (fresh_retakes: boolean) =>
       apiFetch<QuizSettings>(url, { method: "PATCH", body: { fresh_retakes } }),
     onSuccess: (d) => qc.setQueryData(key, d),
   });
+  if (isError)
+    return <p className="font-label-sm text-label-sm text-error">Couldn't load the quiz setting</p>;
   if (!data) return null;
   return (
     <label className="flex w-fit items-center gap-2 font-label-sm text-label-sm">
