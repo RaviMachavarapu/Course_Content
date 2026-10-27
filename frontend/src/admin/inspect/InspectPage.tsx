@@ -6,6 +6,7 @@ import { StatusChip } from "../AdminStatus";
 import { useInspect } from "../staging/useStaging";
 import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { ContentView } from "./ContentView";
+import { QuizSetsPanel } from "./QuizSetsPanel";
 
 function MetaRow({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
   return (
@@ -123,6 +124,8 @@ export function InspectPage(): JSX.Element {
               </CardBody>
             </Card>
           )}
+
+          {data?.artifact.type === "quiz" && <QuizSetsPanel artifactId={artifactId} />}
 
           {v && v.focus_prompt_used && (
             <Card>

@@ -22,6 +22,7 @@ from app.api.admin import mcp as admin_mcp
 from app.api.admin import pipeline as admin_pipeline
 from app.api.admin import prompts as admin_prompts
 from app.api.admin import publish as admin_publish
+from app.api.admin import quiz as admin_quiz
 from app.api.admin import settings as admin_settings
 from app.api.admin import staging as admin_staging
 from app.api.admin import uploads as admin_uploads
@@ -134,6 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_pipeline.router)
     app.include_router(admin_mcp.router)
     app.include_router(admin_artifacts.router)
+    app.include_router(admin_quiz.router)
     app.include_router(admin_publish.router)
     app.include_router(admin_settings.router)
     app.include_router(media.router)

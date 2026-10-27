@@ -6,6 +6,7 @@ import { ARTIFACT_TYPES } from "../api";
 import { StatusChip } from "../AdminStatus";
 import { SourceSummary } from "../SourceSummary";
 import { ArtifactCard } from "./ArtifactCard";
+import { FreshRetakesToggle } from "./FreshRetakesToggle";
 import { PublishModal } from "./PublishModal";
 import { usePublish } from "./publish";
 import { useOutlineAction, useRedo, useRetry, useStaging } from "./useStaging";
@@ -57,6 +58,11 @@ export function StagingPage(): JSX.Element {
                   files={data.module.source_files}
                   detailed
                 />
+              </div>
+            )}
+            {byType.has("quiz") && (
+              <div className="mt-2">
+                <FreshRetakesToggle moduleId={moduleId} />
               </div>
             )}
           </div>
