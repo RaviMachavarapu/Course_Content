@@ -15,7 +15,7 @@ from app.models.course import Course
 from app.models.enums import ArtifactType, MediaFileKind, ModuleSourceType
 from app.models.module import Module
 from app.storage.keys import InvalidKeyError, media_key, validate_key
-from app.storage.service import Storage
+from app.storage.service import STORAGE_EXTS, Storage
 
 IDS = {k: uuid.uuid4() for k in ("course", "module", "artifact")}
 
@@ -192,3 +192,19 @@ def test_upload_and_source_keys() -> None:
     assert source_key(IDS["course"], IDS["module"], 3, "paper", part=2).endswith(
         "/sources/03-paper.part2.pdf"
     )
+
+
+_PDF_KINDS = ("flashcards_pdf", "quiz_pdf", "infographic_pdf", "slides_handout_pdf")
+
+
+def test_every_media_kind_has_a_storage_ext() -> None:
+    assert set(STORAGE_EXTS) == set(MediaFileKind)
+    for name in _PDF_KINDS:
+        assert STORAGE_EXTS[MediaFileKind(name)] == "pdf"
+
+
+def test_typeset_pdf_kinds_exist_in_the_database(db_session: Session) -> None:
+    values = db_session.execute(
+        sa.text("SELECT unnest(enum_range(NULL::media_file_kind))::text")
+    ).scalars()
+    assert set(_PDF_KINDS) <= set(values)

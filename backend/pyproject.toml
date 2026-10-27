@@ -26,6 +26,8 @@ dependencies = [
     "python-pptx>=1.0,<2",
     "weasyprint>=63,<64",
     "pypdf>=5.0,<6",
+    # Re-encodes slide/infographic images for the typeset service.
+    "pillow>=11,<14",
     "structlog>=24.4,<25",
     "sentry-sdk[fastapi,celery]>=2.17,<3",
 ]

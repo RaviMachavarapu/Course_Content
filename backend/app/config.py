@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     source_part_max_words: int = 450_000
     notebook_max_sources: int = 300
 
+    # ---- typeset service (Quarto PDFs) ----
+    typeset_endpoint: str = "http://typeset:8080"
+    #: a render can take ~150 s worst case (queue wait + fallback)
+    typeset_timeout_sec: int = 180
+
     # ---- auth ----
     admin_session_ttl_hours: int = 8
     student_session_ttl_days: int = 30

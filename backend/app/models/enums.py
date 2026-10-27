@@ -84,6 +84,11 @@ class MediaFileKind(_StrEnum):
     audio_m4a = "audio_m4a"
     cover = "cover"
     hero = "hero"
+    #: typeset (Quarto) PDFs of the artifact's content; `report_pdf` is the report's.
+    flashcards_pdf = "flashcards_pdf"
+    quiz_pdf = "quiz_pdf"
+    infographic_pdf = "infographic_pdf"
+    slides_handout_pdf = "slides_handout_pdf"
 
 
 class FlashcardRatingValue(_StrEnum):
