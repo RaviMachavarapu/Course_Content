@@ -194,7 +194,13 @@ def test_upload_and_source_keys() -> None:
     )
 
 
-_PDF_KINDS = ("flashcards_pdf", "quiz_pdf", "infographic_pdf", "slides_handout_pdf")
+_PDF_KINDS = (
+    "flashcards_pdf",
+    "quiz_pdf",
+    "quiz_questions_pdf",
+    "infographic_pdf",
+    "slides_handout_pdf",
+)
 
 
 def test_every_media_kind_has_a_storage_ext() -> None:

@@ -53,7 +53,7 @@ def test_inspect_returns_current_version_content_media_and_metadata(
     client: TestClient, db_session: Session
 ) -> None:
     artifact = _generated_report(db_session)
-    artifact_pdf.build_version_pdf(
+    artifact_pdf.build_version_pdfs(
         db_session,
         artifact.current_version_id,
         render=lambda *_: TypesetResult(pdf=b"%PDF-1.7", fallback="0"),

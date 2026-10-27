@@ -3,10 +3,12 @@
 Pure, synchronous steps (no Celery) shared by the `build_artifact_pdf` task
 (app/tasks/pdf.py) and `python -m app.cli rebuild-pdfs`:
 
-1. `prepare_pdf` reads the version's content and images and builds the document;
-2. the caller renders it with the typeset service (`render_pdf`), outside any
+1. `prepare_pdfs` reads the version's content and images and builds its
+   documents: one per PDF kind (a quiz has two: `quiz_pdf` with the answer key
+   for admins, `quiz_questions_pdf` without it for students);
+2. the caller renders each with the typeset service (`render_pdf`), outside any
    lock or long-held session;
-3. `store_pdf` stores it under the type's PDF kind, replacing a previous PDF of
+3. `store_pdf` stores each under its PDF kind, replacing a previous PDF of
    that kind for the version; the caller deletes `stale_keys` after committing,
    or calls `discard_new_file` if the commit fails.
 
@@ -35,7 +37,7 @@ from app.render.typeset_docs import (
     PDF_KINDS,
     StoredImage,
     TypesetDoc,
-    build_document,
+    build_documents,
     course_media_loader,
 )
 from app.storage.keys import media_key
@@ -48,10 +50,10 @@ __all__ = [
     "PdfSource",
     "Render",
     "StoredPdf",
-    "build_version_pdf",
+    "build_version_pdfs",
     "delete_files",
     "discard_new_file",
-    "prepare_pdf",
+    "prepare_pdfs",
     "store_pdf",
 ]
 
@@ -103,15 +105,15 @@ class BuiltPdf:
         return self.stored.media
 
 
-def prepare_pdf(session: Session, version_id: uuid.UUID) -> PdfSource:
-    """The typeset document for `version_id`. Raises `PdfSkipped`, or the
-    content's validation error if its `content_json` doesn't fit its type."""
+def prepare_pdfs(session: Session, version_id: uuid.UUID) -> list[PdfSource]:
+    """The typeset documents for `version_id`, the type's `PDF_KINDS` one first.
+    Raises `PdfSkipped`, or the content's validation error if its
+    `content_json` doesn't fit its type."""
     version = session.get(ArtifactVersion, version_id)
     if version is None:
         raise PdfSkipped("version not found")
     artifact = version.artifact
-    kind = PDF_KINDS.get(artifact.type)
-    if kind is None:
+    if artifact.type not in PDF_KINDS:
         raise PdfSkipped(f"{artifact.type.value} has no PDF")
     if version_id not in (artifact.current_version_id, artifact.published_version_id):
         raise PdfSkipped("superseded")
@@ -135,14 +137,14 @@ def prepare_pdf(session: Session, version_id: uuid.UUID) -> PdfSource:
             )
 
     label = _LABELS.get(artifact.type)
-    doc = build_document(
+    docs = build_documents(
         artifact.type,
         version.content_json,
         media,
         title=f"{module.title}: {label}" if label else None,
         load_media=course_media_loader(session, module.course_id),
     )
-    return PdfSource(version_id=version_id, kind=kind, doc=doc)
+    return [PdfSource(version_id=version_id, kind=k, doc=d) for k, d in docs.items()]
 
 
 def store_pdf(
@@ -208,12 +210,21 @@ def delete_files(keys: Iterable[str]) -> None:
             log.warning("pdf.stale_file_not_deleted", key=key, error=str(exc))
 
 
-def build_version_pdf(
+def build_version_pdfs(
     session: Session, version_id: uuid.UUID, *, render: Render | None = None
-) -> BuiltPdf:
-    """Prepare, render and store in one session (the rebuild command). Raises
-    `PdfSkipped`, `TypesetUnavailable`, `TypesetError` or a content error."""
-    source = prepare_pdf(session, version_id)
-    result = (render or render_pdf)(*source.doc)
-    stored = store_pdf(session, version_id, source.kind, result.pdf)
-    return BuiltPdf(stored=stored, fallback=result.fallback)
+) -> list[BuiltPdf]:
+    """Prepare, render and store every PDF of the version in one session (the
+    rebuild command). Raises `PdfSkipped`, `TypesetUnavailable`, `TypesetError`
+    or a content error; if a later PDF fails, the files of those already
+    stored are removed again (the caller rolls the rows back)."""
+    built: list[BuiltPdf] = []
+    try:
+        for source in prepare_pdfs(session, version_id):
+            result = (render or render_pdf)(*source.doc)
+            stored = store_pdf(session, version_id, source.kind, result.pdf)
+            built.append(BuiltPdf(stored=stored, fallback=result.fallback))
+    except Exception:
+        for b in built:
+            discard_new_file(b.stored)
+        raise
+    return built

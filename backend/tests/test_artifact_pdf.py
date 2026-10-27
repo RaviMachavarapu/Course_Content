@@ -197,6 +197,35 @@ def test_task_stores_the_pdf_media_file_with_the_types_kind(
     assert markdown.startswith("# ")
 
 
+def test_a_quiz_also_gets_a_questions_only_pdf(
+    db_session: Session, media_storage: Storage, task_sessions: None, fake: FakeTypeset
+) -> None:
+    """Admins get questions + answer key (quiz_pdf); students get a copy with
+    the questions and options only (quiz_questions_pdf)."""
+    version = _version(db_session, ArtifactType.quiz)
+
+    assert _run_task(version.id) == "built"
+
+    db_session.expire_all()
+    kinds = sorted(m.kind.value for m in db_session.get(ArtifactVersion, version.id).media_files)
+    assert kinds == ["quiz_pdf", "quiz_questions_pdf"]
+    full, questions = (call[0] for call in fake.calls)
+    assert "## Answer key" in full and "Bimolecular" in full
+    assert "Answer key" not in questions and "Bimolecular" not in questions
+    assert "Which is the rate law for $S_N2$" in questions
+
+
+def test_rebuild_pdfs_builds_both_quiz_pdfs(db_session: Session, fake: FakeTypeset) -> None:
+    quiz = _version(db_session, ArtifactType.quiz)
+
+    (result,) = rebuild_pdfs(db_session, version_id=quiz.id)
+
+    assert result[1] == "built (fallback 0)"
+    db_session.expire_all()
+    kinds = sorted(m.kind.value for m in db_session.get(ArtifactVersion, quiz.id).media_files)
+    assert kinds == ["quiz_pdf", "quiz_questions_pdf"]
+
+
 def test_slide_and_infographic_images_are_sent(
     db_session: Session, media_storage: Storage, task_sessions: None, fake: FakeTypeset
 ) -> None:
@@ -339,16 +368,17 @@ def test_formulas_shown_as_source_are_logged(
     task_sessions: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    version = _version(db_session, ArtifactType.quiz)
+    version = _version(db_session, ArtifactType.flashcards)
     monkeypatch.setattr(pdf_task, "render_pdf", FakeTypeset(fallback="2"))
     warnings: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(pdf_task.log, "warning", lambda event, **kw: warnings.append((event, kw)))
 
     assert _run_task(version.id) == "built"
 
-    assert warnings == [
-        ("pdf.formulas_shown_as_source", {"version_id": str(version.id), "fallback": "2"})
-    ]
+    ((event, kw),) = warnings
+    assert event == "pdf.formulas_shown_as_source"
+    assert kw["version_id"] == str(version.id) and kw["fallback"] == "2"
+    assert "/flashcards_pdf." in kw["key"]
 
 
 def test_audio_and_missing_versions_are_skipped(
@@ -457,7 +487,7 @@ def test_a_database_outage_is_retried(
     def down(*_: Any) -> None:
         raise OperationalError("SELECT 1", {}, Exception("connection refused"))
 
-    monkeypatch.setattr(pdf_task, "prepare_pdf", down)
+    monkeypatch.setattr(pdf_task, "prepare_pdfs", down)
     scheduled: list[dict[str, Any]] = []
 
     def fake_retry(**kwargs: Any) -> Exception:

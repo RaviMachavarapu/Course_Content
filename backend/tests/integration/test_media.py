@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 from app.cli import seed_admin
 from app.models.artifact import Artifact
 from app.models.course import Course
-from app.models.enums import ArtifactStatus, ArtifactType, MediaFileKind, ModuleSourceType
+from app.models.enums import (
+    ArtifactStatus,
+    ArtifactType,
+    CourseStatus,
+    MediaFileKind,
+    ModuleSourceType,
+)
 from app.models.module import Module
 from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.fixture import FixtureProvider
@@ -42,11 +48,12 @@ def _report_with_media(db: Session) -> tuple[Artifact, str]:
     db.expire_all()
     artifact = db.get(Artifact, jobs[0].artifact_id)
     # the report's PDF is typeset after generation (fake service here)
-    media = artifact_pdf.build_version_pdf(
+    (built,) = artifact_pdf.build_version_pdfs(
         db,
         artifact.current_version_id,
         render=lambda *_: TypesetResult(pdf=b"%PDF-1.7 report", fallback="0"),
-    ).media
+    )
+    media = built.media
     assert media.kind is MediaFileKind.report_pdf
     return artifact, media.storage_key
 
@@ -113,11 +120,12 @@ def test_student_cannot_fetch_unpublished_pdf(client: TestClient, db_session: Se
     db_session.expire_all()
     artifact = db_session.get(Artifact, artifact.id)
     assert artifact.current_version_id != artifact.published_version_id
-    draft_key = artifact_pdf.build_version_pdf(
+    (draft,) = artifact_pdf.build_version_pdfs(
         db_session,
         artifact.current_version_id,
         render=lambda *_: TypesetResult(pdf=b"%PDF-1.7 draft", fallback="0"),
-    ).media.storage_key
+    )
+    draft_key = draft.media.storage_key
     artifact.status = ArtifactStatus.published
     db_session.flush()
 
@@ -129,3 +137,57 @@ def test_student_cannot_fetch_unpublished_pdf(client: TestClient, db_session: Se
     resp = client.get(f"/api/media/{published_key}")
     assert resp.status_code == status.HTTP_200_OK
     assert resp.content == b"%PDF-1.7 report"
+
+
+def test_students_never_get_the_quiz_answer_key_pdf(
+    client: TestClient, db_session: Session
+) -> None:
+    """quiz_pdf carries the answer key: admins only, even for a published
+    version. Students get quiz_questions_pdf (questions and options only)."""
+    course = Course(title="C", slug=f"c-{uuid.uuid4()}")
+    module = Module(
+        course=course,
+        order_index=0,
+        title="M",
+        source_url="https://youtu.be/x",
+        source_type=ModuleSourceType.youtube,
+    )
+    db_session.add(module)
+    db_session.flush()
+    jobs = orchestrator.start_module_generation(
+        db_session, PROVIDER, module.id, [ArtifactType.quiz]
+    )
+    orchestrator.run_artifact_generation(
+        db_session, PROVIDER, jobs[0].artifact_id, job_id=jobs[0].job_id
+    )
+    db_session.expire_all()
+    artifact = db_session.get(Artifact, jobs[0].artifact_id)
+    built = artifact_pdf.build_version_pdfs(
+        db_session,
+        artifact.current_version_id,
+        render=lambda md, *_: TypesetResult(pdf=b"%PDF-1.7 " + md.encode(), fallback="0"),
+    )
+    keys = {b.media.kind: b.media.storage_key for b in built}
+    assert set(keys) == {MediaFileKind.quiz_pdf, MediaFileKind.quiz_questions_pdf}
+    artifact.published_version_id = artifact.current_version_id
+    artifact.status = ArtifactStatus.published
+    artifact.module.course.status = CourseStatus.published
+    db_session.flush()
+    db_session.expire_all()  # load the rows as the API would
+
+    client.post(
+        "/api/student/auth/register",
+        json={"email": "q@example.com", "password": "student-pw-12345", "display_name": "Q"},
+    )
+    listing = client.get(f"/api/student/artifacts/{artifact.id}")
+    assert listing.status_code == status.HTTP_200_OK
+    kinds = {m["kind"] for m in listing.json()["media"]}
+    assert "quiz_questions_pdf" in kinds
+    assert "quiz_pdf" not in kinds
+    assert all(keys[MediaFileKind.quiz_pdf] not in m["url"] for m in listing.json()["media"])
+
+    answer_key = client.get(f"/api/media/{keys[MediaFileKind.quiz_pdf]}")
+    assert answer_key.status_code == status.HTTP_404_NOT_FOUND
+    questions = client.get(f"/api/media/{keys[MediaFileKind.quiz_questions_pdf]}")
+    assert questions.status_code == status.HTTP_200_OK
+    assert b"Answer key" not in questions.content

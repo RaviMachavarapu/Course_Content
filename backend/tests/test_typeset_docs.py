@@ -30,6 +30,7 @@ from app.render.typeset_docs import (
     PDF_KINDS,
     StoredImage,
     build_document,
+    build_documents,
     build_flashcards,
     build_infographic,
     build_quiz,
@@ -359,6 +360,17 @@ def test_quiz_markdown() -> None:
     assert doc.title == "Quiz"
 
 
+def test_quiz_questions_only_markdown_has_no_answer_key() -> None:
+    """The students' copy: questions and options exactly as in the full quiz,
+    nothing of the answer key (correct options, explanations)."""
+    doc = build_quiz(QUIZ, [], answer_key=False)
+    assert doc.markdown == QUIZ_MD.split("\n## Answer key")[0]
+    assert "Answer key" not in doc.markdown
+    assert "**1. B:**" not in doc.markdown and "**2. D:**" not in doc.markdown
+    assert "Bimolecular" not in doc.markdown
+    assert doc.title == "Quiz"
+
+
 # -- infographic -----------------------------------------------------------------------
 INFOGRAPHIC: dict[str, Any] = {
     "caption": "Rates of $S_N1$ vs $S_N2$",
@@ -557,6 +569,13 @@ def test_pdf_kinds_and_dispatch() -> None:
         ArtifactType.slide_deck: MediaFileKind.slides_handout_pdf,
     }
     assert expected == PDF_KINDS
+    docs = build_documents(ArtifactType.quiz, QUIZ, [], title="T")
+    assert list(docs) == [MediaFileKind.quiz_pdf, MediaFileKind.quiz_questions_pdf]
+    assert docs[MediaFileKind.quiz_pdf].markdown == build_quiz(QUIZ, [], title="T").markdown
+    assert "Answer key" not in docs[MediaFileKind.quiz_questions_pdf].markdown
+    assert list(build_documents(ArtifactType.flashcards, FLASHCARDS, [])) == [
+        MediaFileKind.flashcards_pdf
+    ]
     assert build_document(ArtifactType.quiz, QUIZ, []).markdown == QUIZ_MD
     assert build_document(ArtifactType.quiz, QUIZ, [], title="T").title == "T"
     with pytest.raises(ValueError):

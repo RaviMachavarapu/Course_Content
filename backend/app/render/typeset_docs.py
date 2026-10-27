@@ -82,6 +82,12 @@ PDF_KINDS: dict[ArtifactType, MediaFileKind] = {
     ArtifactType.slide_deck: MediaFileKind.slides_handout_pdf,
 }
 
+#: a quiz also gets a students' copy: questions and options, no answer key
+#: (its `quiz_pdf` carries the answers and is never served to students)
+STUDENT_PDF_KINDS: dict[ArtifactType, MediaFileKind] = {
+    ArtifactType.quiz: MediaFileKind.quiz_questions_pdf,
+}
+
 #: reads a stored media file by its storage key
 MediaLoader = Callable[[str], bytes]
 
@@ -600,8 +606,14 @@ _LETTERS = "ABCD"
 
 
 def build_quiz(
-    content_json: dict[str, Any], media: Sequence[StoredImage], *, title: str | None = None
+    content_json: dict[str, Any],
+    media: Sequence[StoredImage],
+    *,
+    title: str | None = None,
+    answer_key: bool = True,
 ) -> TypesetDoc:
+    """Questions with their options, then (unless `answer_key` is False: the
+    students' copy) the answer key: correct option and explanation."""
     c = QuizContent.model_validate(content_json)
     blocks = ["## Questions"]
     for i, q in enumerate(c.questions, 1):
@@ -609,6 +621,8 @@ def build_quiz(
         blocks.append(text_to_markdown(q.question))
         markers = [f"{letter}." for letter in _LETTERS[: len(q.options)]]
         blocks.append(_list_items(markers, [[text_to_markdown(o)] for o in q.options]))
+    if not answer_key:
+        return _doc(title or "Quiz", blocks, {})
     blocks.append("## Answer key")
     for i, q in enumerate(c.questions, 1):
         answer = text_to_markdown(q.options[q.correct_index])
@@ -688,3 +702,23 @@ def build_document(
     if artifact_type is ArtifactType.report:
         return builder(content_json, media, title=title, load_media=load_media)
     return builder(content_json, media, title=title)
+
+
+def build_documents(
+    artifact_type: ArtifactType,
+    content_json: dict[str, Any],
+    media: Sequence[StoredImage],
+    *,
+    title: str | None = None,
+    load_media: MediaLoader | None = None,
+) -> dict[MediaFileKind, TypesetDoc]:
+    """Every typeset PDF of one artifact version by media kind, the type's
+    `PDF_KINDS` one first; a quiz also gets its students' copy (questions and
+    options only). Arguments as for `build_document`."""
+    main = build_document(artifact_type, content_json, media, title=title, load_media=load_media)
+    docs = {PDF_KINDS[artifact_type]: main}
+    if artifact_type is ArtifactType.quiz:
+        docs[STUDENT_PDF_KINDS[artifact_type]] = build_quiz(
+            content_json, media, title=title, answer_key=False
+        )
+    return docs

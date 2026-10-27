@@ -98,7 +98,7 @@ def test_staging_shape_covers_all_states(client: TestClient, db_session: Session
         j.state = state
     db_session.flush()
     # the report's PDF is typeset after generation (fake service here)
-    artifact_pdf.build_version_pdf(
+    artifact_pdf.build_version_pdfs(
         db_session,
         by_type[ArtifactType.report].current_version_id,
         render=lambda *_: TypesetResult(pdf=b"%PDF-1.7", fallback="0"),

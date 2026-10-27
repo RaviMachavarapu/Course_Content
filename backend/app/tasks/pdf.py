@@ -24,7 +24,7 @@ from app.pipeline.artifact_pdf import (
     StoredPdf,
     delete_files,
     discard_new_file,
-    prepare_pdf,
+    prepare_pdfs,
     store_pdf,
 )
 from app.render.typeset_client import TypesetError, TypesetUnavailable, render_pdf
@@ -39,21 +39,24 @@ RETRY_BASE_SEC = 30
 def build_artifact_pdf(self: Task, version_id: str) -> str:
     """Returns "built", "skipped", "failed" or "gave up" (out of retries)."""
     vid = uuid.UUID(version_id)
+    built: list[tuple[str, str]] = []  # (key, fallback) per PDF
     try:
-        # Two short sessions: none is held open while the service typesets.
+        # Short sessions: none is held open while the service typesets. Each
+        # of the version's PDFs (a quiz has two) is stored on its own.
         with session_scope() as session:
-            source = prepare_pdf(session, vid)
-        result = render_pdf(*source.doc)
-        stored: StoredPdf | None = None
-        try:
-            with session_scope() as session:
-                stored = store_pdf(session, vid, source.kind, result.pdf)
-        except Exception:
-            if stored is not None:  # the commit failed: don't orphan the new file
-                discard_new_file(stored)
-            raise
-        key = stored.new_key
-        delete_files(stored.stale_keys)
+            sources = prepare_pdfs(session, vid)
+        for source in sources:
+            result = render_pdf(*source.doc)
+            stored: StoredPdf | None = None
+            try:
+                with session_scope() as session:
+                    stored = store_pdf(session, vid, source.kind, result.pdf)
+            except Exception:
+                if stored is not None:  # the commit failed: don't orphan the new file
+                    discard_new_file(stored)
+                raise
+            delete_files(stored.stale_keys)
+            built.append((stored.new_key, result.fallback))
     except PdfSkipped as exc:
         log.info("pdf.skipped", version_id=version_id, reason=str(exc))
         return "skipped"
@@ -72,7 +75,10 @@ def build_artifact_pdf(self: Task, version_id: str) -> str:
         log.exception("pdf.failed", version_id=version_id, error=f"{type(exc).__name__}: {exc}")
         return "failed"
 
-    log.info("pdf.built", version_id=version_id, key=key, fallback=result.fallback)
-    if result.fallback != "0":
-        log.warning("pdf.formulas_shown_as_source", version_id=version_id, fallback=result.fallback)
+    for key, fallback in built:
+        log.info("pdf.built", version_id=version_id, key=key, fallback=fallback)
+        if fallback != "0":
+            log.warning(
+                "pdf.formulas_shown_as_source", version_id=version_id, key=key, fallback=fallback
+            )
     return "built"

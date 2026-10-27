@@ -1,8 +1,9 @@
 """Access-checked media streaming (spec.md §9, §11).
 
 Admins can fetch any media file. Students can fetch a file only when it belongs
-to the **published** version of a **published** artifact. Anything else → 404
-(never 403 — don't reveal that the key exists).
+to the **published** version of a **published** artifact and is not a kind
+students never get (`STUDENT_HIDDEN_MEDIA_KINDS`: the quiz PDF with its answer
+key). Anything else → 404 (never 403 — don't reveal that the key exists).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from app.api.deps import CurrentAnyUser, DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.artifact_version import ArtifactVersion
-from app.models.enums import ArtifactStatus
+from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactStatus
 from app.models.media_file import MediaFile
 from app.models.user import UserRole
 from app.storage.keys import InvalidKeyError, validate_key
@@ -39,6 +40,8 @@ def get_media(storage_key: str, db: DbDep, user: CurrentAnyUser) -> FileResponse
         raise not_found
 
     if user.role is not UserRole.admin:
+        if media.kind in STUDENT_HIDDEN_MEDIA_KINDS:
+            raise not_found
         version = db.get(ArtifactVersion, media.artifact_version_id)
         artifact = db.get(Artifact, version.artifact_id) if version else None
         allowed = (

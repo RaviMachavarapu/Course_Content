@@ -86,9 +86,17 @@ class MediaFileKind(_StrEnum):
     hero = "hero"
     #: typeset (Quarto) PDFs of the artifact's content; `report_pdf` is the report's.
     flashcards_pdf = "flashcards_pdf"
+    #: questions + answer key: admins only (never served to students)
     quiz_pdf = "quiz_pdf"
+    #: the students' copy of a quiz: questions and options, no answers
+    quiz_questions_pdf = "quiz_questions_pdf"
     infographic_pdf = "infographic_pdf"
     slides_handout_pdf = "slides_handout_pdf"
+
+
+#: media kinds students never receive, even of a published version (they hold
+#: a quiz's answers; students get `quiz_questions_pdf` instead)
+STUDENT_HIDDEN_MEDIA_KINDS: frozenset[MediaFileKind] = frozenset({MediaFileKind.quiz_pdf})
 
 
 class FlashcardRatingValue(_StrEnum):

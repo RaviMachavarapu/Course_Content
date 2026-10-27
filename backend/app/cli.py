@@ -459,6 +459,14 @@ def _pdf_versions(session: Session, types: Sequence[ArtifactType] | None) -> lis
     return ids
 
 
+def _fallbacks(built: Sequence[artifact_pdf.BuiltPdf]) -> str:
+    """One marker if all of a version's PDFs agree, else one per kind."""
+    markers = {b.fallback for b in built}
+    if len(markers) == 1:
+        return markers.pop()
+    return ", ".join(f"{b.media.kind.value} {b.fallback}" for b in built)
+
+
 def rebuild_pdfs(
     session: Session,
     *,
@@ -486,21 +494,23 @@ def rebuild_pdfs(
         label = f"{module.title} / {version.artifact.type.value} r{version.revision} [{version.id}]"
         try:
             if dry_run:
-                artifact_pdf.prepare_pdf(session, vid)
+                artifact_pdf.prepare_pdfs(session, vid)
                 results.append((label, "would build"))
                 continue
-            built: artifact_pdf.BuiltPdf | None = None
+            built: list[artifact_pdf.BuiltPdf] = []
             try:
                 with session.begin_nested():
-                    built = artifact_pdf.build_version_pdf(session, vid, render=render)
+                    built = artifact_pdf.build_version_pdfs(session, vid, render=render)
                 session.commit()
             except Exception:
-                if built is not None:  # the commit failed: don't orphan the new file
+                if built:  # the commit failed: don't orphan the new files
                     session.rollback()
-                    artifact_pdf.discard_new_file(built.stored)
+                    for b in built:
+                        artifact_pdf.discard_new_file(b.stored)
                 raise
-            artifact_pdf.delete_files(built.stored.stale_keys)
-            results.append((label, f"built (fallback {built.fallback})"))
+            for b in built:
+                artifact_pdf.delete_files(b.stored.stale_keys)
+            results.append((label, f"built (fallback {_fallbacks(built)})"))
         except artifact_pdf.PdfSkipped as exc:
             results.append((label, f"skipped ({exc})"))
         except TypesetUnavailable as exc:

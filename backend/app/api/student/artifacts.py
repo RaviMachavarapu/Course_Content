@@ -12,7 +12,7 @@ from app.api.deps import CurrentStudent, DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.course import Course
-from app.models.enums import ArtifactType, CourseStatus
+from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactType, CourseStatus
 from app.models.flashcard_rating import FlashcardRating
 from app.models.module import Module
 from app.models.progress import ArtifactProgress
@@ -77,6 +77,8 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
         for mf in sorted(
             version.media_files, key=lambda mf: (mf.page_index if mf.page_index is not None else -1)
         )
+        # e.g. the quiz PDF with its answer key (students get the questions-only one)
+        if mf.kind not in STUDENT_HIDDEN_MEDIA_KINDS
     ]
 
     prog = db.scalar(
