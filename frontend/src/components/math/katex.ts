@@ -1,5 +1,6 @@
 import katex from "katex";
 import "katex/contrib/mhchem";
+import { MATH_MACROS } from "./macros";
 
 /**
  * Single place that configures KaTeX. Returns the rendered HTML, or null when
@@ -13,6 +14,8 @@ export function renderLatex(latex: string, displayMode: boolean): string | null 
       trust: false,
       output: "htmlAndMathml",
       displayMode,
+      // Fresh copy per call: KaTeX writes \gdef/\newcommand results into it.
+      macros: { ...MATH_MACROS },
     });
     // throwOnError:false renders errors as a red span instead of throwing.
     if (html.includes('class="katex-error"')) return null;
