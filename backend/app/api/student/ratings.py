@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, status
-from sqlalchemy import select
+from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert
 
 from app.api.deps import CurrentStudent, DbDep
 from app.api.student.artifacts import _visible_artifact
@@ -13,18 +14,9 @@ from app.errors import APIError
 from app.models.enums import ArtifactType, FlashcardRatingValue
 from app.models.flashcard_rating import FlashcardRating
 from app.schemas.student import FlashcardRatingRequest, FlashcardRatingsResponse
+from app.services.progress import published_ratings
 
 router = APIRouter(prefix="/api/student", tags=["student-flashcards"])
-
-
-def _ratings_map(db: DbDep, user_id: uuid.UUID, artifact_id: uuid.UUID) -> dict[int, str]:
-    rows = db.scalars(
-        select(FlashcardRating).where(
-            FlashcardRating.user_id == user_id,
-            FlashcardRating.artifact_id == artifact_id,
-        )
-    )
-    return {r.card_index: r.rating.value for r in rows}
 
 
 @router.put(
@@ -49,17 +41,24 @@ def rate_card(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "bad_card_index", "Card index out of range"
         )
 
-    row = db.scalar(
-        select(FlashcardRating).where(
-            FlashcardRating.user_id == student.id,
-            FlashcardRating.artifact_id == artifact.id,
-            FlashcardRating.card_index == card_index,
+    assert version is not None  # cards came from it
+    rating = FlashcardRatingValue(body.value)
+    # one statement, so two first ratings of a card can't race into a 500
+    db.execute(
+        insert(FlashcardRating)
+        .values(
+            id=uuid.uuid4(),
+            user_id=student.id,
+            artifact_id=artifact.id,
+            artifact_version_id=version.id,
+            card_index=card_index,
+            rating=rating,
+        )
+        .on_conflict_do_update(
+            constraint="uq_flashcard_rating_user_version_card",
+            set_={"rating": rating, "updated_at": func.now()},
         )
     )
-    if row is None:
-        row = FlashcardRating(user_id=student.id, artifact_id=artifact.id, card_index=card_index)
-        db.add(row)
-    row.rating = FlashcardRatingValue(body.value)
-    db.flush()
-
-    return FlashcardRatingsResponse(ratings=_ratings_map(db, student.id, artifact.id))
+    return FlashcardRatingsResponse(
+        ratings=published_ratings(db, student.id, version.id, len(cards))
+    )

@@ -13,10 +13,16 @@ from app.models.enums import FlashcardRatingValue
 
 
 class FlashcardRating(Base):
+    """A student's Hard/Good/Easy on one card of one *published version* of a
+    deck: a newly published deck starts unrated (owner decision 2026-10-28)."""
+
     __tablename__ = "flashcard_rating"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "artifact_id", "card_index", name="uq_flashcard_rating_user_artifact_card"
+            "user_id",
+            "artifact_version_id",
+            "card_index",
+            name="uq_flashcard_rating_user_version_card",
         ),
     )
 
@@ -26,6 +32,9 @@ class FlashcardRating(Base):
     )
     artifact_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("artifact.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    artifact_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("artifact_version.id", ondelete="CASCADE"), nullable=False, index=True
     )
     card_index: Mapped[int] = mapped_column(Integer, nullable=False)
     rating: Mapped[FlashcardRatingValue] = mapped_column(flashcard_rating_enum, nullable=False)

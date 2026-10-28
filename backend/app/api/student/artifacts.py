@@ -13,7 +13,6 @@ from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.course import Course
 from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactType
-from app.models.flashcard_rating import FlashcardRating
 from app.models.module import Module
 from app.models.progress import ArtifactProgress
 from app.schemas.student import (
@@ -22,7 +21,7 @@ from app.schemas.student import (
     ArtifactProgressResponse,
     StudentArtifactOut,
 )
-from app.services.progress import record_artifact_progress
+from app.services.progress import published_ratings, record_artifact_progress
 from app.services.visibility import is_live
 from app.storage.service import get_storage
 
@@ -95,15 +94,8 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
 
     ratings: dict[int, str] = {}
     if artifact.type is ArtifactType.flashcards:
-        ratings = {
-            r.card_index: r.rating.value
-            for r in db.scalars(
-                select(FlashcardRating).where(
-                    FlashcardRating.user_id == student.id,
-                    FlashcardRating.artifact_id == artifact.id,
-                )
-            )
-        }
+        cards = (version.content_json or {}).get("cards", [])
+        ratings = published_ratings(db, student.id, version.id, len(cards))
 
     return StudentArtifactOut(
         id=artifact.id,

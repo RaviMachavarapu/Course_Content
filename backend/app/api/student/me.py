@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
+
 from fastapi import APIRouter
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import CurrentStudent, DbDep
 from app.models.artifact import Artifact
@@ -21,6 +24,7 @@ from app.schemas.me import (
     MyProgressCourse,
     MyProgressResponse,
 )
+from app.services.progress import course_percent
 from app.services.visibility import is_live, live_artifacts, live_clause
 
 router = APIRouter(prefix="/api/student/me", tags=["student-me"])
@@ -30,9 +34,9 @@ _QUIZ_ACE_THRESHOLD = 80.0
 
 @router.get("/progress", response_model=MyProgressResponse)
 def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
-    rows = db.execute(
-        select(CourseProgress, Course)
-        .join(Course, Course.id == CourseProgress.course_id)
+    courses = db.scalars(
+        select(Course)
+        .join(CourseProgress, CourseProgress.course_id == Course.id)
         .where(CourseProgress.user_id == student.id)
         .order_by(CourseProgress.updated_at.desc())
     ).all()
@@ -42,7 +46,7 @@ def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
     )
 
     out: list[MyProgressCourse] = []
-    for progress, course in rows:
+    for course in courses:
         modules = db.scalars(
             select(Module)
             .where(Module.course_id == course.id)
@@ -55,7 +59,9 @@ def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
                 id=course.id,
                 slug=course.slug,
                 title=course.title,
-                percent_complete=int(progress.percent_complete),
+                # live, as the catalog does (the cached column goes stale when
+                # a module is published or a deck republished)
+                percent_complete=course_percent(db, user_id=student.id, course_id=course.id),
                 modules_started=started,
                 modules_total=len(live_modules),
             )
@@ -115,14 +121,44 @@ def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
     return MyListeningResponse(rows=rows)
 
 
+def _course_complete_at(db: Session, user_id: uuid.UUID) -> dt.datetime | None:
+    """When the student first had every published artifact of some course
+    completed: the latest completion in that course (not a cached column whose
+    timestamp moves on every progress write). Derived live, so it agrees with
+    the catalog's percentage."""
+    rows = db.execute(
+        select(Module.course_id, Artifact.id)
+        .join(Artifact, Artifact.module_id == Module.id)
+        .where(
+            live_clause(),
+            Module.course_id.in_(
+                select(CourseProgress.course_id).where(CourseProgress.user_id == user_id)
+            ),
+        )
+    ).all()
+    completed: dict[uuid.UUID, dt.datetime] = {
+        artifact_id: at
+        for artifact_id, at in db.execute(
+            select(ArtifactProgress.artifact_id, ArtifactProgress.completed_at).where(
+                ArtifactProgress.user_id == user_id,
+                ArtifactProgress.completed_at.is_not(None),
+            )
+        )
+        if at is not None
+    }
+    by_course: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for course_id, artifact_id in rows:
+        by_course.setdefault(course_id, []).append(artifact_id)
+    earned: list[dt.datetime] = []
+    for artifact_ids in by_course.values():
+        if all(a in completed for a in artifact_ids):
+            earned.append(max(completed[a] for a in artifact_ids))
+    return min(earned, default=None)
+
+
 @router.get("/achievements", response_model=AchievementsResponse)
 def my_achievements(db: DbDep, student: CurrentStudent) -> AchievementsResponse:
-    course_complete_at = db.scalar(
-        select(CourseProgress.updated_at)
-        .where(CourseProgress.user_id == student.id, CourseProgress.percent_complete >= 100)
-        .order_by(CourseProgress.updated_at.asc())
-        .limit(1)
-    )
+    course_complete_at = _course_complete_at(db, student.id)
     quiz_ace_at = db.scalar(
         select(QuizAttempt.submitted_at)
         .where(

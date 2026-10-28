@@ -7,9 +7,11 @@ import datetime as dt
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models.artifact import Artifact
+from app.models.flashcard_rating import FlashcardRating
 from app.models.module import Module
 from app.models.progress import ArtifactProgress, CourseProgress
 from app.services.visibility import is_live, live_clause
@@ -20,18 +22,28 @@ def _now() -> dt.datetime:
 
 
 def _upsert_row(session: Session, user_id: uuid.UUID, artifact: Artifact) -> ArtifactProgress:
-    row = session.scalar(
-        select(ArtifactProgress).where(
+    """The caller's row for `artifact`, created if missing, row-locked. INSERT …
+    ON CONFLICT DO NOTHING, so two concurrent first writes can't race into a
+    unique violation (500)."""
+    session.execute(
+        insert(ArtifactProgress)
+        .values(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            artifact_id=artifact.id,
+            module_id=artifact.module_id,
+        )
+        .on_conflict_do_nothing(constraint="uq_artifact_progress_user_artifact")
+    )
+    return session.scalars(
+        select(ArtifactProgress)
+        .where(
             ArtifactProgress.user_id == user_id,
             ArtifactProgress.artifact_id == artifact.id,
         )
-    )
-    if row is None:
-        row = ArtifactProgress(
-            user_id=user_id, artifact_id=artifact.id, module_id=artifact.module_id
-        )
-        session.add(row)
-    return row
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
 
 
 def record_artifact_progress(
@@ -80,13 +92,8 @@ def record_artifact_progress(
     return row, percent
 
 
-def _recompute_course_progress(
-    session: Session,
-    *,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-    module_id: uuid.UUID,
-) -> int:
+def course_percent(session: Session, *, user_id: uuid.UUID, course_id: uuid.UUID) -> int:
+    """BR7, computed live: completed ÷ published artifacts of the course."""
     published_ids = set(
         session.scalars(
             select(Artifact.id)
@@ -95,32 +102,63 @@ def _recompute_course_progress(
         )
     )
     total = len(published_ids)
-    done = 0
-    if total:
-        done = (
-            session.scalar(
-                select(func.count())
-                .select_from(ArtifactProgress)
-                .where(
-                    ArtifactProgress.user_id == user_id,
-                    ArtifactProgress.completed_at.is_not(None),
-                    ArtifactProgress.artifact_id.in_(published_ids),
-                )
+    if not total:
+        return 0
+    done = (
+        session.scalar(
+            select(func.count())
+            .select_from(ArtifactProgress)
+            .where(
+                ArtifactProgress.user_id == user_id,
+                ArtifactProgress.completed_at.is_not(None),
+                ArtifactProgress.artifact_id.in_(published_ids),
             )
-            or 0
         )
+        or 0
+    )
+    return round(100 * done / total)
 
-    percent = round(100 * done / total) if total else 0
 
-    cp = session.scalar(
-        select(CourseProgress).where(
-            CourseProgress.user_id == user_id, CourseProgress.course_id == course_id
+def _recompute_course_progress(
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    module_id: uuid.UUID,
+) -> int:
+    percent = course_percent(session, user_id=user_id, course_id=course_id)
+    # upsert in one statement (two first writes in a course can't collide)
+    session.execute(
+        insert(CourseProgress)
+        .values(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            course_id=course_id,
+            percent_complete=percent,
+            last_module_id=module_id,
+        )
+        .on_conflict_do_update(
+            constraint="uq_course_progress_user_course",
+            set_={
+                "percent_complete": percent,
+                "last_module_id": module_id,
+                "updated_at": func.now(),
+            },
         )
     )
-    if cp is None:
-        cp = CourseProgress(user_id=user_id, course_id=course_id)
-        session.add(cp)
-    cp.percent_complete = percent
-    cp.last_module_id = module_id
-    session.flush()
     return percent
+
+
+def published_ratings(
+    session: Session, user_id: uuid.UUID, version_id: uuid.UUID, card_count: int
+) -> dict[int, str]:
+    """The caller's flashcard ratings for one published version of a deck (a
+    newly published deck starts unrated), limited to its cards."""
+    rows = session.execute(
+        select(FlashcardRating.card_index, FlashcardRating.rating).where(
+            FlashcardRating.user_id == user_id,
+            FlashcardRating.artifact_version_id == version_id,
+            FlashcardRating.card_index < card_count,
+        )
+    )
+    return {index: rating.value for index, rating in rows}
