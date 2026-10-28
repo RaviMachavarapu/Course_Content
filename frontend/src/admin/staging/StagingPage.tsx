@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { errorMessage } from "@/lib/api";
 import { useToast } from "@/lib/store";
 import { ARTIFACT_TYPES } from "../api";
 import { StatusChip } from "../AdminStatus";
@@ -20,6 +21,8 @@ export function StagingPage(): JSX.Element {
   const publish = usePublish(moduleId);
   const { toast } = useToast();
   const [publishScope, setPublishScope] = useState<"module" | "course" | null>(null);
+  const failed = (title: string, err: unknown) =>
+    toast({ title, description: errorMessage(err), tone: "error" });
 
   if (isError) {
     return (
@@ -98,10 +101,22 @@ export function StagingPage(): JSX.Element {
                   artifact={artifact}
                   busy={redo.isPending || retry.isPending || outline.isPending}
                   onRedo={(note, options, customPrompt) =>
-                    redo.mutate({ artifactId: artifact.id, note, options, customPrompt })
+                    redo.mutate(
+                      { artifactId: artifact.id, note, options, customPrompt },
+                      { onError: (err) => failed("Couldn’t start the redo", err) },
+                    )
                   }
-                  onRetry={() => retry.mutate(artifact.id)}
-                  onOutline={(feedback) => outline.mutate({ artifactId: artifact.id, feedback })}
+                  onRetry={() =>
+                    retry.mutate(artifact.id, {
+                      onError: (err) => failed("Couldn’t retry", err),
+                    })
+                  }
+                  onOutline={(feedback) =>
+                    outline.mutate(
+                      { artifactId: artifact.id, feedback },
+                      { onError: (err) => failed("Couldn’t send the outline action", err) },
+                    )
+                  }
                 />
               );
             })}
@@ -126,9 +141,11 @@ export function StagingPage(): JSX.Element {
                 tone: "success",
               });
             };
+            // the dialog stays open on failure so the admin can retry or cancel
+            const onError = (err: unknown) => failed("Publish failed", err);
             if (scope === "course")
-              publish.course.mutate(data.module.course_id, { onSuccess: onDone });
-            else publish.module.mutate(undefined, { onSuccess: onDone });
+              publish.course.mutate(data.module.course_id, { onSuccess: onDone, onError });
+            else publish.module.mutate(undefined, { onSuccess: onDone, onError });
           }}
         />
       )}

@@ -1,4 +1,4 @@
-import { ApiError, apiFetch, setCsrfFailureHandler } from "./api";
+import { ApiError, apiFetch, errorMessage, setCsrfFailureHandler } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -55,5 +55,18 @@ describe("apiFetch", () => {
     setCsrfFailureHandler(handler);
     await expect(apiFetch("/api/admin/x", { method: "POST" })).rejects.toThrow("Nope");
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe("errorMessage", () => {
+  it("prefers the first field detail of a validation error", () => {
+    const err = new ApiError(422, "validation_error", "Request body failed validation", [
+      { loc: ["body", "options", "language"], msg: "Input should be 'en'" },
+    ]);
+    expect(errorMessage(err)).toBe("options.language: Input should be 'en'");
+  });
+  it("falls back to the server message, then the default", () => {
+    expect(errorMessage(new ApiError(409, "conflict", "Busy"))).toBe("Busy");
+    expect(errorMessage(new Error("x"), "Nope")).toBe("Nope");
   });
 });

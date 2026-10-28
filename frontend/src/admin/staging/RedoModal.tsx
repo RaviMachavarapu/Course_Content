@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Modal } from "@/components";
 import type { ArtifactType } from "../api";
 import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
@@ -8,6 +8,9 @@ import {
   optionsProblem,
   type OptionValues,
 } from "../generationOptions";
+
+/** Server limit for a redo instruction (backend RedoRequest.note). */
+const NOTE_MAX = 4000;
 
 interface RedoModalProps {
   open: boolean;
@@ -41,6 +44,16 @@ export function RedoModal({
   // "use the Settings template".
   const [customPrompt, setCustomPrompt] = useState(initialPrompt);
 
+  // Each opening starts fresh: a cancelled edit or the last instruction must
+  // not be carried into (and re-sent with) the next redo.
+  useEffect(() => {
+    if (!open) return;
+    setNote("");
+    setOptions(normalizeOptions(type, { ...DEFAULT_OPTIONS[type], ...initialOptions }));
+    setCustomPrompt(initialPrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   return (
     <Modal
       open={open}
@@ -67,6 +80,7 @@ export function RedoModal({
           Instruction (optional) — what should change?
           <textarea
             rows={4}
+            maxLength={NOTE_MAX}
             value={note}
             onChange={(e) => setNote(e.target.value)}
             className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md text-on-surface focus:shadow-focus focus:outline-none"

@@ -2,9 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useUIStore } from "@/lib/store";
 import { StagingPage } from "./StagingPage";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  useUIStore.setState({ toasts: [] });
+});
 
 const TYPES = ["slide_deck", "flashcards", "quiz", "report", "infographic", "audio_overview"];
 
@@ -359,5 +363,68 @@ describe("StagingPage", () => {
     await userEvent.click(screen.getByTestId("btn-sr8"));
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "POST")).toBe(false);
+  });
+
+  it("a failed publish says why and keeps the dialog open", async () => {
+    installFetch([
+      { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/publish",
+        status: 409,
+        body: { error: { code: "conflict", message: "Nothing ready to publish" } },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByTestId("btn-sr2"));
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByTestId("btn-publish-confirm"));
+    await waitFor(() =>
+      expect(useUIStore.getState().toasts).toContainEqual(
+        expect.objectContaining({ tone: "error", description: "Nothing ready to publish" }),
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("a failed redo shows the server's field error", async () => {
+    installFetch([
+      { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/redo",
+        status: 422,
+        body: {
+          error: {
+            code: "validation_error",
+            message: "Request body failed validation",
+            fields: [{ loc: ["body", "note"], msg: "String should have at most 4000 characters" }],
+          },
+        },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    await userEvent.click(screen.getByTestId("btn-sr7"));
+    await waitFor(() =>
+      expect(useUIStore.getState().toasts[0]?.description).toMatch(
+        /note: String should have at most 4000/,
+      ),
+    );
+  });
+
+  it("reopening the redo modal starts from a clean note", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    await userEvent.type(await screen.findByRole("textbox"), "discard me");
+    await userEvent.click(screen.getByTestId("btn-sr8"));
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    const box = await screen.findByRole("textbox");
+    expect(box).toHaveValue("");
+    expect(box).toHaveAttribute("maxLength", "4000");
   });
 });

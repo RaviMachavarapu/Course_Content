@@ -97,3 +97,16 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
 
   return data as T;
 }
+
+/** A user-facing message for a failed request: the server's message plus the
+ * first field-level validation detail when there is one (e.g. "note: String
+ * should have at most 4000 characters"). */
+export function errorMessage(err: unknown, fallback = "The request failed. Try again."): string {
+  if (!(err instanceof ApiError)) return fallback;
+  const first = Array.isArray(err.fields)
+    ? (err.fields[0] as { loc?: unknown[]; msg?: string } | undefined)
+    : undefined;
+  if (!first?.msg) return err.message;
+  const loc = Array.isArray(first.loc) ? first.loc.filter((p) => p !== "body").join(".") : "";
+  return loc ? `${loc}: ${first.msg}` : first.msg;
+}
