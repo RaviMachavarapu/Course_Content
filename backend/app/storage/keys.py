@@ -58,6 +58,11 @@ def media_key(
     return validate_key(key)
 
 
+def module_prefix(course_id: uuid.UUID | str, module_id: uuid.UUID | str) -> str:
+    """The folder holding everything stored for one module (media and sources)."""
+    return validate_key(f"courses/{course_id}/modules/{module_id}")
+
+
 def upload_key(upload_id: uuid.UUID | str) -> str:
     """In-flight (pre-claim) chunked upload: `uploads/{id}.pdf`."""
     return validate_key(f"uploads/{upload_id}.pdf")

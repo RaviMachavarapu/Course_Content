@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -123,6 +124,18 @@ class Storage:
             return False
         path.unlink()
         log.info("storage.delete", key=key)
+        return True
+
+    def delete_tree(self, prefix: str) -> bool:
+        """Remove the folder `prefix` (a validated key inside MEDIA_ROOT, never
+        the root itself) with everything under it."""
+        path = self._path(prefix)
+        if path == self._root:
+            raise ValueError("refusing to delete MEDIA_ROOT")
+        if not path.is_dir():
+            return False
+        shutil.rmtree(path)
+        log.info("storage.delete_tree", prefix=prefix)
         return True
 
     def url_for(self, key: str) -> str:

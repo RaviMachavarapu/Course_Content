@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import CurrentAdmin, DbDep
 from app.errors import APIError
+from app.logging import get_logger
 from app.models.course import Course
 from app.models.enums import ARTIFACT_TYPES, ModuleSourceType, SourceUploadStatus
 from app.models.module import Module
@@ -37,9 +38,10 @@ from app.schemas.courses import (
     ModuleSummary,
     SourceFileOut,
 )
+from app.services.derived_status import recompute_course_status
 from app.services.ingestion import SUPPORTED_HINT, detect_source_type
 from app.services.slugs import unique_course_slug
-from app.storage.keys import source_key
+from app.storage.keys import module_prefix, source_key
 from app.storage.service import get_storage
 
 router = APIRouter(
@@ -47,6 +49,8 @@ router = APIRouter(
 )
 
 _ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
+
+log = get_logger("admin.courses")
 
 
 def source_files_out(module: Module) -> list[SourceFileOut]:
@@ -201,6 +205,8 @@ def create_module(
 
     uploads = _lock_uploads(db, body.upload_ids, admin.id)
 
+    # two concurrent creates would both pick max+1 and hit uq_module_course_order
+    db.execute(select(Course.id).where(Course.id == course.id).with_for_update())
     max_index = db.scalar(
         select(func.coalesce(func.max(Module.order_index), -1)).where(Module.course_id == course.id)
     )
@@ -390,9 +396,40 @@ def regenerate_module(
     return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
 
 
+def _module_file_keys(module: Module) -> list[str]:
+    keys = [mf.storage_key for a in module.artifacts for v in a.versions for mf in v.media_files]
+    for src in module.source_files:
+        keys.append(src.storage_key)
+        keys.extend(p["storage_key"] for p in src.parts if p.get("storage_key"))
+    return keys
+
+
+def _delete_module_files(prefix: str, keys: list[str]) -> None:
+    """After the delete is committed (a background task runs after the
+    response, i.e. after `get_db` commits): remove the module's folder and any
+    of its files stored elsewhere. Confined to MEDIA_ROOT by `Storage`."""
+    storage = get_storage()
+    for key in keys:
+        try:
+            storage.delete(key)
+        except (OSError, ValueError) as exc:
+            log.warning("module.file_not_deleted", key=key, error=str(exc))
+    try:
+        storage.delete_tree(prefix)
+    except (OSError, ValueError) as exc:
+        log.warning("module.files_not_deleted", prefix=prefix, error=str(exc))
+
+
 @router.delete("/modules/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_module(module_id: uuid.UUID, db: DbDep, _: CurrentAdmin) -> Response:
+def delete_module(
+    module_id: uuid.UUID, db: DbDep, _: CurrentAdmin, background: BackgroundTasks
+) -> Response:
     module = _get_module(db, module_id)
-    db.delete(module)  # BR9 cascade
+    course = module.course
+    prefix = module_prefix(course.id, module.id)
+    keys = _module_file_keys(module)
+    db.delete(module)  # BR9 cascade (rows); files go after commit
     db.flush()
+    recompute_course_status(db, course)
+    background.add_task(_delete_module_files, prefix, keys)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

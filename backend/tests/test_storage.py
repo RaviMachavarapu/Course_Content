@@ -75,6 +75,22 @@ def test_put_rejects_traversal(tmp_path: Path) -> None:
         storage.put("../escape.txt", b"x", "text/plain")
 
 
+def test_delete_tree_is_confined_to_media_root(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "media", "http://x")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep")
+    storage.put("courses/c/modules/m/sources/a.pdf", b"a", "application/pdf")
+    storage.put("courses/c/modules/n/sources/b.pdf", b"b", "application/pdf")
+    assert storage.delete_tree("courses/c/modules/m") is True
+    assert not storage.exists("courses/c/modules/m/sources/a.pdf")
+    assert storage.exists("courses/c/modules/n/sources/b.pdf")
+    assert storage.delete_tree("courses/c/modules/m") is False  # already gone
+    for bad in ("..", "../", "courses/../..", "/etc", ""):
+        with pytest.raises(ValueError):
+            storage.delete_tree(bad)
+    assert outside.read_text() == "keep"
+
+
 def test_url_for(tmp_path: Path) -> None:
     storage = Storage(tmp_path, "http://localhost:5173/")
     assert storage.url_for("courses/x/a.pdf") == "http://localhost:5173/api/media/courses/x/a.pdf"

@@ -466,3 +466,80 @@ def test_move_failure_restores_files(
     db_session.expire_all()
     ok = _post_module(client, h, cid, upload_ids=[u1, u2])
     assert ok.status_code == 201, ok.text
+
+
+# -- module delete: status + files (review 2026-10-28) -------------------------
+def _generated_module(client: TestClient, db: Session, h: dict[str, str], cid: str, **extra):  # type: ignore[no-untyped-def]
+    from app.models.module import Module
+    from app.pipeline import orchestrator
+    from app.pipeline.fixture import FixtureProvider
+
+    body = {"title": "m", "types": ["report", "audio_overview"], **extra}
+    mid = client.post(f"/api/admin/courses/{cid}/modules", json=body, headers=h).json()["module"][
+        "id"
+    ]
+    module = db.get(Module, uuid.UUID(mid))
+    assert module is not None
+    for a in module.artifacts:
+        if a.type.value in body["types"]:  # type: ignore[operator]
+            orchestrator.run_artifact_generation(db, FixtureProvider(), a.id)
+    db.expire_all()
+    return db.get(Module, uuid.UUID(mid))
+
+
+def test_delete_generating_module_recomputes_course_status(
+    client: TestClient, db_session: Session
+) -> None:
+    from app.services.publish import publish_module
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    m1 = _generated_module(client, db_session, h, cid, source_url="https://example.com/a")
+    publish_module(db_session, m1)
+    db_session.flush()
+    m2 = _post_module(client, h, cid, source_url="https://example.com/b").json()["module"]
+    assert client.get(f"/api/admin/courses/{cid}").json()["course"]["status"] == "processing"
+
+    r = client.request("DELETE", f"/api/admin/courses/modules/{m2['id']}", headers=h)
+    assert r.status_code == status.HTTP_204_NO_CONTENT
+    assert client.get(f"/api/admin/courses/{cid}").json()["course"]["status"] == "published"
+
+    # deleting the last module leaves an empty (draft) course, not "published"
+    r = client.request("DELETE", f"/api/admin/courses/modules/{m1.id}", headers=h)
+    assert r.status_code == status.HTTP_204_NO_CONTENT
+    assert client.get(f"/api/admin/courses/{cid}").json()["course"]["status"] == "draft"
+
+
+def test_delete_module_removes_its_files_only(client: TestClient, db_session: Session) -> None:
+    from app.models.media_file import MediaFile
+    from app.storage.service import get_storage
+
+    storage = get_storage()
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    keep = _generated_module(client, db_session, h, cid, source_url="https://example.com/k")
+    gone = _generated_module(
+        client, db_session, h, cid, upload_ids=[_upload(client, h, "s.pdf", _pdf_bytes(2))]
+    )
+
+    def keys(module):  # type: ignore[no-untyped-def]
+        media = [
+            mf.storage_key for a in module.artifacts for v in a.versions for mf in v.media_files
+        ]
+        return media + [s.storage_key for s in module.source_files]
+
+    keep_keys, gone_keys = keys(keep), keys(gone)
+    assert any("/sources/" in k for k in gone_keys)
+    assert any("/artifacts/" in k for k in gone_keys)
+    assert keep_keys
+    # a stray file in the module's folder (e.g. a split part) goes too
+    stray = f"courses/{cid}/modules/{gone.id}/sources/00-s.part1.pdf"
+    storage.put(stray, b"%PDF part", "application/pdf")
+    assert all(storage.exists(k) for k in keep_keys + gone_keys)
+
+    r = client.request("DELETE", f"/api/admin/courses/modules/{gone.id}", headers=h)
+    assert r.status_code == status.HTTP_204_NO_CONTENT
+    assert not any(storage.exists(k) for k in [*gone_keys, stray])
+    assert not storage.path_for(f"courses/{cid}/modules/{gone.id}").exists()
+    assert all(storage.exists(k) for k in keep_keys)
+    assert db_session.query(MediaFile).filter(MediaFile.storage_key.in_(gone_keys)).count() == 0
