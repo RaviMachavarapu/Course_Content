@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+
+# Secrets and local environment
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# User-local dev overrides and scripts (never commit)
+docker-compose.override.yml
+frontend/.live-options.mjs
+frontend/.live-*.mjs
+
+# Runtime state written by celery beat
+backend/celerybeat-schedule*
+celerybeat-schedule*
+
+# Test output
+test-results/
+playwright-report/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS / editor noise
+.DS_Store
+
+# Note: mcp/auth/ has its own .gitignore (Google session, never committed).
+# .superpowers/ ledgers are deliberately NOT ignored.
