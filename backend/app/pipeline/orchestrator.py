@@ -31,7 +31,6 @@ from app.models.enums import (
 )
 from app.models.generation_job import GenerationJob
 from app.models.module import Module
-from app.models.status import derive_course_status, derive_module_status
 from app.pipeline.media_probe import mp4_duration_seconds
 from app.pipeline.module_sources import SourceStepError, ensure_module_sources
 from app.pipeline.parsers import parse_artifact
@@ -50,6 +49,7 @@ from app.render import RenderError
 from app.render.report_html import build_report_html
 from app.schemas.content import AudioOverviewContent, ReportContent
 from app.schemas.content_options import validate_options
+from app.services.derived_status import recompute_status
 from app.services.prompts import get_active_body, get_active_template
 from app.storage.keys import media_key
 from app.storage.service import STORAGE_EXTS, get_storage
@@ -595,14 +595,5 @@ def _store_media(
 
 
 def _recompute_status(session: Session, module: Module) -> None:
-    session.flush()
-    artifact_statuses = list(
-        session.scalars(select(Artifact.status).where(Artifact.module_id == module.id))
-    )
-    module.status = derive_module_status(artifact_statuses)
-    session.flush()
-    module_statuses = list(
-        session.scalars(select(Module.status).where(Module.course_id == module.course_id))
-    )
-    module.course.status = derive_course_status(module_statuses)
-    session.flush()
+    # row-locks module then course before reading children (no lost update)
+    recompute_status(session, module)

@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.artifact import Artifact
 from app.models.course import Course
 from app.models.enums import ArtifactStatus, CourseStatus
 from app.models.module import Module
-from app.models.status import derive_course_status, derive_module_status
+from app.services.derived_status import (
+    recompute_course_status,
+    recompute_module_status,
+    recompute_status,
+)
 
 _SKIP_REASON = {
     ArtifactStatus.pending: "not generated yet",
@@ -40,14 +43,7 @@ def _publish_artifacts(artifacts: list[Artifact]) -> tuple[list[Artifact], list[
 
 
 def _recompute(session: Session, module: Module) -> None:
-    session.flush()
-    module.status = derive_module_status(
-        list(session.scalars(select(Artifact.status).where(Artifact.module_id == module.id)))
-    )
-    session.flush()
-    module.course.status = derive_course_status(
-        list(session.scalars(select(Module.status).where(Module.course_id == module.course_id)))
-    )
+    recompute_status(session, module)
     _stamp_course_published(module.course)
     session.flush()
 
@@ -72,12 +68,8 @@ def publish_course(session: Session, course: Course) -> tuple[list[Artifact], li
         p, s = _publish_artifacts(list(module.artifacts))
         published.extend(p)
         skipped.extend(s)
-        session.flush()
-        module.status = derive_module_status(
-            list(session.scalars(select(Artifact.status).where(Artifact.module_id == module.id)))
-        )
-    session.flush()
-    course.status = derive_course_status([m.status for m in course.modules])
+        recompute_module_status(session, module)
+    recompute_course_status(session, course)
     _stamp_course_published(course)
     session.flush()
     return published, skipped
