@@ -165,4 +165,24 @@ describe("AudioPlayer", () => {
       expect(put).toBeDefined();
     });
   });
+
+  it("saves the position on unmount even when the artifact loaded after mount", async () => {
+    const fetchMock = installFetch();
+    const { container, unmount } = renderPlayer();
+    await screen.findByTestId("btn-au1"); // skeleton first, then the <audio>
+    const audio = container.querySelector("audio")!;
+    audio.currentTime = 42;
+    fireEvent.timeUpdate(audio);
+    unmount();
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (c) =>
+          (c[1] as RequestInit)?.method === "PUT" &&
+          String(c[0]).includes("/progress") &&
+          (JSON.parse((c[1] as RequestInit).body as string) as { audio_position_seconds?: number })
+            .audio_position_seconds === 42,
+      );
+      expect(put).toBeDefined();
+    });
+  });
 });

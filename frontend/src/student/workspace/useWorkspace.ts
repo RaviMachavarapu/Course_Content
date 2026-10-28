@@ -52,6 +52,20 @@ export function useArtifactProgress(id: string, slug: string) {
   return useMutation({
     mutationFn: (body: ArtifactProgressInput) => workspaceApi.putProgress(id, body),
     onSuccess: (result, body) => {
+      // Keep the cached artifact in step with what the server saved, so coming
+      // back to this deck/episode resumes from the latest position (not the one
+      // from the first load) and doesn't then overwrite it.
+      qc.setQueryData<StudentArtifact>(["student", "artifact", id], (prev) =>
+        prev
+          ? {
+              ...prev,
+              completed: result.completed,
+              slide_last_index: result.slide_last_index,
+              audio_position_seconds: result.audio_position_seconds,
+            }
+          : prev,
+      );
+      void qc.invalidateQueries({ queryKey: ["student", "me"] });
       if (body.completed || body.complete_module) {
         void qc.invalidateQueries({ queryKey: ["student", "workspace", slug] });
         void qc.invalidateQueries({ queryKey: ["student", "catalog"] });

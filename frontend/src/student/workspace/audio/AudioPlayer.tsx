@@ -65,12 +65,15 @@ export function AudioPlayer({
     return () => window.clearInterval(id);
   }, [playing, save]);
 
+  // Latest playback position, kept in a ref so the unmount save can read it:
+  // `audioRef` is still null at mount (the Skeleton renders first) and is
+  // detached again before a passive-effect cleanup runs.
+  const positionRef = useRef(0);
   useEffect(() => {
-    const el = audioRef.current;
     return () => {
-      if (el && el.currentTime > 0) {
+      if (positionRef.current > 0) {
         // best-effort save on unmount
-        progress.mutate({ audio_position_seconds: Math.floor(el.currentTime) });
+        progress.mutate({ audio_position_seconds: Math.floor(positionRef.current) });
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,7 +119,10 @@ export function AudioPlayer({
           }
           seeked.current = true;
         }}
-        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          positionRef.current = e.currentTarget.currentTime;
+          setTime(e.currentTarget.currentTime);
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => {
           setPlaying(false);

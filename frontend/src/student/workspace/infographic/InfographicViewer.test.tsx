@@ -31,8 +31,10 @@ function installFetch(artifact: unknown = ARTIFACT) {
     let body: unknown = { error: { code: "x", message: "x" } };
     let status = 404;
     if (url.includes("/progress") && method === "PUT") {
+      // like the server: a visit PUT ({}) doesn't complete; {completed:true} does
+      const sent = JSON.parse((init?.body as string) ?? "{}") as { completed?: boolean };
       body = {
-        completed: true,
+        completed: sent.completed === true,
         slide_last_index: null,
         audio_position_seconds: null,
         course_percent_complete: 100,

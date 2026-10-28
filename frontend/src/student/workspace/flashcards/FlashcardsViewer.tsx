@@ -39,7 +39,9 @@ export function FlashcardsViewer({
   const cards = (data?.content_json?.cards ?? []) as Card[];
   const ratings = data?.flashcard_ratings ?? {};
 
-  // Hard-first order, decided once when the deck loads (spec §3.11).
+  // Hard-first order, decided once when the deck loads (spec §3.11). Keyed on
+  // the artifact id only: a rating or refetch replaces `data`, and re-sorting
+  // then would swap the card under the student.
   const order = useMemo(() => {
     if (!data) return [];
     return cards
@@ -50,11 +52,12 @@ export function FlashcardsViewer({
         return ra - rb || a - b;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data?.id, cards.length]);
 
   const [pos, setPos] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const seen = useRef<Set<number>>(new Set());
+  const completionSent = useRef(false);
 
   const cardIndex = order[pos] ?? 0;
   const card = cards[cardIndex];
@@ -64,7 +67,10 @@ export function FlashcardsViewer({
     setFlipped(false);
     if (total > 0) {
       seen.current.add(cardIndex);
-      if (seen.current.size >= total && data) progress.mutate({ completed: true });
+      if (seen.current.size >= total && data && !completionSent.current) {
+        completionSent.current = true;
+        progress.mutate({ completed: true });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos, total]);
