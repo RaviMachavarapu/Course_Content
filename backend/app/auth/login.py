@@ -1,7 +1,8 @@
 """Shared credential-login flow for both the student and admin scopes.
 
-Rate-limits per IP and per email (scope-namespaced), verifies the password with
-a generic failure, stamps `last_login_at`, opens a session, and sets the cookie.
+Rate-limits *failed* attempts per client IP and per email (scope-namespaced; a
+success clears the email's count), verifies the password with a generic failure
+and constant work, stamps `last_login_at`, opens a session, and sets the cookie.
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.auth.cookies import set_session_cookie
 from app.auth.csrf import issue_csrf_cookie
-from app.auth.hashing import verify_password
-from app.auth.ratelimit import RateLimiter, parse_rate
+from app.auth.hashing import dummy_hash, verify_password
+from app.auth.ratelimit import RateLimiter, client_ip, parse_rate
 from app.auth.sessions import SessionScope, SessionStore
 from app.config import Settings
 from app.errors import APIError
@@ -41,10 +42,11 @@ def login_flow(
 ) -> User:
     limit, window = parse_rate(settings.login_rate_limit)
     normalized = normalize_email(email)
-    ip = request.client.host if request.client else "unknown"
-    ok_ip = limiter.hit(f"rl:login:{scope}:ip:{ip}", limit, window)
-    ok_email = limiter.hit(f"rl:login:{scope}:email:{normalized}", limit, window)
-    if not (ok_ip and ok_email):
+    ip_key = f"rl:login:{scope}:ip:{client_ip(request)}"
+    email_key = f"rl:login:{scope}:email:{normalized}"
+    # Only failures count: a class logging in from one school NAT must not
+    # trip the limit. Check before doing any work, count after a failure.
+    if limiter.peek(ip_key) >= limit or limiter.peek(email_key) >= limit:
         raise APIError(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "rate_limited",
@@ -52,14 +54,17 @@ def login_flow(
         )
 
     user = db.scalar(select(User).where(User.email == normalized))
-    if (
-        user is None
-        or user.role is not role
-        or not user.is_active
-        or not verify_password(user.password_hash, password)
-    ):
+    if user is not None and (user.role is not role or not user.is_active):
+        user = None
+    # Always run one Argon2 verify so "no such account" isn't faster than
+    # "wrong password".
+    password_ok = verify_password(user.password_hash if user else dummy_hash(), password)
+    if user is None or not password_ok:
+        limiter.hit(ip_key, limit, window)
+        limiter.hit(email_key, limit, window)
         raise _INVALID
 
+    limiter.reset(email_key)
     user.last_login_at = dt.datetime.now(tz=dt.UTC)
     db.flush()
     token = store.create(str(user.id), scope)

@@ -7,10 +7,13 @@ transparently by `verify_password` + `needs_rehash`.
 
 from __future__ import annotations
 
+import secrets
+
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 _hasher = PasswordHasher()
+_dummy_hash: str | None = None
 
 
 def hash_password(password: str) -> str:
@@ -23,6 +26,15 @@ def verify_password(password_hash: str, password: str) -> bool:
         return _hasher.verify(password_hash, password)
     except (VerifyMismatchError, InvalidHashError, ValueError):
         return False
+
+
+def dummy_hash() -> str:
+    """A real Argon2 hash of a random secret, for verifying against when there
+    is no account — so an unknown email costs the same time as a wrong password."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = _hasher.hash(secrets.token_urlsafe(16))
+    return _dummy_hash
 
 
 def needs_rehash(password_hash: str) -> bool:
