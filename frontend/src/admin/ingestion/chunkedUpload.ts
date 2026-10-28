@@ -1,4 +1,10 @@
-import { apiFetch, ApiError, readCookie } from "@/lib/api";
+import {
+  apiFetch,
+  ApiError,
+  readCookie,
+  reportCsrfFailure,
+  SESSION_EXPIRED_MESSAGE,
+} from "@/lib/api";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
@@ -69,11 +75,32 @@ async function putChunk(
   if (res.status >= 500) {
     return { kind: "retry", error: new Error(`Upload failed (${res.status})`) };
   }
+  if (res.status === 403 && data?.error?.code === "csrf_failed") {
+    const path = `/api/admin/uploads/${uploadId}`;
+    reportCsrfFailure(path);
+    throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE);
+  }
   throw new ApiError(
     res.status,
     data?.error?.code ?? "error",
     data?.error?.message ?? `Upload failed (${res.status})`,
   );
+}
+
+/** True when the server already holds the whole file. Used when the final
+ * chunk's response was lost: the chunk may have been committed even though we
+ * saw a network error, a 5xx, or (on the retry) 409 `not_receiving`. */
+async function isComplete(uploadId: string, total: number, signal?: AbortSignal): Promise<boolean> {
+  try {
+    const s = await apiFetch<{ received_bytes: number; status: string }>(
+      `/api/admin/uploads/${uploadId}`,
+      { signal },
+    );
+    return s.status === "complete" && s.received_bytes === total;
+  } catch {
+    if (signal?.aborted) throw abortError();
+    return false;
+  }
 }
 
 /**
@@ -97,12 +124,33 @@ export async function uploadPdf(
   let offset = 0;
   while (offset < total) {
     const slice = file.slice(offset, Math.min(offset + chunkSize, total));
+    const isFinal = offset + slice.size >= total;
     let attempt = 0;
     for (;;) {
-      const result = await putChunk(started.upload_id, offset, slice, signal);
+      let result: ChunkResult;
+      try {
+        result = await putChunk(started.upload_id, offset, slice, signal);
+      } catch (err) {
+        if (
+          isFinal &&
+          err instanceof ApiError &&
+          err.code === "not_receiving" &&
+          (await isComplete(started.upload_id, total, signal))
+        ) {
+          result = { kind: "ok", received: total };
+        } else {
+          throw err;
+        }
+      }
       if (result.kind === "retry") {
         const delay = RETRY_DELAYS_MS[attempt++];
-        if (delay === undefined) throw result.error;
+        if (delay === undefined) {
+          if (isFinal && (await isComplete(started.upload_id, total, signal))) {
+            offset = total;
+            break;
+          }
+          throw result.error;
+        }
         await sleep(delay, signal);
         continue;
       }

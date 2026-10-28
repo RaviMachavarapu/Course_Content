@@ -15,7 +15,13 @@ import { SourceSummary } from "../SourceSummary";
 import { sourceUrlError } from "../sourceValidation";
 import { PdfPicker, type PickedFile } from "./PdfPicker";
 import { uploadPdf } from "./chunkedUpload";
-import { useCourses, useIngest, useMcpStatus, useRecentPipeline } from "../useAdminApi";
+import {
+  ModuleCreateError,
+  useCourses,
+  useIngest,
+  useMcpStatus,
+  useRecentPipeline,
+} from "../useAdminApi";
 
 type Target = "new" | "existing";
 
@@ -184,10 +190,22 @@ export function IngestionPage(): JSX.Element {
       },
       {
         onSuccess: ({ moduleId }) => navigate(`/admin/modules/${moduleId}/staging`),
-        onError: (err) =>
-          setFormError(
-            err instanceof ApiError ? err.message : "Could not start generation. Try again.",
-          ),
+        onError: (err) => {
+          const cause = err instanceof ModuleCreateError ? err.cause : err;
+          const message =
+            cause instanceof ApiError ? cause.message : "Could not start generation. Try again.";
+          if (err instanceof ModuleCreateError) {
+            // The course exists now: retry adds the module to it instead of
+            // creating another empty course.
+            setTarget("existing");
+            setExistingCourseId(err.createdCourseId);
+            setFormError(
+              `${message} The course “${courseTitle}” was created — fix the problem and retry to add this module to it.`,
+            );
+            return;
+          }
+          setFormError(message);
+        },
       },
     );
   }

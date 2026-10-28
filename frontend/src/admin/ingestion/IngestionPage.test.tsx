@@ -351,4 +351,65 @@ describe("IngestionPage PDF sources", () => {
     expect(body.source_url).toBe("https://youtu.be/abc");
     expect(body.upload_ids).toBeUndefined();
   });
+
+  it("retrying after the module step failed reuses the course it already created", async () => {
+    let moduleCalls = 0;
+    const fn = vi.fn((input: string | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      let status = 200;
+      let body: unknown = { error: { code: "not_found", message: "x" } };
+      if (method === "POST" && url.includes("/api/admin/courses/c1/modules")) {
+        moduleCalls += 1;
+        [status, body] =
+          moduleCalls === 1
+            ? [502, { error: { code: "bad_gateway", message: "Bad gateway" } }]
+            : [201, { module: { id: "m1" }, job_ids: ["j1"] }];
+      } else if (method === "POST" && url.includes("/api/admin/courses")) {
+        [status, body] = [201, { course: { id: "c1" } }];
+      } else if (url.includes("/api/admin/mcp/status")) body = HEALTHY.body;
+      else if (url.includes("/api/admin/pipeline")) body = EMPTY_PIPELINE.body;
+      else if (url.includes("/api/admin/courses"))
+        body = {
+          courses:
+            moduleCalls > 0
+              ? [
+                  {
+                    id: "c1",
+                    title: "Intro to ML",
+                    slug: "intro",
+                    status: "draft",
+                    module_count: 0,
+                  },
+                ]
+              : [],
+        };
+      else status = 404;
+      return Promise.resolve({
+        ok: status < 300,
+        status,
+        statusText: String(status),
+        json: () => Promise.resolve(body),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fn);
+    renderPage();
+
+    await userEvent.type(screen.getByLabelText("Link (optional)"), "https://youtu.be/abc");
+    await userEvent.type(screen.getByLabelText("Course title"), "Intro to ML");
+    await userEvent.type(screen.getByLabelText("Module title"), "Module 1");
+    await userEvent.click(screen.getByTestId("btn-ig6"));
+
+    expect(await screen.findByText(/was created/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("btn-ig6"));
+    await waitFor(() => expect(screen.getByText("STAGING PAGE")).toBeInTheDocument());
+
+    const coursePosts = fn.mock.calls.filter(
+      (c) =>
+        (c[1] as RequestInit | undefined)?.method === "POST" &&
+        String(c[0]).endsWith("/api/admin/courses"),
+    );
+    expect(coursePosts).toHaveLength(1);
+    expect(moduleCalls).toBe(2);
+  });
 });

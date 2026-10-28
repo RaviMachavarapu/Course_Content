@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setCsrfFailureHandler } from "@/lib/api";
 import { uploadPdf } from "./chunkedUpload";
 
 const MB = 1024 * 1024;
@@ -107,6 +108,7 @@ describe("uploadPdf", () => {
       new TypeError("network"),
       { status: 502 },
       { status: 500 },
+      { status: 200, body: { received_bytes: 0, status: "receiving" } }, // status check
     ]);
     const settled = uploadPdf(pdf(10), vi.fn()).then(
       () => "resolved",
@@ -122,10 +124,12 @@ describe("uploadPdf", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(calls).toHaveLength(4);
     await vi.advanceTimersByTimeAsync(4000);
-    expect(calls).toHaveLength(5);
+    expect(calls[4]!.method).toBe("PUT");
 
     expect(await settled).toBe("rejected");
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(6);
+    expect(calls[5]!.method).toBe("GET");
+    expect(calls[5]!.url).toBe("/api/admin/uploads/u1");
   });
 
   it("recovers when a retry succeeds", async () => {
@@ -147,5 +151,62 @@ describe("uploadPdf", () => {
     ]);
     await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow("a.pdf is not a PDF");
     expect(calls).toHaveLength(2);
+  });
+
+  it("treats a finished upload as success when the final chunk's response was lost", async () => {
+    const calls = stubFetch([
+      START,
+      new TypeError("network"), // committed on the server, response lost
+      {
+        status: 409,
+        body: { error: { code: "not_receiving", message: "Upload is already finished" } },
+      },
+      { status: 200, body: { received_bytes: 10, status: "complete" } },
+    ]);
+    const p = uploadPdf(pdf(10), vi.fn());
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(p).resolves.toBe("u1");
+    expect(calls.map((c) => c.method)).toEqual(["POST", "PUT", "PUT", "GET"]);
+  });
+
+  it("still fails when the status check shows the upload did not complete", async () => {
+    stubFetch([
+      START,
+      {
+        status: 409,
+        body: { error: { code: "not_receiving", message: "Upload is already finished" } },
+      },
+      { status: 200, body: { received_bytes: 4, status: "receiving" } },
+    ]);
+    await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow("Upload is already finished");
+  });
+
+  it("succeeds when retries run out but the server has the whole file", async () => {
+    stubFetch([
+      START,
+      { status: 502 },
+      { status: 502 },
+      { status: 502 },
+      { status: 502 },
+      { status: 200, body: { received_bytes: 10, status: "complete" } },
+    ]);
+    const p = uploadPdf(pdf(10), vi.fn());
+    await vi.advanceTimersByTimeAsync(7000);
+    await expect(p).resolves.toBe("u1");
+  });
+
+  it("reports an expired CSRF token so the app can send the admin to sign in", async () => {
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    stubFetch([
+      START,
+      {
+        status: 403,
+        body: { error: { code: "csrf_failed", message: "Missing or invalid CSRF token" } },
+      },
+    ]);
+    await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow(/session has expired/i);
+    expect(handler).toHaveBeenCalledWith("/api/admin/uploads/u1");
+    setCsrfFailureHandler(null);
   });
 });
