@@ -22,7 +22,7 @@ from app.api.deps import (
     SettingsDep,
 )
 from app.auth.cookies import clear_session_cookie
-from app.auth.csrf import clear_csrf_cookie, csrf_protect
+from app.auth.csrf import clear_csrf_cookie_after_logout, csrf_protect, ensure_csrf_cookie
 from app.auth.login import login_flow
 from app.auth.password_reset import confirm_password_reset, request_password_reset
 from app.auth.sessions import COOKIE_NAMES
@@ -71,12 +71,15 @@ def logout(request: Request, store: SessionStoreDep, settings: SettingsDep) -> R
     store.destroy("admin", request.cookies.get(COOKIE_NAMES["admin"]))
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, "admin", settings)
-    clear_csrf_cookie(response, settings)
+    clear_csrf_cookie_after_logout(request, response, settings, logging_out="admin")
     return response
 
 
 @router.get("/me", response_model=UserEnvelope)
-def me(admin: CurrentAdmin) -> UserEnvelope:
+def me(
+    admin: CurrentAdmin, request: Request, response: Response, settings: SettingsDep
+) -> UserEnvelope:
+    ensure_csrf_cookie(request, response, settings)
     return _envelope(admin)
 
 

@@ -1,11 +1,11 @@
 """Student authentication API (spec.md §5.1).
 
-    POST /api/student/auth/register                -> 201 {user} + sdp_student cookie
-    POST /api/student/auth/login                    -> 200 {user} + sdp_student cookie
-    POST /api/student/auth/logout                   -> 204
-    GET  /api/student/auth/me                       -> 200 {user}
-    POST /api/student/auth/password-reset/request   -> 202 (O6, always — no enumeration)
-    POST /api/student/auth/password-reset/confirm   -> 204
+POST /api/student/auth/register                -> 201 {user} + sdp_student cookie
+POST /api/student/auth/login                    -> 200 {user} + sdp_student cookie
+POST /api/student/auth/logout                   -> 204
+GET  /api/student/auth/me                       -> 200 {user}
+POST /api/student/auth/password-reset/request   -> 202 (O6, always — no enumeration)
+POST /api/student/auth/password-reset/confirm   -> 204
 """
 
 from __future__ import annotations
@@ -22,7 +22,12 @@ from app.api.deps import (
     SettingsDep,
 )
 from app.auth.cookies import clear_session_cookie, set_session_cookie
-from app.auth.csrf import clear_csrf_cookie, csrf_protect, issue_csrf_cookie
+from app.auth.csrf import (
+    clear_csrf_cookie_after_logout,
+    csrf_protect,
+    ensure_csrf_cookie,
+    issue_csrf_cookie,
+)
 from app.auth.hashing import hash_password
 from app.auth.login import login_flow
 from app.auth.password_reset import confirm_password_reset, request_password_reset
@@ -109,12 +114,15 @@ def logout(request: Request, store: SessionStoreDep, settings: SettingsDep) -> R
     store.destroy("student", request.cookies.get(COOKIE_NAMES["student"]))
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, "student", settings)
-    clear_csrf_cookie(response, settings)
+    clear_csrf_cookie_after_logout(request, response, settings, logging_out="student")
     return response
 
 
 @router.get("/me", response_model=UserEnvelope)
-def me(student: CurrentStudent) -> UserEnvelope:
+def me(
+    student: CurrentStudent, request: Request, response: Response, settings: SettingsDep
+) -> UserEnvelope:
+    ensure_csrf_cookie(request, response, settings)
     return _envelope(student)
 
 
