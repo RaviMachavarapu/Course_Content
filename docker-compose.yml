@@ -11,8 +11,11 @@ x-backend-env: &backend-env
   CONTENT_PROVIDER: fixture
   SMTP_URL: smtp://mailhog:1025
   LOG_LEVEL: info
-  # dev/e2e only — the Playwright suite logs in many times per run
+  # dev/e2e only — the Playwright suite logs in, registers and requests resets
+  # many times per run
   LOGIN_RATE_LIMIT: 100/5m
+  REGISTER_RATE_LIMIT: 300/1h
+  PASSWORD_RESET_RATE_LIMIT: 100/1h
 
 # Published ports are bound to 127.0.0.1: the dev stack runs with default
 # credentials (and, with the override, the owner's Google session), so nothing

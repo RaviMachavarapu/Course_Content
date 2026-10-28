@@ -1,11 +1,11 @@
 """Student authentication API (spec.md §5.1).
 
-    POST /api/student/auth/register                -> 201 {user} + sdp_student cookie
-    POST /api/student/auth/login                    -> 200 {user} + sdp_student cookie
-    POST /api/student/auth/logout                   -> 204
-    GET  /api/student/auth/me                       -> 200 {user}
-    POST /api/student/auth/password-reset/request   -> 202 (O6, always — no enumeration)
-    POST /api/student/auth/password-reset/confirm   -> 204
+POST /api/student/auth/register                -> 201 {user} + sdp_student cookie
+POST /api/student/auth/login                    -> 200 {user} + sdp_student cookie
+POST /api/student/auth/logout                   -> 204
+GET  /api/student/auth/me                       -> 200 {user}
+POST /api/student/auth/password-reset/request   -> 202 (O6, always — no enumeration)
+POST /api/student/auth/password-reset/confirm   -> 204
 """
 
 from __future__ import annotations
