@@ -10,11 +10,15 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["dev", "staging", "prod"]
 ContentProviderName = Literal["fixture", "notebooklm"]
+
+_DEV_DB_CREDENTIALS = "shikshak:shikshak@"
+_DEV_PUBLIC_BASE_URL = "http://localhost:5173"
+_DEV_SMTP_URL = "smtp://mailhog:1025"
 
 
 class Settings(BaseSettings):
@@ -27,12 +31,11 @@ class Settings(BaseSettings):
 
     # ---- core ----
     app_env: Environment = "dev"
-    session_secret: str = "dev-only-not-secret"
     database_url: str = "postgresql+psycopg://shikshak:shikshak@postgres:5432/shikshak"
     redis_url: str = "redis://redis:6379/0"
     media_root: str = "/data/media"
     media_gc_keep_versions: int = 3
-    public_base_url: str = "http://localhost:5173"
+    public_base_url: str = _DEV_PUBLIC_BASE_URL
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173"]
     )
@@ -68,7 +71,7 @@ class Settings(BaseSettings):
     password_reset_enabled: bool = True
 
     # ---- email ----
-    smtp_url: str = "smtp://mailhog:1025"
+    smtp_url: str = _DEV_SMTP_URL
     email_from: str = "no-reply@shikshak.local"
 
     # ---- celery ----
@@ -85,6 +88,23 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _no_dev_defaults_outside_dev(self) -> Settings:
+        """Staging/prod must not run on the dev database password or send reset
+        links to localhost; prod must not "send" reset mail into mailhog."""
+        if self.app_env == "dev":
+            return self
+        problems: list[str] = []
+        if _DEV_DB_CREDENTIALS in self.database_url:
+            problems.append("DATABASE_URL uses the dev credentials")
+        if self.public_base_url.rstrip("/") == _DEV_PUBLIC_BASE_URL:
+            problems.append("PUBLIC_BASE_URL is the dev default (reset links would point there)")
+        if self.is_prod and self.password_reset_enabled and self.smtp_url == _DEV_SMTP_URL:
+            problems.append("SMTP_URL is the dev mailhog (or set PASSWORD_RESET_ENABLED=false)")
+        if problems:
+            raise ValueError(f"APP_ENV={self.app_env}: " + "; ".join(problems))
+        return self
 
     @property
     def is_prod(self) -> bool:

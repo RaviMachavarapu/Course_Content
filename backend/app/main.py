@@ -99,8 +99,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Shikshak Dp — AI Course Content Suite",
         version="0.1.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        # the API schema is a map of every route: not published in prod
+        docs_url=None if settings.is_prod else "/api/docs",
+        redoc_url=None,
+        openapi_url=None if settings.is_prod else "/api/openapi.json",
         lifespan=_lifespan,
     )
     app.state.settings = settings
