@@ -1,7 +1,7 @@
 // Run: node --test mcp/shim/test/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TOOL_TIMEOUT_MS, callMcpTool } from "../tools.js";
+import { TOOL_TIMEOUT_MS, ToolError, callMcpTool } from "../tools.js";
 
 function fakeClient(result) {
   const calls = [];
@@ -30,5 +30,8 @@ test("defaults missing arguments to an empty object", async () => {
 
 test("throws when the tool reports an error", async () => {
   const c = fakeClient({ isError: true, content: [{ type: "text", text: "boom" }] });
-  await assert.rejects(callMcpTool(c, "notebook_list", {}), /tool notebook_list failed/);
+  await assert.rejects(
+    callMcpTool(c, "notebook_list", {}),
+    (e) => e instanceof ToolError && /tool notebook_list failed: .*boom/.test(e.message),
+  );
 });

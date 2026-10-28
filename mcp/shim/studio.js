@@ -38,13 +38,22 @@ export class StudioError extends Error {
   }
 }
 
+// The signed-in account's long-lived session cookie: it changes only on a new
+// sign-in, not when Google rotates SIDCC & co.
+let signedInAs = null;
+
 function savedCookies() {
+  let jar;
   try {
     const raw = JSON.parse(fs.readFileSync(AUTH_PATH, "utf-8")).cookies;
-    return new Map(raw.split("; ").map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
+    jar = new Map(raw.split("; ").map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
   } catch {
     throw new StudioError("no saved Google session (auth.json)", { auth: true });
   }
+  const session = jar.get("SID") ?? jar.get("__Secure-1PSID") ?? null;
+  if (signedInAs !== null && session !== signedInAs) resetSession(); // a new sign-in
+  signedInAs = session;
+  return jar;
 }
 
 // auth.json drops cookie domains. These are host-only for notebook.google.com
@@ -76,6 +85,13 @@ export function cookieHeader(host) {
 }
 
 let tokens = null; // { at, sid, bl, fetchedAt }
+
+/** Forget the in-memory session state (rotated cookies, page token): after a
+ * re-sign-in they belong to the old session and would be mixed into requests. */
+export function resetSession() {
+  refreshed.clear();
+  tokens = null;
+}
 
 async function pageTokens(force = false) {
   if (!force && tokens && Date.now() - tokens.fetchedAt < 10 * 60 * 1000) return tokens;

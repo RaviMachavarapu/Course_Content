@@ -50,12 +50,21 @@ export async function uploadSource(notebookId, filePath, name, { root = MEDIA_RO
   if (!path.isAbsolute(String(filePath)) || !resolved.startsWith(`${root}/`) || !/\.pdf$/i.test(resolved)) {
     throw new PathNotAllowed();
   }
-  filePath = resolved;
+  // Symlinks are resolved too: a link (or linked folder) under the root must not
+  // lead outside it. The final open refuses a symlink swapped in meanwhile.
+  try {
+    const rootReal = await fs.promises.realpath(root);
+    filePath = await fs.promises.realpath(resolved);
+    if (!filePath.startsWith(`${rootReal}/`) || !/\.pdf$/i.test(filePath)) throw new PathNotAllowed();
+  } catch (err) {
+    if (err instanceof PathNotAllowed) throw err;
+    throw new StudioError(`cannot read ${resolved}: ${err.code ?? err.message}`);
+  }
   // Open first: a missing or unreadable file must fail before a source is
   // registered, or NotebookLM keeps an orphan stuck in "pending".
   let file;
   try {
-    file = await fs.promises.open(filePath, "r");
+    file = await fs.promises.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   } catch (err) {
     throw new StudioError(`cannot read ${filePath}: ${err.code ?? err.message}`);
   }

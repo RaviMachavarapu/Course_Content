@@ -59,11 +59,18 @@ the tool calls the backend needs as plain HTTP on `:7332`
 - `POST /call {tool, args}` → `{data}` — a generic proxy to any MCP tool;
   the Python provider names the exact tool + argument shape from
   `docs/TOOLS.md` (fetched from the pinned upstream version, see below).
+  A tool that reports an error answers 422 (401 if it mentions signing in);
+  a dead child or transport answers 502.
 - `GET /health` → `{healthy, last_ok_at, detail}` — calls `notebook_list` as
   a cheap authenticated-session check (no dedicated "whoami" tool exists).
-- `POST /refresh-auth` → reconnects to the MCP server so newly-rotated
-  cookies (from a fresh `auth` run) are picked up without a container
-  restart.
+  While another call is running it doesn't wait: it reports from the last
+  successful call (healthy if within 15 minutes, detail "busy").
+- `POST /refresh-auth` → drops the in-memory rotated cookies and page token
+  and restarts the connector child, so a fresh `auth` run is picked up
+  without a container restart (a new sign-in in auth.json also drops them).
+
+Connector calls run one at a time over the child's stdio (`shim/session.js`);
+if the child exits, the next call starts a new one.
 
 ## What the backend uses
 

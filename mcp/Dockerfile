@@ -45,7 +45,7 @@ RUN F="$(find /root/.npm/_npx -path '*/node_modules/notebooklm-mcp-server/dist/i
 WORKDIR /srv/shim
 COPY shim/package.json shim/package-lock.json ./
 RUN npm ci --omit=dev
-COPY shim/server.js shim/studio.js shim/sources.js shim/tools.js ./
+COPY shim/server.js shim/studio.js shim/sources.js shim/tools.js shim/session.js ./
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

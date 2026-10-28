@@ -189,3 +189,26 @@ test("unknown status codes are failed and logged once per call", async (t) => {
   assert.match(msg, /a.*9/);
   assert.match(msg, /c.*7/);
 });
+
+test("a symlink under the media root pointing outside it is refused", async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "outside-"));
+  const secret = path.join(outside, "auth.pdf");
+  fs.writeFileSync(secret, "%PDF secret");
+  const link = path.join(home, "innocent.pdf");
+  fs.symlinkSync(secret, link);
+  const calls = fakeNotebookLm();
+  await assert.rejects(uploadSource("NB", link, "innocent.pdf", { root: home }), PathNotAllowed);
+  assert.equal(calls.length, 0);
+});
+
+test("a symlinked directory inside the media root is refused too", async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "outside-dir-"));
+  fs.writeFileSync(path.join(outside, "x.pdf"), "%PDF x");
+  fs.symlinkSync(outside, path.join(home, "linked"));
+  const calls = fakeNotebookLm();
+  await assert.rejects(
+    uploadSource("NB", path.join(home, "linked", "x.pdf"), "x.pdf", { root: home }),
+    PathNotAllowed,
+  );
+  assert.equal(calls.length, 0);
+});
