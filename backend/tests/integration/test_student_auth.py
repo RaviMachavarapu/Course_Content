@@ -83,7 +83,10 @@ def test_logout_requires_csrf_then_clears_session(client: TestClient) -> None:
     assert client.get("/api/student/auth/me").status_code == status.HTTP_200_OK
 
     # no X-CSRF-Token header -> rejected
-    assert client.post("/api/student/auth/logout", headers={"X-CSRF-Token": ""}).status_code == status.HTTP_403_FORBIDDEN
+    assert (
+        client.post("/api/student/auth/logout", headers={"X-CSRF-Token": ""}).status_code
+        == status.HTTP_403_FORBIDDEN
+    )
 
     csrf = client.cookies["sdp_csrf"]
     out = client.post("/api/student/auth/logout", headers={"X-CSRF-Token": csrf})

@@ -1,9 +1,9 @@
 """Admin prompt-template settings API (spec.md §5.4).
 
-    GET  /api/admin/prompts                       -> six active templates
-    GET  /api/admin/prompts/{type}               -> active + version history
-    PUT  /api/admin/prompts/{type}   {body}      -> new active version
-    POST /api/admin/prompts/{type}/restore-default -> revert to the seed body
+GET  /api/admin/prompts                       -> six active templates
+GET  /api/admin/prompts/{type}               -> active + version history
+PUT  /api/admin/prompts/{type}   {body}      -> new active version
+POST /api/admin/prompts/{type}/restore-default -> revert to the seed body
 """
 
 from __future__ import annotations
