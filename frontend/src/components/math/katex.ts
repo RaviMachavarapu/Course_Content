@@ -14,6 +14,10 @@ export function renderLatex(latex: string, displayMode: boolean): string | null 
       trust: false,
       output: "htmlAndMathml",
       displayMode,
+      // Generated content is untrusted: cap \rule / sizing commands (in em)
+      // so a formula can't draw a page-covering box, and bound macro expansion.
+      maxSize: 10,
+      maxExpand: 1000,
       // Fresh copy per call: KaTeX writes \gdef/\newcommand results into it.
       macros: { ...MATH_MACROS },
     });
