@@ -100,9 +100,19 @@ def password_reset_request(
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
 def password_reset_confirm(
-    body: PasswordResetConfirmRequest, db: DbDep, redis_client: RedisDep
+    body: PasswordResetConfirmRequest,
+    db: DbDep,
+    redis_client: RedisDep,
+    settings: SettingsDep,
+    store: SessionStoreDep,
 ) -> Response:
     confirm_password_reset(
-        db, redis_client, scope="admin", token=body.token, new_password=body.password
+        db,
+        redis_client,
+        settings,
+        store,
+        scope="admin",
+        token=body.token,
+        new_password=body.password,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

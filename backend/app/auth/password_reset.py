@@ -1,10 +1,12 @@
 """Tokenised, single-use, 30-minute password reset (O6).
 
 Tokens live in Redis (same pattern as sessions/CSRF — no migration needed):
-`pwreset:{token} -> "{scope}:{user_id}"`, TTL 1800s. Redeeming one deletes it
-immediately, so a token can never be replayed. `request_password_reset` /
-`confirm_password_reset` are shared by the student and admin routers, mirroring
-how `login_flow` is shared for login.
+`pwreset:{token} -> "{scope}:{user_id}"`, TTL 1800s. Redeeming one is an atomic
+GETDEL, so a token can never be used twice, even concurrently. A user has at most
+one live token: `pwreset_user:{scope}:{user_id}` points at it, and issuing a
+new one deletes the previous. A successful reset revokes all the user's
+sessions. `request_password_reset` / `confirm_password_reset` are shared by the
+student and admin routers, mirroring how `login_flow` is shared for login.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.hashing import hash_password
 from app.auth.passwords import validate_password_strength
+from app.auth.sessions import SessionStore
 from app.config import Settings
 from app.errors import APIError
 from app.models.user import User, UserRole, normalize_email
@@ -41,27 +44,49 @@ _ROLE_BY_SCOPE: dict[ResetScope, UserRole] = {
 }
 
 
+def _user_key(scope: ResetScope, user_id: uuid.UUID) -> str:
+    return f"{_PREFIX}_user:{scope}:{user_id}"
+
+
 def issue_reset_token(redis_client: RedisClient, *, user_id: uuid.UUID, scope: ResetScope) -> str:
     token = secrets.token_urlsafe(32)
     redis_client.setex(f"{_PREFIX}:{token}", _TTL_SECONDS, f"{scope}:{user_id}")
+    previous = redis_client.set(_user_key(scope, user_id), token, ex=_TTL_SECONDS, get=True)
+    if previous:
+        redis_client.delete(f"{_PREFIX}:{previous}")
     return token
 
 
 def consume_reset_token(
     redis_client: RedisClient, *, token: str, scope: ResetScope
 ) -> uuid.UUID | None:
-    key = f"{_PREFIX}:{token}"
-    raw = redis_client.get(key)
+    raw = redis_client.getdel(f"{_PREFIX}:{token}")
     if raw is None:
         return None
-    redis_client.delete(key)
     stored_scope, _, user_id_str = raw.partition(":")
-    if stored_scope != scope:
-        return None
     try:
-        return uuid.UUID(user_id_str)
+        user_id = uuid.UUID(user_id_str)
     except ValueError:
         return None
+    if stored_scope in _ROLE_BY_SCOPE:
+        _forget_pointer(redis_client, _user_key(stored_scope, user_id), token)
+    if stored_scope != scope:
+        return None
+    return user_id
+
+
+def _forget_pointer(redis_client: RedisClient, key: str, token: str) -> None:
+    if redis_client.get(key) == token:
+        redis_client.delete(key)
+
+
+def _ensure_enabled(settings: Settings) -> None:
+    if not settings.password_reset_enabled:
+        raise APIError(
+            status.HTTP_404_NOT_FOUND,
+            "password_reset_disabled",
+            "Password reset is not available. Contact your administrator.",
+        )
 
 
 def request_password_reset(
@@ -76,6 +101,7 @@ def request_password_reset(
     """Never reveals whether the email exists — always "succeeds" from the
     caller's point of view. Only sends mail when there's a real, active
     account for that scope."""
+    _ensure_enabled(settings)
     user = db.scalar(
         select(User).where(User.email == normalize_email(email), User.role == _ROLE_BY_SCOPE[scope])
     )
@@ -99,11 +125,14 @@ def request_password_reset(
 def confirm_password_reset(
     db: Session,
     redis_client: RedisClient,
+    settings: Settings,
+    sessions: SessionStore,
     *,
     scope: ResetScope,
     token: str,
     new_password: str,
 ) -> None:
+    _ensure_enabled(settings)
     validate_password_strength(new_password)
     user_id = consume_reset_token(redis_client, token=token, scope=scope)
     if user_id is None:
@@ -121,3 +150,5 @@ def confirm_password_reset(
         )
     user.password_hash = hash_password(new_password)
     db.flush()
+    # whoever held a session (perhaps the reason for the reset) is signed out
+    sessions.revoke_user(str(user.id))
