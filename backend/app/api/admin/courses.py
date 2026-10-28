@@ -8,13 +8,14 @@ import unicodedata
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Response, status
+from pydantic import ValidationError
 from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import CurrentAdmin, DbDep
-from app.errors import APIError
+from app.errors import APIError, invalid_input
 from app.logging import get_logger
 from app.models.course import Course
 from app.models.enums import ARTIFACT_TYPES, ModuleSourceType, SourceUploadStatus
@@ -222,15 +223,18 @@ def create_module(
     db.flush()
 
     provider = get_content_provider()
-    jobs = orchestrator.start_module_generation(
-        db,
-        provider,
-        module.id,
-        body.types,
-        requested_by=admin.id,
-        options_by_type=body.options,
-        prompts_by_type=body.prompts,
-    )
+    try:
+        jobs = orchestrator.start_module_generation(
+            db,
+            provider,
+            module.id,
+            body.types,
+            requested_by=admin.id,
+            options_by_type=body.options,
+            prompts_by_type=body.prompts,
+        )
+    except ValidationError as exc:  # the admin's generation options
+        raise invalid_input(exc) from None
     db.flush()
     # last step that can fail: moving files (compensated on error)
     _claim_uploads(db, course.id, module, uploads)

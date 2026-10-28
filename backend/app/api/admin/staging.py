@@ -6,10 +6,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, status
+from pydantic import ValidationError
 
 from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import CurrentAdmin, DbDep
-from app.errors import APIError
+from app.errors import APIError, invalid_input
 from app.models.artifact import Artifact
 from app.models.enums import ArtifactStatus, ArtifactType
 from app.pipeline.factory import get_content_provider
@@ -56,14 +57,17 @@ def _requeue(
     if artifact is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Artifact not found")
 
-    job = enqueue_artifact_regeneration(
-        db,
-        artifact_id,
-        redo_note=redo_note,
-        requested_by=admin.id,
-        options=options,
-        custom_prompt=custom_prompt,
-    )
+    try:
+        job = enqueue_artifact_regeneration(
+            db,
+            artifact_id,
+            redo_note=redo_note,
+            requested_by=admin.id,
+            options=options,
+            custom_prompt=custom_prompt,
+        )
+    except ValidationError as exc:  # the admin's generation options
+        raise invalid_input(exc) from None
     db.flush()
     background.add_task(
         _dispatch,
