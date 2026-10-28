@@ -1,9 +1,15 @@
 """Access-checked media streaming (spec.md §9, §11).
 
 Admins can fetch any media file. Students can fetch a file only when it belongs
-to the **published** version of a **published** artifact and is not a kind
-students never get (`STUDENT_HIDDEN_MEDIA_KINDS`: the quiz PDF with its answer
-key). Anything else → 404 (never 403 — don't reveal that the key exists).
+to its artifact's **published version** and is not a kind students never get
+(`STUDENT_HIDDEN_MEDIA_KINDS`: the quiz PDF with its answer key) — the shared
+rule in app.services.visibility. The artifact's workflow status is ignored: a
+redo in progress (or one that failed) keeps the published version's media
+live (spec §3.3, BR5). Anything else → 404 (never 403 — don't reveal that the
+key exists).
+
+Responses are `private`: they need a session, so no shared cache (CDN, proxy)
+may store them. Keys are versioned, so they are still `immutable`.
 """
 
 from __future__ import annotations
@@ -16,15 +22,15 @@ from app.api.deps import CurrentAnyUser, DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.artifact_version import ArtifactVersion
-from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactStatus
 from app.models.media_file import MediaFile
 from app.models.user import UserRole
+from app.services.visibility import media_visible_to_student
 from app.storage.keys import InvalidKeyError, validate_key
 from app.storage.service import get_storage
 
 router = APIRouter(prefix="/api/media", tags=["media"])
 
-_IMMUTABLE = "public, max-age=31536000, immutable"
+_IMMUTABLE = "private, max-age=31536000, immutable"
 
 
 @router.get("/{storage_key:path}")
@@ -40,16 +46,9 @@ def get_media(storage_key: str, db: DbDep, user: CurrentAnyUser) -> FileResponse
         raise not_found
 
     if user.role is not UserRole.admin:
-        if media.kind in STUDENT_HIDDEN_MEDIA_KINDS:
-            raise not_found
         version = db.get(ArtifactVersion, media.artifact_version_id)
         artifact = db.get(Artifact, version.artifact_id) if version else None
-        allowed = (
-            artifact is not None
-            and artifact.status is ArtifactStatus.published
-            and artifact.published_version_id == media.artifact_version_id
-        )
-        if not allowed:
+        if not media_visible_to_student(media, artifact):
             raise not_found
 
     storage = get_storage()

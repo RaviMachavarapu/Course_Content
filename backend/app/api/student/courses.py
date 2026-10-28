@@ -1,6 +1,6 @@
 """Student catalog API (spec.md §3.8).
 
-    GET /api/student/courses  -> published courses, with the caller's progress
+GET /api/student/courses  -> published courses, with the caller's progress
 """
 
 from __future__ import annotations
@@ -23,15 +23,12 @@ from app.schemas.student import (
     WorkspaceCourseOut,
     WorkspaceModuleOut,
 )
+from app.services.visibility import live_artifacts
 from app.storage.service import get_storage
 
 _ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
 
 router = APIRouter(prefix="/api/student", tags=["student-courses"])
-
-
-def _published_artifacts(module: Module) -> list[Artifact]:
-    return [a for a in module.artifacts if a.published_version_id is not None]
 
 
 def _audio_seconds(artifact: Artifact) -> int | None:
@@ -76,7 +73,7 @@ def list_catalog(db: DbDep, student: CurrentStudent) -> CatalogResponse:
 
     for course in courses:
         modules = sorted(course.modules, key=lambda m: m.order_index)
-        live_modules = [(m, _published_artifacts(m)) for m in modules]
+        live_modules = [(m, live_artifacts(m)) for m in modules]
         live_modules = [(m, arts) for m, arts in live_modules if arts]
         if not live_modules:
             continue  # a course with zero published modules never appears
@@ -161,7 +158,7 @@ def course_workspace(slug: str, db: DbDep, student: CurrentStudent) -> Workspace
     modules_out: list[WorkspaceModuleOut] = []
     total = done = 0
     ordered = sorted(course.modules, key=lambda m: m.order_index)
-    live = [(m, _published_artifacts(m)) for m in ordered]
+    live = [(m, live_artifacts(m)) for m in ordered]
     live = [(m, arts) for m, arts in live if arts]
     if not live:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Course not found")

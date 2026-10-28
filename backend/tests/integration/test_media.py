@@ -73,6 +73,9 @@ def test_admin_can_fetch_any_media(client: TestClient, db_session: Session) -> N
     assert resp.status_code == status.HTTP_200_OK
     assert resp.headers["content-type"] == "application/pdf"
     assert "immutable" in resp.headers["cache-control"]
+    # session-gated: never storable by a shared cache (CDN, school proxy)
+    assert resp.headers["cache-control"].startswith("private")
+    assert "public" not in resp.headers["cache-control"]
     assert resp.content[:5] == b"%PDF-"
 
 

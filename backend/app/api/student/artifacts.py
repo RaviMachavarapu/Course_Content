@@ -12,7 +12,7 @@ from app.api.deps import CurrentStudent, DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.course import Course
-from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactType, CourseStatus
+from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactType
 from app.models.flashcard_rating import FlashcardRating
 from app.models.module import Module
 from app.models.progress import ArtifactProgress
@@ -23,16 +23,16 @@ from app.schemas.student import (
     StudentArtifactOut,
 )
 from app.services.progress import record_artifact_progress
+from app.services.visibility import is_live
 from app.storage.service import get_storage
 
 router = APIRouter(prefix="/api/student", tags=["student-artifacts"])
 
-_VISIBLE_COURSE = {CourseStatus.published, CourseStatus.partially_published}
-
 
 def _visible_artifact(db: DbDep, artifact_id: uuid.UUID) -> Artifact:
-    """The artifact behind a published version under a visible course, or a 404
-    (never a 403 — don't confirm an unpublished artifact exists)."""
+    """The artifact behind a published version, or a 404 (never a 403 — don't
+    confirm an unpublished artifact exists). Course/module workflow status is
+    deliberately ignored (app.services.visibility)."""
     artifact = db.scalar(
         select(Artifact)
         .where(Artifact.id == artifact_id)
@@ -44,11 +44,7 @@ def _visible_artifact(db: DbDep, artifact_id: uuid.UUID) -> Artifact:
             .selectinload(Module.artifacts),
         )
     )
-    if (
-        artifact is None
-        or artifact.published_version_id is None
-        or artifact.module.course.status not in _VISIBLE_COURSE
-    ):
+    if artifact is None or not is_live(artifact):
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
     return artifact
 
@@ -62,9 +58,7 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
 
     ordered = sorted(module.course.modules, key=lambda m: m.order_index)
-    live_ids = [
-        m.id for m in ordered if any(a.published_version_id is not None for a in m.artifacts)
-    ]
+    live_ids = [m.id for m in ordered if any(is_live(a) for a in m.artifacts)]
     module_index = live_ids.index(module.id) if module.id in live_ids else 0
 
     storage = get_storage()

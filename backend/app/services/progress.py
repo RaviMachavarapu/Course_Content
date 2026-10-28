@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.artifact import Artifact
 from app.models.module import Module
 from app.models.progress import ArtifactProgress, CourseProgress
+from app.services.visibility import is_live, live_clause
 
 
 def _now() -> dt.datetime:
@@ -64,7 +65,7 @@ def record_artifact_progress(
 
     if complete_module:
         for sibling in artifact.module.artifacts:
-            if sibling.id == artifact.id or sibling.published_version_id is None:
+            if sibling.id == artifact.id or not is_live(sibling):
                 continue
             srow = _upsert_row(session, user_id, sibling)
             if srow.viewed_at is None:
@@ -90,7 +91,7 @@ def _recompute_course_progress(
         session.scalars(
             select(Artifact.id)
             .join(Module, Module.id == Artifact.module_id)
-            .where(Module.course_id == course_id, Artifact.published_version_id.is_not(None))
+            .where(Module.course_id == course_id, live_clause())
         )
     )
     total = len(published_ids)

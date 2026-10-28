@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentStudent, DbDep
-from app.api.student.courses import _published_artifacts
 from app.models.artifact import Artifact
 from app.models.course import Course
 from app.models.enums import ArtifactType
@@ -22,6 +21,7 @@ from app.schemas.me import (
     MyProgressCourse,
     MyProgressResponse,
 )
+from app.services.visibility import is_live, live_artifacts, live_clause
 
 router = APIRouter(prefix="/api/student/me", tags=["student-me"])
 
@@ -48,7 +48,7 @@ def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
             .where(Module.course_id == course.id)
             .options(selectinload(Module.artifacts))
         ).all()
-        live_modules = [m for m in modules if _published_artifacts(m)]
+        live_modules = [m for m in modules if live_artifacts(m)]
         started = sum(1 for m in live_modules if m.id in started_module_ids)
         out.append(
             MyProgressCourse(
@@ -69,7 +69,7 @@ def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
         select(Artifact)
         .where(
             Artifact.type == ArtifactType.audio_overview,
-            Artifact.published_version_id.is_not(None),
+            live_clause(),
         )
         .options(
             selectinload(Artifact.versions),
@@ -94,9 +94,7 @@ def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
         position = prog.audio_position_seconds or 0
         module = artifact.module
         ordered = sorted(module.course.modules, key=lambda m: m.order_index)
-        live_ids = [
-            m.id for m in ordered if any(a.published_version_id is not None for a in m.artifacts)
-        ]
+        live_ids = [m.id for m in ordered if any(is_live(a) for a in m.artifacts)]
         module_index = live_ids.index(module.id) if module.id in live_ids else 0
 
         rows.append(
