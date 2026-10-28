@@ -47,6 +47,10 @@ class Artifact(Base, TimestampMixin):
     #: ({"style": str, "slides": [str]}) and the NotebookLM artifact it belongs to.
     outline_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     notebooklm_studio_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: What was sent for `notebooklm_studio_id` ({focus_prompt, redo_note,
+    #: template_id, template_version}). Kept after a timeout or a failure once
+    #: NotebookLM had the artifact, so Retry resumes it instead of regenerating.
+    studio_request: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     module: Mapped[Module] = relationship(back_populates="artifacts")
     versions: Mapped[list[ArtifactVersion]] = relationship(

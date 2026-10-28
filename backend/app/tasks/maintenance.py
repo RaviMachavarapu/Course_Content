@@ -13,6 +13,7 @@ from app.logging import get_logger
 from app.models.enums import SourceUploadStatus
 from app.models.source_upload import SourceUpload
 from app.pipeline.factory import get_content_provider
+from app.pipeline.reaper import reap_stale_jobs
 from app.services.metrics import record_mcp_healthcheck
 from app.storage.service import get_storage
 from app.tasks.celery_app import celery_app
@@ -65,3 +66,18 @@ def purge_abandoned_uploads() -> int:
         removed = len(stale)
     log.info("purge_abandoned_uploads.done", removed=removed)
     return removed
+
+
+@celery_app.task(name="app.tasks.reap_stale_jobs")
+def reap_stale_jobs_task() -> int:
+    """Fail generation jobs whose worker is gone (see `app.pipeline.reaper`)."""
+    settings = get_settings()
+    with session_scope() as session:
+        resolved = reap_stale_jobs(
+            session,
+            running_after=dt.timedelta(seconds=settings.job_stale_running_sec),
+            queued_after=dt.timedelta(seconds=settings.job_stale_queued_sec),
+        )
+    if resolved:
+        log.warning("reap_stale_jobs.done", resolved=resolved)
+    return resolved

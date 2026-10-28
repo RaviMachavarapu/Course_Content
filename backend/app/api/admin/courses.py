@@ -389,9 +389,12 @@ def regenerate_module(
     module_id: uuid.UUID, db: DbDep, admin: CurrentAdmin, background: BackgroundTasks
 ) -> ModuleEnvelope:
     module = _get_module(db, module_id)
-    jobs = orchestrator.start_module_generation(
-        db, get_content_provider(), module.id, list(ARTIFACT_TYPES), requested_by=admin.id
-    )
+    try:
+        jobs = orchestrator.start_module_generation(
+            db, get_content_provider(), module.id, list(ARTIFACT_TYPES), requested_by=admin.id
+        )
+    except orchestrator.ArtifactBusy as exc:  # Re-run all twice / while generating
+        raise APIError(status.HTTP_409_CONFLICT, "module_busy", str(exc)) from None
     db.flush()
     background.add_task(
         _dispatch_all, [(str(j.artifact_id), str(j.job_id), j.type.value) for j in jobs]
@@ -429,6 +432,10 @@ def delete_module(
     module_id: uuid.UUID, db: DbDep, _: CurrentAdmin, background: BackgroundTasks
 ) -> Response:
     module = _get_module(db, module_id)
+    # Lock the artifact rows first (order artifact → module → course). A job still
+    # generating is allowed to finish in NotebookLM, but stores nothing: it finds
+    # its artifact gone and drops the result (orchestrator `JobSkipped`).
+    orchestrator.lock_module_artifacts(db, module.id)
     course = module.course
     prefix = module_prefix(course.id, module.id)
     keys = _module_file_keys(module)

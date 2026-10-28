@@ -16,8 +16,10 @@ from app.models.enums import ArtifactStatus, ArtifactType
 from app.pipeline.factory import get_content_provider
 from app.pipeline.orchestrator import (
     UNSET,
+    ArtifactBusy,
     OutlineNotAwaitingReview,
     Unset,
+    can_resume,
     enqueue_artifact_regeneration,
     request_outline_action,
 )
@@ -52,6 +54,7 @@ def _requeue(
     redo_note: str | None,
     options: dict[str, Any] | None = None,
     custom_prompt: str | None | Unset = UNSET,
+    resume: bool = False,
 ) -> JobEnvelope:
     artifact = db.get(Artifact, artifact_id)
     if artifact is None:
@@ -65,7 +68,10 @@ def _requeue(
             requested_by=admin.id,
             options=options,
             custom_prompt=custom_prompt,
+            resume=resume,
         )
+    except ArtifactBusy as exc:  # a second job would generate it twice
+        raise APIError(status.HTTP_409_CONFLICT, "artifact_busy", str(exc)) from None
     except ValidationError as exc:  # the admin's generation options
         raise invalid_input(exc) from None
     db.flush()
@@ -75,6 +81,7 @@ def _requeue(
         str(job.id),
         redo_note,
         artifact.type is ArtifactType.audio_overview,
+        resume and can_resume(artifact),
     )
     return JobEnvelope(job=JobOut.model_validate(job))
 
@@ -116,7 +123,9 @@ def retry_artifact(
             "not_retryable",
             f"Artifact is {artifact.status.value}, not error",
         )
-    return _requeue(db, admin, background, artifact_id, None)
+    # NotebookLM already has it (timed out, or failed after creation): poll and
+    # fetch it again instead of generating a new one.
+    return _requeue(db, admin, background, artifact_id, None, resume=True)
 
 
 def _outline_action(

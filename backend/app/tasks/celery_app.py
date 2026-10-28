@@ -17,6 +17,14 @@ from celery.signals import task_failure, task_postrun, task_prerun, task_success
 _BROKER = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/1")
 _BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://redis:6379/2")
 
+#: beat's periodic tasks, routed to the `maintenance` queue
+MAINTENANCE_TASKS = (
+    "app.tasks.media_gc",
+    "app.tasks.purge_abandoned_uploads",
+    "app.tasks.mcp_healthcheck",
+    "app.tasks.reap_stale_jobs",
+)
+
 celery_app = Celery("shikshak_dp", broker=_BROKER, backend=_BACKEND)
 celery_app.conf.update(
     task_acks_late=True,
@@ -29,6 +37,9 @@ celery_app.conf.update(
     broker_transport_options={"visibility_timeout": 4 * 3600},
     timezone="UTC",
     task_default_queue="celery",
+    # Periodic tasks run on `worker-quiz` (short jobs), not on `worker`, whose two
+    # slots can sit on a module lock or a 20-minute generation for hours.
+    task_routes={name: {"queue": "maintenance"} for name in MAINTENANCE_TASKS},
     beat_schedule={
         "media-gc-nightly": {
             "task": "app.tasks.media_gc",
@@ -41,6 +52,13 @@ celery_app.conf.update(
         "mcp-healthcheck": {
             "task": "app.tasks.mcp_healthcheck",
             "schedule": crontab(minute="*/5"),
+            # a backlog of stale pings is useless: drop any not run within 4 min
+            "options": {"expires": 240},
+        },
+        "reap-stale-jobs": {
+            "task": "app.tasks.reap_stale_jobs",
+            "schedule": crontab(minute="*/5"),
+            "options": {"expires": 240},
         },
     },
 )

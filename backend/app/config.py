@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     mcp_endpoint: str = "http://mcp:7332"
     mcp_timeout_text_sec: int = 360
     mcp_timeout_audio_sec: int = 1200
+    #: generation jobs: heartbeat cadence while running; the reaper fails a running
+    #: job silent for `job_stale_running_sec` and a queued one untouched for
+    #: `job_stale_queued_sec` (lost message), so cards never sit on "Generating…".
+    job_heartbeat_sec: int = 60
+    job_stale_running_sec: int = 900
+    job_stale_queued_sec: int = 6 * 3600
     max_module_fanout: int = 2
 
     # ---- PDF sources (NotebookLM rejects >200 MB or >500,000 words per source) ----

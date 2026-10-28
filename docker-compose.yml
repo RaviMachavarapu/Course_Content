@@ -71,6 +71,10 @@ services:
   worker:
     build: ./backend
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q celery,text,audio
+    # Warm shutdown: a running generation (audio up to 20 min plus downloads) can
+    # finish instead of being SIGKILLed after 10 s. One that still doesn't is
+    # failed by the reaper (beat) within ~15 min, retryable, and never replayed.
+    stop_grace_period: 30m
     restart: unless-stopped
     environment: *backend-env
     networks: [default, mcp]
@@ -110,10 +114,12 @@ services:
       postgres: { condition: service_healthy }
 
   # Prepare students' fresh quiz question sets (NotebookLM chat) on their own
-  # queue, one at a time: chat queries never take a generation slot.
+  # queue, one at a time: chat queries never take a generation slot. Also runs
+  # beat's short periodic tasks (`maintenance`: healthcheck, reaper, GC), which
+  # would otherwise wait behind hours-long generations on `worker`.
   worker-quiz:
     build: ./backend
-    command: celery -A app.tasks.celery_app worker -Q quiz --concurrency=1 --loglevel=info
+    command: celery -A app.tasks.celery_app worker -Q quiz,maintenance --concurrency=1 --loglevel=info
     # A running chat preparation can finish on a warm shutdown; with acks_late a
     # SIGKILL would orphan its 'preparing' set.
     stop_grace_period: 6m
