@@ -166,7 +166,7 @@ def patch_course(
         course.description = body.description.strip()
     if body.category is not None:
         course.category = body.category.strip()
-    if body.cover_image_key is not None:
+    if "cover_image_key" in body.model_fields_set:
         course.cover_image_key = body.cover_image_key
     db.flush()
     return CourseEnvelope(course=_course_detail(course))

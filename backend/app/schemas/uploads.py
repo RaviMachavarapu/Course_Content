@@ -12,7 +12,7 @@ MAX_CHUNK_BYTES = 16 * 1024 * 1024
 
 class UploadCreate(BaseModel):
     file_name: str = Field(min_length=1, max_length=512)
-    size_bytes: int = Field(gt=0)
+    size_bytes: int = Field(gt=0, le=2**63 - 1)  # BIGINT column
 
 
 class UploadCreated(BaseModel):

@@ -4,8 +4,9 @@ contract the Staging Review screen uses while artifacts generate."""
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy import desc, func, select
 
 from app.api.admin import ADMIN_DEPENDENCIES
@@ -71,12 +72,14 @@ def get_job(job_id: uuid.UUID, db: DbDep) -> JobOut:
 
 
 @router.get("/modules/{module_id}/jobs", response_model=JobListResponse)
-def list_module_jobs(module_id: uuid.UUID, db: DbDep, limit: int = 50) -> JobListResponse:
+def list_module_jobs(
+    module_id: uuid.UUID, db: DbDep, limit: Annotated[int, Query(ge=1, le=200)] = 50
+) -> JobListResponse:
     rows = db.scalars(
         select(GenerationJob)
         .where(GenerationJob.module_id == module_id)
         .order_by(desc(GenerationJob.created_at))
-        .limit(min(limit, 200))
+        .limit(limit)
     )
     return JobListResponse(jobs=[JobOut.model_validate(j) for j in rows])
 

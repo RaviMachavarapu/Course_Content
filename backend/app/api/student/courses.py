@@ -24,11 +24,23 @@ from app.schemas.student import (
     WorkspaceModuleOut,
 )
 from app.services.visibility import live_artifacts
-from app.storage.service import get_storage
+from app.storage.keys import InvalidKeyError
+from app.storage.service import Storage, get_storage
 
 _ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
 
 router = APIRouter(prefix="/api/student", tags=["student-courses"])
+
+
+def _cover_url(storage: Storage, key: str | None) -> str | None:
+    """A bad stored key (saved before keys were validated) must not 500 the
+    whole catalog: show no cover instead."""
+    if not key:
+        return None
+    try:
+        return storage.url_for(key)
+    except InvalidKeyError:
+        return None
 
 
 def _audio_seconds(artifact: Artifact) -> int | None:
@@ -115,9 +127,7 @@ def list_catalog(db: DbDep, student: CurrentStudent) -> CatalogResponse:
                 title=course.title,
                 description=course.description,
                 category=course.category,
-                cover_image_url=(
-                    storage.url_for(course.cover_image_key) if course.cover_image_key else None
-                ),
+                cover_image_url=_cover_url(storage, course.cover_image_key),
                 module_count=len(live_modules),
                 artifact_counts=counts,
                 total_audio_seconds=audio_seconds if has_audio_duration else None,

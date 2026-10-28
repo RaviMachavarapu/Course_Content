@@ -143,11 +143,15 @@ class FlashcardRatingsResponse(BaseModel):
     ratings: dict[int, str]
 
 
+PG_INT_MAX = 2_147_483_647
+
+
 class ArtifactProgressRequest(BaseModel):
     completed: bool | None = None
     complete_module: bool = False
-    slide_last_index: int | None = Field(default=None, ge=0)
-    audio_position_seconds: int | None = Field(default=None, ge=0)
+    # the columns are INTEGER: a bigger value is a 422, not a DB overflow (500)
+    slide_last_index: int | None = Field(default=None, ge=0, le=PG_INT_MAX)
+    audio_position_seconds: int | None = Field(default=None, ge=0, le=PG_INT_MAX)
 
 
 class ArtifactProgressResponse(BaseModel):
