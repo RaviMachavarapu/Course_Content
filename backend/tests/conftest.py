@@ -15,6 +15,7 @@ from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 import redis
 import sqlalchemy as sa
@@ -208,5 +209,21 @@ def client(db_session: Session, redis_client: redis.Redis[str]) -> Iterator[Test
     app.dependency_overrides[app_get_db] = _override_get_db
     app.dependency_overrides[app_get_redis] = lambda: redis_client
     with TestClient(app) as test_client:
+        _send_csrf_like_the_spa(test_client)
         yield test_client
     app.dependency_overrides.clear()
+
+
+def _send_csrf_like_the_spa(test_client: TestClient) -> None:
+    """Mirror frontend/src/lib/api.ts: on a non-GET request, copy the `sdp_csrf`
+    cookie into `X-CSRF-Token` unless the test set that header itself (an
+    explicit empty value is how a test sends "no token")."""
+
+    def add_token(request: httpx.Request) -> None:
+        if request.method in {"GET", "HEAD", "OPTIONS"} or "x-csrf-token" in request.headers:
+            return
+        token = test_client.cookies.get("sdp_csrf")
+        if token:
+            request.headers["X-CSRF-Token"] = token
+
+    test_client.event_hooks["request"].append(add_token)

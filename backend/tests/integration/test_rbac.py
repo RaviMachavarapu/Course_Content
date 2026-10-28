@@ -68,7 +68,7 @@ def test_csrf_required_on_state_change(client: TestClient, db_session: Session) 
     csrf = _seed_admin_and_login(client, db_session)
 
     # missing header
-    assert client.post("/api/admin/auth/logout").status_code == status.HTTP_403_FORBIDDEN
+    assert client.post("/api/admin/auth/logout", headers={"X-CSRF-Token": ""}).status_code == status.HTTP_403_FORBIDDEN
     # wrong header
     bad = client.post("/api/admin/auth/logout", headers={"X-CSRF-Token": "not-the-token"})
     assert bad.status_code == status.HTTP_403_FORBIDDEN

@@ -28,13 +28,14 @@ import random
 import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentStudent, DbDep
+from app.api.deps import CurrentStudent, DbDep, current_student
 from app.api.student.artifacts import _visible_artifact
+from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.enums import ArtifactType, QuizSetSource, QuizSetStatus
@@ -54,7 +55,12 @@ from app.services.progress import record_artifact_progress
 from app.services.quiz_generation import fill_blank_correct
 from app.tasks.quiz import enqueue_prepare, studio_questions
 
-router = APIRouter(prefix="/api/student", tags=["student-quiz"])
+router = APIRouter(
+    prefix="/api/student",
+    tags=["student-quiz"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 PREPARING_MESSAGE = "Preparing new questions…"
 UNAVAILABLE_MESSAGE = "New questions aren't available right now — please try again later"

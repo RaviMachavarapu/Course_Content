@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentStudent, DbDep
+from app.api.deps import CurrentStudent, DbDep, current_student
+from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.course import Course
@@ -25,7 +26,12 @@ from app.services.progress import published_ratings, record_artifact_progress
 from app.services.visibility import is_live
 from app.storage.service import get_storage
 
-router = APIRouter(prefix="/api/student", tags=["student-artifacts"])
+router = APIRouter(
+    prefix="/api/student",
+    tags=["student-artifacts"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 
 def _visible_artifact(db: DbDep, artifact_id: uuid.UUID) -> Artifact:

@@ -4,19 +4,25 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 
-from app.api.deps import CurrentStudent, DbDep
+from app.api.deps import CurrentStudent, DbDep, current_student
 from app.api.student.artifacts import _visible_artifact
+from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.enums import ArtifactType, FlashcardRatingValue
 from app.models.flashcard_rating import FlashcardRating
 from app.schemas.student import FlashcardRatingRequest, FlashcardRatingsResponse
 from app.services.progress import published_ratings
 
-router = APIRouter(prefix="/api/student", tags=["student-flashcards"])
+router = APIRouter(
+    prefix="/api/student",
+    tags=["student-flashcards"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 
 @router.put(

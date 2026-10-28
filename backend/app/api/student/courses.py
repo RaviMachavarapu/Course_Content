@@ -5,11 +5,12 @@ GET /api/student/courses  -> published courses, with the caller's progress
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentStudent, DbDep
+from app.api.deps import CurrentStudent, DbDep, current_student
+from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.course import Course
@@ -29,7 +30,12 @@ from app.storage.service import Storage, get_storage
 
 _ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
 
-router = APIRouter(prefix="/api/student", tags=["student-courses"])
+router = APIRouter(
+    prefix="/api/student",
+    tags=["student-courses"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 
 def _cover_url(storage: Storage, key: str | None) -> str | None:

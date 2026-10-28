@@ -170,7 +170,7 @@ def test_switch_get_patch_and_csrf(client: TestClient, db_session: Session) -> N
     h = _admin(client, db_session)
     url = f"/api/admin/modules/{module.id}/quiz-settings"
     assert client.get(url).json() == {"fresh_retakes": True}
-    assert client.patch(url, json={"fresh_retakes": False}).status_code == 403
+    assert client.patch(url, json={"fresh_retakes": False}, headers={"X-CSRF-Token": ""}).status_code == 403
     r = client.patch(url, json={"fresh_retakes": False}, headers=h)
     assert r.status_code == 200 and r.json() == {"fresh_retakes": False}
     assert client.get(url).json() == {"fresh_retakes": False}

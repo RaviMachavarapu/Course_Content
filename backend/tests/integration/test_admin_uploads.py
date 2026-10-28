@@ -106,7 +106,7 @@ def test_put_requires_csrf(client: TestClient, db_session: Session) -> None:
     r = client.put(
         f"/api/admin/uploads/{uid}?offset=0",
         content=PDF,
-        headers={"Content-Type": "application/octet-stream"},
+        headers={"Content-Type": "application/octet-stream", "X-CSRF-Token": ""},
     )
     assert r.status_code == status.HTTP_403_FORBIDDEN
     assert client.get(f"/api/admin/uploads/{uid}").json()["received_bytes"] == 0

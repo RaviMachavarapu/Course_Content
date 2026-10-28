@@ -5,11 +5,12 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import CurrentStudent, DbDep
+from app.api.deps import CurrentStudent, DbDep, current_student
+from app.auth.csrf import csrf_protect
 from app.models.artifact import Artifact
 from app.models.course import Course
 from app.models.enums import ArtifactType
@@ -27,7 +28,12 @@ from app.schemas.me import (
 from app.services.progress import course_percent
 from app.services.visibility import is_live, live_artifacts, live_clause
 
-router = APIRouter(prefix="/api/student/me", tags=["student-me"])
+router = APIRouter(
+    prefix="/api/student/me",
+    tags=["student-me"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 _QUIZ_ACE_THRESHOLD = 80.0
 
