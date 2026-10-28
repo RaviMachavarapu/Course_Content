@@ -15,7 +15,10 @@ import {
 } from "../api";
 import { useStudentArtifact } from "../useWorkspace";
 
-const LETTERS = ["A", "B", "C", "D"];
+/** A, B, C, … for option `i` (Studio quizzes can have more than four options). */
+export function optionLetter(i: number): string {
+  return i >= 0 && i < 26 ? String.fromCharCode(65 + i) : String(i + 1);
+}
 const POLL_MS = 3000;
 const POLL_GIVE_UP_MS = 120_000;
 export const PREPARING_MESSAGE = "Preparing new questions…";
@@ -151,6 +154,7 @@ export function QuizViewer({
           void qc.invalidateQueries({ queryKey: ["student", "workspace", slug] });
           void qc.invalidateQueries({ queryKey: ["student", "catalog"] });
           void qc.invalidateQueries({ queryKey: ["student", "artifact", artifactId] });
+          void qc.invalidateQueries({ queryKey: ["student", "me"] });
         }}
       />
     </div>
@@ -418,7 +422,7 @@ function McqOptions({
                 isChosen ? "bg-tertiary text-on-tertiary" : "bg-surface-container-high",
               )}
             >
-              {LETTERS[oi]}
+              {optionLetter(oi)}
             </span>
             <MathText text={opt} />
           </button>
@@ -471,7 +475,7 @@ function Results({
           const yours =
             row.type === "mcq" && typeof row.response === "number" ? (
               <>
-                {LETTERS[row.response]}. <MathText text={row.options?.[row.response] ?? ""} />
+                {optionLetter(row.response)}. <MathText text={row.options?.[row.response] ?? ""} />
               </>
             ) : (
               String(row.response)
@@ -492,7 +496,7 @@ function Results({
                   {!row.correct && (
                     <p className="text-body-md text-secondary">
                       Correct answer:{" "}
-                      {row.correct_index != null && <>{LETTERS[row.correct_index]}. </>}
+                      {row.correct_index != null && <>{optionLetter(row.correct_index)}. </>}
                       <MathText text={row.correct_answer} />
                     </p>
                   )}

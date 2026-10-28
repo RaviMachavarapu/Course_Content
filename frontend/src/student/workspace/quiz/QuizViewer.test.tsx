@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onTestFinished } from "vitest";
-import { QuizViewer } from "./QuizViewer";
+import { QuizViewer, optionLetter } from "./QuizViewer";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -514,5 +514,11 @@ describe("QuizViewer math", () => {
     // question 1 + 2 option formulas + correct answer + explanation, no raw dollars
     expect(container.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(5);
     expect(container.textContent).not.toContain("$");
+  });
+});
+
+describe("optionLetter", () => {
+  it("labels options beyond D", () => {
+    expect([0, 1, 3, 4, 5].map(optionLetter)).toEqual(["A", "B", "D", "E", "F"]);
   });
 });
