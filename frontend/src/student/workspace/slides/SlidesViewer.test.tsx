@@ -147,3 +147,16 @@ describe("SlidesViewer handout PDF link", () => {
     expect(screen.queryByTestId("btn-sd5")).toBeNull();
   });
 });
+
+describe("SlidesViewer saving", () => {
+  it("saves once per position, not again every time the cached artifact updates", async () => {
+    const fetchMock = installFetch(artifact());
+    renderViewer();
+    await screen.findByTestId("slide-image");
+    await new Promise((r) => setTimeout(r, 1500));
+    const puts = fetchMock.mock.calls.filter(
+      (c) => (c[1] as RequestInit)?.method === "PUT" && String(c[0]).includes("/progress"),
+    );
+    expect(puts).toHaveLength(1);
+  });
+});

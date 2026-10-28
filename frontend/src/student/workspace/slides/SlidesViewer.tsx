@@ -43,9 +43,12 @@ export function SlidesViewer({
     }
   }, [data, total]);
 
-  // persist position + mark complete when the last slide is reached
+  // persist position + mark complete when the last slide is reached. Keyed on
+  // "loaded", not `data`: each save updates the cached artifact, and a `data`
+  // dependency would save again after every save.
+  const loaded = Boolean(data);
   useEffect(() => {
-    if (!data || total === 0) return;
+    if (!loaded || total === 0) return;
     const body =
       index >= total - 1
         ? { completed: true, slide_last_index: index }
@@ -53,7 +56,7 @@ export function SlidesViewer({
     const t = setTimeout(() => progress.mutate(body), 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, total, data]);
+  }, [index, total, loaded]);
 
   if (isPending) return <Skeleton className="h-[28rem]" />;
   if (isError || !data || total === 0)
