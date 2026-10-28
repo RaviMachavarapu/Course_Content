@@ -7,7 +7,16 @@ import { useRefreshMcpAuth } from "./useSettings";
 
 const REAUTH_CMD =
   "docker compose --profile mcp run --rm --service-ports mcp npx -y notebooklm-mcp-server@4.0.2 auth";
-const VNC_URL = "http://localhost:6080/vnc.html";
+/** noVNC for the mcp auth browser: `VITE_VNC_URL` when the build sets it,
+ * else port 6080 on the host this app is served from (compose publishes it
+ * there; it was hardcoded to localhost, which only worked on the dev host). */
+export function vncUrl(
+  configured: string | undefined,
+  loc: { protocol: string; hostname: string },
+): string {
+  return configured || `${loc.protocol}//${loc.hostname}:6080/vnc.html`;
+}
+const VNC_URL = vncUrl(import.meta.env.VITE_VNC_URL as string | undefined, window.location);
 
 export function NotebookLmTab(): JSX.Element {
   const mcp = useMcpStatus();
@@ -28,9 +37,9 @@ export function NotebookLmTab(): JSX.Element {
               role="status"
               className="rounded-lg bg-tertiary-container/30 px-3 py-2 text-body-md text-on-surface"
             >
-              No Google account is linked yet — content is generated from
-              built-in sample data (<code>FixtureProvider</code>). Link your
-              account below to generate from your own sources.
+              No Google account is linked yet — content is generated from built-in sample data (
+              <code>FixtureProvider</code>). Link your account below to generate from your own
+              sources.
             </p>
           )}
           <dl className="grid gap-2 text-body-md sm:grid-cols-[max-content_1fr] sm:gap-x-6">
@@ -93,18 +102,16 @@ export function NotebookLmTab(): JSX.Element {
             {isFixture ? "Link your Google account" : "Re-authenticate"}
           </h3>
           <p className="text-body-md text-on-surface-variant">
-            This opens a real Google sign-in page inside a virtual browser —
-            this app never asks for your Google password directly. Run this
-            in a terminal on the machine hosting Docker:
+            This opens a real Google sign-in page inside a virtual browser — this app never asks for
+            your Google password directly. Run this in a terminal on the machine hosting Docker:
           </p>
           <code className="select-all rounded-lg bg-surface-container-high px-3 py-2 font-mono text-body-sm">
             {REAUTH_CMD}
           </code>
           <p className="text-body-md text-on-surface-variant">
-            Then open the link below, click <strong>Connect</strong>, and
-            sign in with the Google account you want to use — exactly as you
-            would on google.com. When you're done, come back and click{" "}
-            <strong>Reload auth</strong> above.
+            Then open the link below, click <strong>Connect</strong>, and sign in with the Google
+            account you want to use — exactly as you would on google.com. When you're done, come
+            back and click <strong>Reload auth</strong> above.
           </p>
           <a
             href={VNC_URL}
