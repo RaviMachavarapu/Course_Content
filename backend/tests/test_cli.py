@@ -271,3 +271,57 @@ def test_seed_prompt_files_contain_both_lines_in_order() -> None:
 
 def test_add_math_prompt_line_command_is_registered() -> None:
     assert build_parser().parse_args(["add-math-prompt-line"]).func is not None
+
+
+# -- seed-demo as production runs it (review 2026-10-28) ---------------------------------
+def test_seed_demo_with_the_source_step_on_its_own_connection(
+    db_engine: sa.Engine, redis_client: object, monkeypatch: object
+) -> None:
+    """The autouse `_bind_source_step` puts the source step on the test's connection,
+    which hid that it couldn't see the CLI's uncommitted module. Here it gets its own
+    connection, as in production; rows are really committed, then removed."""
+    import functools
+    from collections.abc import Iterator
+    from contextlib import contextmanager
+
+    import pytest
+
+    from app.cli import DEMO_ADMIN_EMAIL, DEMO_STUDENT_EMAIL
+    from app.models.prompt_template import PromptTemplate
+    from app.pipeline import module_sources
+
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+    factory = sa.orm.sessionmaker(bind=db_engine, expire_on_commit=False)
+
+    @contextmanager
+    def own_connection() -> Iterator[Session]:
+        with factory() as s:
+            yield s
+            s.commit()
+
+    monkeypatch.setattr(
+        orchestrator,
+        "ensure_module_sources",
+        functools.partial(
+            module_sources.ensure_module_sources,
+            session_factory=own_connection,
+            redis_client=redis_client,
+        ),
+    )
+    titles = ["Neural Networks Crash Course", "Effective Study Techniques"]
+    with factory() as s:
+        templates_before = set(s.scalars(sa.select(PromptTemplate.id)))
+        assert not s.scalar(sa.select(sa.func.count()).where(Course.title.in_(titles)))
+    try:
+        with factory() as session:
+            result = seed_demo(session)
+            session.commit()
+            module = result.published_course.modules[0]
+            assert module.status is ModuleStatus.published
+            assert all(a.published_version_id for a in module.artifacts)
+    finally:
+        with factory() as s:
+            s.execute(sa.delete(Course).where(Course.title.in_(titles)))
+            s.execute(sa.delete(User).where(User.email.in_([DEMO_ADMIN_EMAIL, DEMO_STUDENT_EMAIL])))
+            s.execute(sa.delete(PromptTemplate).where(PromptTemplate.id.not_in(templates_before)))
+            s.commit()

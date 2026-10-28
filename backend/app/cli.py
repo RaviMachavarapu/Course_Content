@@ -144,7 +144,8 @@ def _seed_module(
     jobs = orchestrator.start_module_generation(
         session, provider, module.id, list(ArtifactType), requested_by=requested_by
     )
-    session.flush()
+    # The source step reads the module on its own connection: commit it first.
+    session.commit()
     for job in jobs:
         orchestrator.run_artifact_generation(
             session, provider, job.artifact_id, job_id=job.job_id, requested_by=requested_by
@@ -204,8 +205,8 @@ class DemoResult:
 
 def seed_demo(session: Session, provider: FixtureProvider | None = None) -> DemoResult:
     """The `seed-demo` logic (T044), session-scoped like `seed_admin` so it's
-    directly testable (and re-runnable in one transaction) without going
-    through `session_scope()`'s own connection."""
+    directly testable. It commits as it goes (each module before its generation,
+    whose source step uses its own connection); re-running it is idempotent."""
     provider = provider or FixtureProvider()
 
     admin, admin_created = seed_admin(
