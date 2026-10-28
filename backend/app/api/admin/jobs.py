@@ -8,12 +8,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import desc, func, select
+from sqlalchemy.orm import selectinload
 
 from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.admin.courses import source_files_out
 from app.api.deps import DbDep
 from app.errors import APIError
 from app.models.artifact import Artifact
+from app.models.artifact_version import ArtifactVersion
 from app.models.enums import ARTIFACT_TYPES, ArtifactStatus, GenerationJobState
 from app.models.generation_job import GenerationJob
 from app.models.module import Module
@@ -94,6 +96,27 @@ def module_staging(module_id: uuid.UUID, db: DbDep) -> StagingResponse:
     by_type = {a.type: a for a in module.artifacts}
     artifacts_out: list[StagingArtifactOut] = []
 
+    # polled every few seconds: two bulk reads instead of loading every
+    # historical version (with content) and one job query per artifact
+    current_ids = [a.current_version_id for a in module.artifacts if a.current_version_id]
+    current_versions = {
+        v.id: v
+        for v in db.scalars(
+            select(ArtifactVersion)
+            .where(ArtifactVersion.id.in_(current_ids))
+            .options(selectinload(ArtifactVersion.media_files))
+        )
+    }
+    latest_jobs = {
+        j.artifact_id: j
+        for j in db.scalars(
+            select(GenerationJob)
+            .where(GenerationJob.artifact_id.in_([a.id for a in module.artifacts]))
+            .distinct(GenerationJob.artifact_id)
+            .order_by(GenerationJob.artifact_id, desc(GenerationJob.created_at))
+        )
+    }
+
     for artifact_type in ARTIFACT_TYPES:
         artifact = by_type.get(artifact_type)
         if artifact is None:
@@ -101,9 +124,7 @@ def module_staging(module_id: uuid.UUID, db: DbDep) -> StagingResponse:
 
         current: CurrentVersionOut | None = None
         if artifact.current_version_id is not None:
-            version = next(
-                (v for v in artifact.versions if v.id == artifact.current_version_id), None
-            )
+            version = current_versions.get(artifact.current_version_id)
             if version is not None:
                 current = CurrentVersionOut(
                     id=version.id,
@@ -122,12 +143,7 @@ def module_staging(module_id: uuid.UUID, db: DbDep) -> StagingResponse:
                     ],
                 )
 
-        latest_job = db.scalar(
-            select(GenerationJob)
-            .where(GenerationJob.artifact_id == artifact.id)
-            .order_by(desc(GenerationJob.created_at))
-            .limit(1)
-        )
+        latest_job = latest_jobs.get(artifact.id)
         artifacts_out.append(
             StagingArtifactOut(
                 id=artifact.id,

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import CurrentStudent, DbDep, current_student
+from app.api.student.courses import published_audio_seconds
 from app.auth.csrf import csrf_protect
 from app.models.artifact import Artifact
 from app.models.course import Course
@@ -77,32 +78,28 @@ def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
 
 @router.get("/listening", response_model=MyListeningResponse)
 def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
-    audio_artifacts = db.scalars(
-        select(Artifact)
-        .where(
-            Artifact.type == ArtifactType.audio_overview,
-            live_clause(),
+    # only the audio artifacts this student has opened, with their course's
+    # module tree loaded up front (no per-row lazy loads)
+    opened = db.execute(
+        select(Artifact, ArtifactProgress)
+        .join(
+            ArtifactProgress,
+            (ArtifactProgress.artifact_id == Artifact.id)
+            & (ArtifactProgress.user_id == student.id),
         )
+        .where(Artifact.type == ArtifactType.audio_overview, live_clause())
         .options(
-            selectinload(Artifact.versions),
-            selectinload(Artifact.module).selectinload(Module.course),
+            selectinload(Artifact.module)
+            .selectinload(Module.course)
+            .selectinload(Course.modules)
+            .selectinload(Module.artifacts)
         )
     ).all()
-
-    progress_by_artifact = {
-        p.artifact_id: p
-        for p in db.scalars(select(ArtifactProgress).where(ArtifactProgress.user_id == student.id))
-    }
+    durations = published_audio_seconds(db, [artifact for artifact, _ in opened])
 
     rows: list[ListeningRow] = []
-    for artifact in audio_artifacts:
-        prog = progress_by_artifact.get(artifact.id)
-        if prog is None:
-            continue  # only rows the student has actually opened
-        version = next(
-            (v for v in artifact.versions if v.id == artifact.published_version_id), None
-        )
-        duration = int((version.content_json or {}).get("duration_seconds", 0)) if version else 0
+    for artifact, prog in opened:
+        duration = durations.get(artifact.id, 0)
         position = prog.audio_position_seconds or 0
         module = artifact.module
         ordered = sorted(module.course.modules, key=lambda m: m.order_index)
