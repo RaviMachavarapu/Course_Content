@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { type LoginRedirectState, safeFrom } from "@/app/csrfRecovery";
 import { Button, Input } from "@/components";
 import { ApiError } from "@/lib/api";
 import { AuthShell } from "./AuthShell";
@@ -8,6 +9,8 @@ import { useLogin } from "./useStudentAuth";
 
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
+  const location = useLocation() as { state?: LoginRedirectState | null };
+  const notice = location.state?.notice;
   const login = useLogin();
 
   const [email, setEmail] = useState("");
@@ -28,7 +31,8 @@ export function LoginPage(): JSX.Element {
     login.mutate(
       { email, password },
       {
-        onSuccess: () => navigate("/catalog", { replace: true }),
+        onSuccess: () =>
+          navigate(safeFrom(location.state?.from, "/catalog", "student"), { replace: true }),
         onError: (err) => {
           setFormError(err instanceof ApiError ? err.message : "Could not sign in. Try again.");
         },
@@ -54,6 +58,14 @@ export function LoginPage(): JSX.Element {
       }
     >
       <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+        {notice && !formError && (
+          <p
+            role="status"
+            className="rounded-lg bg-surface-container-high px-3 py-2 font-label-md text-label-md text-on-surface"
+          >
+            {notice}
+          </p>
+        )}
         {formError && (
           <p
             role="alert"

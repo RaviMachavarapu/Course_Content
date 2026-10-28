@@ -1,4 +1,7 @@
-import { screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { LoginPage } from "./LoginPage";
 import userEvent from "@testing-library/user-event";
 import { mockFetch, renderAuthRoute } from "./authTestUtils";
 
@@ -49,5 +52,29 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText("Password"), "correct-pw-123");
     await userEvent.click(screen.getByTestId("btn-sl2"));
     await waitFor(() => expect(screen.getByText("CATALOG PAGE")).toBeInTheDocument());
+  });
+
+  it("returns to the deep link the guard remembered, and shows a notice", async () => {
+    mockFetch({ status: 200, body: { user } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            { pathname: "/login", state: { from: "/learn/nn/0/quiz", notice: "Session gone" } },
+          ]}
+        >
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/learn/nn/0/quiz" element={<div>DEEP LINK</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Session gone");
+    await userEvent.type(screen.getByLabelText("Email"), "sam@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "correct-pw-123");
+    await userEvent.click(screen.getByTestId("btn-sl2"));
+    await waitFor(() => expect(screen.getByText("DEEP LINK")).toBeInTheDocument());
   });
 });

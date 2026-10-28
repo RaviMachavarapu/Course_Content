@@ -61,4 +61,19 @@ describe("AdminLoginPage", () => {
     await userEvent.click(screen.getByTestId("btn-al1"));
     await waitFor(() => expect(screen.getByText("ADMIN INGESTION")).toBeInTheDocument());
   });
+
+  it("shows the notice it was sent with (e.g. session expired)", () => {
+    mockFetch();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[{ pathname: "/admin/login", state: { notice: "Expired" } }]}>
+          <Routes>
+            <Route path="/admin/login" element={<AdminLoginPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Expired");
+  });
 });

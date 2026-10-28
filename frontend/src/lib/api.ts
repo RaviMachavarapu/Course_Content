@@ -23,6 +23,26 @@ export class ApiError extends Error {
 
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
+export const SESSION_EXPIRED_MESSAGE = "Your session has expired — please sign in again.";
+
+type CsrfFailureHandler = (path: string) => void;
+let csrfFailureHandler: CsrfFailureHandler | null = null;
+
+/**
+ * Register what happens when the server rejects a mutation with
+ * `403 csrf_failed` (the `sdp_csrf` cookie is gone or stale). The server has
+ * no endpoint that re-issues the token, only login does, so the app sends the
+ * user to sign in again rather than failing silently.
+ */
+export function setCsrfFailureHandler(handler: CsrfFailureHandler | null): void {
+  csrfFailureHandler = handler;
+}
+
+/** Shared by `apiFetch` and raw-fetch callers (chunked upload). */
+export function reportCsrfFailure(path: string): void {
+  csrfFailureHandler?.(path);
+}
+
 export function readCookie(name: string): string | undefined {
   return document.cookie
     .split("; ")
@@ -63,6 +83,10 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
       data && typeof data === "object" && "error" in data
         ? (data as { error: { code?: string; message?: string; fields?: unknown } }).error
         : undefined;
+    if (res.status === 403 && err?.code === "csrf_failed") {
+      reportCsrfFailure(path);
+      throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE, err.fields);
+    }
     throw new ApiError(
       res.status,
       err?.code ?? "error",

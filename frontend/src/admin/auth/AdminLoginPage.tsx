@@ -3,11 +3,13 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button, Icon, Input } from "@/components";
 import { ApiError } from "@/lib/api";
 import { emailError } from "@/student/auth/validation";
+import { type LoginRedirectState, safeFrom } from "@/app/csrfRecovery";
 import { useAdminLogin } from "./useAdminAuth";
 
 export function AdminLoginPage(): JSX.Element {
   const navigate = useNavigate();
-  const location = useLocation() as { state?: { from?: string } };
+  const location = useLocation() as { state?: LoginRedirectState | null };
+  const notice = location.state?.notice;
   const login = useAdminLogin();
 
   const [email, setEmail] = useState("");
@@ -28,7 +30,8 @@ export function AdminLoginPage(): JSX.Element {
     login.mutate(
       { email, password },
       {
-        onSuccess: () => navigate(location.state?.from ?? "/admin/ingestion", { replace: true }),
+        onSuccess: () =>
+          navigate(safeFrom(location.state?.from, "/admin/ingestion", "admin"), { replace: true }),
         onError: (err) =>
           setFormError(err instanceof ApiError ? err.message : "Could not sign in. Try again."),
       },
@@ -51,6 +54,14 @@ export function AdminLoginPage(): JSX.Element {
         <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-level-1">
           <h1 className="font-headline-md text-headline-md">Admin sign in</h1>
           <form className="mt-5 flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+            {notice && !formError && (
+              <p
+                role="status"
+                className="rounded-lg bg-surface-container-high px-3 py-2 font-label-md text-label-md text-on-surface"
+              >
+                {notice}
+              </p>
+            )}
             {formError && (
               <p
                 role="alert"

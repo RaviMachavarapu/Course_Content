@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { dropUserData, reportLogoutFailure } from "@/lib/sessionCache";
 import { studentAuthApi, type User } from "./api";
 
 const SESSION_KEY = ["student", "session"] as const;
@@ -29,7 +30,11 @@ export function useLogin() {
   return useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       studentAuthApi.login(email, password),
-    onSuccess: (user) => qc.setQueryData(SESSION_KEY, user),
+    onSuccess: (user) => {
+      // a different user may have used this tab: start from an empty cache
+      qc.clear();
+      qc.setQueryData(SESSION_KEY, user);
+    },
   });
 }
 
@@ -38,7 +43,11 @@ export function useRegister() {
   return useMutation({
     mutationFn: (v: { email: string; password: string; displayName: string }) =>
       studentAuthApi.register(v.email, v.password, v.displayName),
-    onSuccess: (user) => qc.setQueryData(SESSION_KEY, user),
+    onSuccess: (user) => {
+      // a different user may have used this tab: start from an empty cache
+      qc.clear();
+      qc.setQueryData(SESSION_KEY, user);
+    },
   });
 }
 
@@ -47,8 +56,14 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => studentAuthApi.logout(),
     onSuccess: () => {
+      qc.clear();
       qc.setQueryData(SESSION_KEY, null);
-      void qc.invalidateQueries({ queryKey: SESSION_KEY });
+    },
+    onError: (err) => {
+      // Still signed in on the server: keep the session, but don't keep the
+      // cached data around either, and say so instead of navigating away.
+      dropUserData(qc);
+      reportLogoutFailure(err);
     },
   });
 }
