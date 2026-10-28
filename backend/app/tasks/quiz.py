@@ -95,6 +95,8 @@ class _Job:
     seen: list[str]
     notebook_id: str | None
     source_text: str | None
+    #: the module also has a link: quotes not in its PDFs are kept, flagged
+    link_source: bool = False
 
 
 @dataclass
@@ -337,6 +339,7 @@ def _load_job(db: Session, set_id: uuid.UUID, aid: uuid.UUID, uid: uuid.UUID) ->
         seen=seen_questions(db, artifact, uid),
         notebook_id=module.notebooklm_notebook_id,
         source_text=source_text,
+        link_source=bool(module.source_url),
     )
 
 
@@ -346,14 +349,32 @@ def _round(
     parsed: list[Any],
     kept: list[dict[str, Any]],
     dropped: list[dict[str, Any]],
+    unverified: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "round": number,
         "requested": requested,
         "parsed": len(parsed),
         "kept": [q["question"] for q in kept],
         "dropped": dropped,
     }
+    if unverified:
+        out["unverified"] = unverified
+    return out
+
+
+def _validate(
+    job: _Job, parsed: list[Any], seen: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    unverified: list[dict[str, Any]] = []
+    kept, dropped = qg.validate(
+        parsed,
+        seen=seen,
+        source_text=job.source_text,
+        link_source=job.link_source,
+        unverified=unverified,
+    )
+    return kept, dropped, unverified
 
 
 def _generate(provider: ContentProvider, job: _Job) -> _Result:
@@ -363,8 +384,8 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
 
     _beat_or_stop(job.set_id)
     parsed = qg.parse_questions(provider.query(nb, qg.build_prompt(job.n, job.seen)))
-    kept, dropped = qg.validate(parsed, seen=job.seen, source_text=job.source_text)
-    report["rounds"].append(_round(1, job.n, parsed, kept, dropped))
+    kept, dropped, unverified = _validate(job, parsed, job.seen)
+    report["rounds"].append(_round(1, job.n, parsed, kept, dropped, unverified))
 
     if len(kept) < job.n:
         short = job.n - len(kept)
@@ -378,10 +399,8 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
             report["reask_error"] = f"{type(exc).__name__}: {exc}"  # serve round 1's
         else:
             parsed = qg.parse_questions(answer)
-            more, dropped = qg.validate(
-                parsed, seen=kept_texts + job.seen, source_text=job.source_text
-            )
-            report["rounds"].append(_round(2, short, parsed, more, dropped))
+            more, dropped, unverified = _validate(job, parsed, kept_texts + job.seen)
+            report["rounds"].append(_round(2, short, parsed, more, dropped, unverified))
             kept += more
 
     served = kept[: job.n]

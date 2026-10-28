@@ -160,6 +160,31 @@ def test_sets_surface_the_reask_error_as_a_warning(client: TestClient, db_sessio
     assert row["error"] is None
 
 
+def test_sets_list_questions_whose_quote_is_not_verified(
+    client: TestClient, db_session: Session
+) -> None:
+    """Link + PDF module: a kept question quoting the link (not the PDFs) is flagged."""
+    _, artifact, student = _setup(db_session)
+    flag = {"index": 3, "question": "From the video?", "reason": "quote not verified (link source)"}
+    _set(
+        db_session,
+        artifact,
+        student,
+        5,
+        questions=[{"type": "mcq", "question": "From the video?"}],
+        validation_report={
+            "rounds": [
+                {"round": 1, "kept": ["From the video?"], "dropped": [], "unverified": [flag]},
+                {"round": 2, "kept": [], "dropped": []},
+            ]
+        },
+    )
+    _admin(client, db_session)
+    (row,) = client.get(f"/api/admin/artifacts/{artifact.id}/quiz-sets").json()
+    assert row["unverified_questions"] == [{"round": 1, **flag}]
+    assert row["dropped"] == 0 and row["kept"] == 1
+
+
 def test_sets_unknown_artifact_404(client: TestClient, db_session: Session) -> None:
     _admin(client, db_session)
     assert client.get(f"/api/admin/artifacts/{uuid.uuid4()}/quiz-sets").status_code == 404
@@ -170,7 +195,10 @@ def test_switch_get_patch_and_csrf(client: TestClient, db_session: Session) -> N
     h = _admin(client, db_session)
     url = f"/api/admin/modules/{module.id}/quiz-settings"
     assert client.get(url).json() == {"fresh_retakes": True}
-    assert client.patch(url, json={"fresh_retakes": False}, headers={"X-CSRF-Token": ""}).status_code == 403
+    assert (
+        client.patch(url, json={"fresh_retakes": False}, headers={"X-CSRF-Token": ""}).status_code
+        == 403
+    )
     r = client.patch(url, json={"fresh_retakes": False}, headers=h)
     assert r.status_code == 200 and r.json() == {"fresh_retakes": False}
     assert client.get(url).json() == {"fresh_retakes": False}

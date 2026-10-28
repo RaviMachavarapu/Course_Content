@@ -489,7 +489,7 @@ class _SourceIndex:
             return "quote: too short"
         if self._found(words, squashed):
             return None
-        return "quote: not found in the sources"
+        return _QUOTE_NOT_FOUND
 
     def _found(self, words: list[str], squashed: str) -> bool:
         if f" {' '.join(words)} " in self.padded:
@@ -511,8 +511,18 @@ class _SourceIndex:
         return squashed in self.squashed
 
 
+#: validation_report flag on a kept question whose quote isn't in the module's PDFs
+UNVERIFIED_REASON = "quote not verified (link source)"
+_QUOTE_NOT_FOUND = "quote: not found in the sources"
+
+
 def validate(
-    questions: list[Any], *, seen: list[str], source_text: str | None
+    questions: list[Any],
+    *,
+    seen: list[str],
+    source_text: str | None,
+    link_source: bool = False,
+    unverified: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Split chat questions into (kept, dropped). Dropped entries are
     `{"index", "question", "reason"}`; kept ones are normalised copies (input untouched).
@@ -520,6 +530,10 @@ def validate(
     `seen`: question texts the student has already seen (near-duplicates are dropped, as
     are repeats within `questions`). `source_text`: the module's PDF text; when given, each
     question's `source_quote` must be found in it (None = module has no PDFs, not checked).
+    `link_source`: the module also has a link (owner decision 2026-10-28): a quote not
+    found in the PDFs may come from the link, so the question is kept and appended to
+    `unverified` (same entry shape, reason `UNVERIFIED_REASON`); a missing or too-short
+    quote is still dropped, as are format problems and duplicates.
     """
     index = _SourceIndex(source_text) if source_text is not None else None
     taken = [_dup_key(s) for s in seen]
@@ -550,6 +564,10 @@ def validate(
             )
             continue
         problem = index.quote_problem(q["source_quote"]) if index is not None else None
+        if problem == _QUOTE_NOT_FOUND and link_source:
+            if unverified is not None:
+                unverified.append({"index": i, "question": shown, "reason": UNVERIFIED_REASON})
+            problem = None
         if problem:
             dropped.append({"index": i, "question": shown, "reason": problem})
             continue

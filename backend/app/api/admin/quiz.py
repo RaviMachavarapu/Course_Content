@@ -45,6 +45,9 @@ class QuizSetOut(BaseModel):
     kept: int
     dropped: int
     dropped_questions: list[DroppedOut]
+    #: kept questions whose proof quote isn't in the module's PDFs (link + PDF
+    #: module, owner decision 2026-10-28): reason "quote not verified (link source)"
+    unverified_questions: list[DroppedOut]
     error: str | None
     #: round 2 (re-ask) chat failure; round 1's questions were served
     warning: str | None
@@ -60,22 +63,29 @@ def _rounds(report: dict[str, Any]) -> list[dict[str, Any]]:
     return [r for r in rounds if isinstance(r, dict)] if isinstance(rounds, list) else []
 
 
+def _entries(r: dict[str, Any], key: str) -> list[DroppedOut]:
+    items = r.get(key)
+    return [
+        DroppedOut(
+            round=r.get("round"),
+            index=d.get("index"),
+            question=str(d.get("question", "")),
+            reason=str(d.get("reason", "")),
+        )
+        for d in (items if isinstance(items, list) else [])
+        if isinstance(d, dict)
+    ]
+
+
 def _out(row: QuizQuestionSet, user: User) -> QuizSetOut:
     dropped: list[DroppedOut] = []
+    unverified: list[DroppedOut] = []
     kept = 0
     for r in _rounds(row.validation_report):
         k = r.get("kept")
         kept += len(k) if isinstance(k, list) else 0
-        for d in r.get("dropped") or []:
-            if isinstance(d, dict):
-                dropped.append(
-                    DroppedOut(
-                        round=r.get("round"),
-                        index=d.get("index"),
-                        question=str(d.get("question", "")),
-                        reason=str(d.get("reason", "")),
-                    )
-                )
+        dropped += _entries(r, "dropped")
+        unverified += _entries(r, "unverified")
     report = row.validation_report if isinstance(row.validation_report, dict) else {}
     error = report.get("error")
     warning = report.get("reask_error")
@@ -89,6 +99,7 @@ def _out(row: QuizQuestionSet, user: User) -> QuizSetOut:
         kept=kept,
         dropped=len(dropped),
         dropped_questions=dropped,
+        unverified_questions=unverified,
         error=str(error) if error else None,
         warning=str(warning) if warning else None,
         questions=row.questions,

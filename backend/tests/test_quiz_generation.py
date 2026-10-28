@@ -815,3 +815,55 @@ def test_live_sample_fill_blanks_and_mcqs() -> None:
     assert [k["type"] for k in kept].count("mcq") == 6  # MCQs unaffected
     assert len(kept_blank) + len(dropped) == 4
     assert all(d["reason"] == qg.FORMULA_REASON for d in dropped)
+
+
+# -- mixed link + PDF modules (owner decision 2026-10-28) ---------------------------------
+def test_link_and_pdf_module_keeps_a_quote_not_found_in_the_pdfs_and_flags_it() -> None:
+    flagged: list[dict[str, Any]] = []
+    kept, dropped = qg.validate(
+        [
+            mcq(source_quote="a sentence that was only said in the video"),
+            mcq(question="Q2?", source_quote="the quick brown fox jumps over the lazy dog"),
+        ],
+        seen=[],
+        source_text="so the quick brown fox jumps over the lazy dog today",
+        link_source=True,
+        unverified=flagged,
+    )
+    assert len(kept) == 2 and dropped == []
+    assert flagged == [
+        {"index": 0, "question": "Which planet is the Red Planet?", "reason": qg.UNVERIFIED_REASON}
+    ]
+    assert qg.UNVERIFIED_REASON == "quote not verified (link source)"
+
+
+def test_link_and_pdf_module_still_applies_format_duplicate_and_missing_quote_checks() -> None:
+    flagged: list[dict[str, Any]] = []
+    kept, dropped = qg.validate(
+        [
+            mcq(options=["a", "b"]),  # format
+            mcq(source_quote="a sentence that was only said in the video"),
+            mcq(
+                source_quote="another sentence that was only said in the video"
+            ),  # duplicate question
+            mcq(question="No quote at all?", source_quote=""),
+        ],
+        seen=[],
+        source_text="so the quick brown fox jumps over the lazy dog today",
+        link_source=True,
+        unverified=flagged,
+    )
+    assert len(kept) == 1
+    reasons = [d["reason"] for d in dropped]
+    assert any(r.startswith("duplicate") for r in reasons)
+    assert "quote: missing" in reasons
+    assert len(dropped) == 3 and len(flagged) == 1
+
+
+def test_pdf_only_module_still_drops_a_quote_not_in_the_pdfs() -> None:
+    kept, dropped = qg.validate(
+        [mcq(source_quote="a sentence that was only said in the video")],
+        seen=[],
+        source_text="the quick fox",
+    )
+    assert kept == [] and dropped[0]["reason"] == "quote: not found in the sources"

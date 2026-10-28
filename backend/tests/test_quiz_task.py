@@ -413,6 +413,9 @@ def test_source_text_is_used_for_quote_checks(
     db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     artifact, user = setup
+    artifact.module.source_url = None  # PDF-only module
+    artifact.module.source_type = ModuleSourceType.pdf
+    db_session.commit()
     quote = "the reaction proceeds through a planar carbocation intermediate"
     monkeypatch.setattr(qg, "module_source_text", lambda _m: f"Notes. {quote}. End.")
     good = [{**mcq(), "source_quote": quote} for _ in range(5)]
@@ -425,6 +428,27 @@ def test_source_text_is_used_for_quote_checks(
     assert len(qs.questions) == 5
     [dropped] = qs.validation_report["rounds"][0]["dropped"]
     assert dropped["reason"].startswith("quote:")
+
+
+def test_a_link_and_pdf_module_keeps_link_quotes_and_flags_them(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup  # the module has a YouTube link
+    quote = "the reaction proceeds through a planar carbocation intermediate"
+    monkeypatch.setattr(qg, "module_source_text", lambda _m: f"Notes. {quote}. End.")
+    from_pdf = [{**mcq(), "source_quote": quote} for _ in range(4)]
+    from_video = {**mcq(), "source_quote": "a sentence only spoken in the video"}
+    chat = FakeChat(answer([*from_pdf, from_video]), answer([]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    [qs] = _sets(db_session, artifact, user)
+    assert len(qs.questions) == 5
+    first = qs.validation_report["rounds"][0]
+    assert first["dropped"] == []
+    [flag] = first["unverified"]
+    assert flag["question"] == from_video["question"]
+    assert flag["reason"] == "quote not verified (link source)"
 
 
 def test_switch_off_prepares_nothing(

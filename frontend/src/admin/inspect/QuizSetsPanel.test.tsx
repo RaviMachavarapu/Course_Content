@@ -70,6 +70,34 @@ describe("QuizSetsPanel", () => {
     expect(screen.queryByTestId("quiz-set-warning")).not.toBeInTheDocument();
   });
 
+  it("flags a kept question whose quote is not in the PDFs (link source)", async () => {
+    renderPanel([
+      {
+        ...SET,
+        unverified_questions: [
+          {
+            round: 1,
+            index: 0,
+            question: "What is 2+2?",
+            reason: "quote not verified (link source)",
+          },
+        ],
+      },
+    ]);
+    expect(await screen.findByText(/1 quote not verified/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Stu Dent/ }));
+    expect(screen.getByTestId("quiz-set-unverified")).toHaveTextContent(
+      "quote not verified (link source)",
+    );
+  });
+
+  it("shows no flag for verified questions or an older API reply", async () => {
+    renderPanel([SET]);
+    await userEvent.click(await screen.findByRole("button", { name: /Stu Dent/ }));
+    expect(screen.queryByTestId("quiz-set-unverified")).not.toBeInTheDocument();
+    expect(screen.queryByText(/quote not verified/)).not.toBeInTheDocument();
+  });
+
   it("shows an empty state", async () => {
     renderPanel([]);
     expect(await screen.findByText("No sets generated yet.")).toBeInTheDocument();

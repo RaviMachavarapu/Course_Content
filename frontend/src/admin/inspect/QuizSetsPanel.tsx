@@ -29,6 +29,13 @@ export interface QuizSetItem {
     question: string;
     reason: string;
   }[];
+  /** kept questions whose proof quote isn't in the module's PDFs (link + PDF module) */
+  unverified_questions?: {
+    round: number | null;
+    index: number | null;
+    question: string;
+    reason: string;
+  }[];
   error: string | null;
   /** round 2 (re-ask) chat failure; round 1's questions were served */
   warning: string | null;
@@ -51,6 +58,9 @@ function answerOf(q: QuizSetQuestion): string {
 
 function SetRow({ set }: { set: QuizSetItem }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const unverified = new Map(
+    (set.unverified_questions ?? []).map((u) => [u.question, u.reason] as const),
+  );
   return (
     <li className="border-b border-outline-variant/60 py-2 last:border-0" data-testid="quiz-set">
       <button
@@ -66,6 +76,7 @@ function SetRow({ set }: { set: QuizSetItem }): JSX.Element {
         <span className="text-on-surface-variant">
           {set.source} · {set.status} · {set.question_count} questions · {set.kept} kept /{" "}
           {set.dropped} dropped
+          {unverified.size > 0 && <> · {unverified.size} quote not verified</>}
         </span>
       </button>
       {open && (
@@ -80,6 +91,14 @@ function SetRow({ set }: { set: QuizSetItem }): JSX.Element {
             {set.questions.map((q, i) => (
               <li key={i}>
                 <MathText text={q.question ?? ""} />
+                {unverified.has(q.question ?? "") && (
+                  <span
+                    className="ml-2 rounded bg-surface-container-high px-1 text-label-sm text-on-surface-variant"
+                    data-testid="quiz-set-unverified"
+                  >
+                    {unverified.get(q.question ?? "")}
+                  </span>
+                )}
                 {q.type === "mcq" && q.options && (
                   <ul className="ml-3 list-disc text-on-surface-variant">
                     {q.options.map((o, j) => (
