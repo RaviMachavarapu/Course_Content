@@ -1,9 +1,18 @@
-"""Run inside the typeset image:  pytest -q /app/tests"""
+"""Run inside the typeset image (as compose runs it, with an init for PID 1):
+
+    docker run --rm --init --network none shikshak-dp-typeset python3 -m pytest -q /app/tests
+
+Without --init pytest is PID 1; the tests then reap orphaned TeX processes
+themselves (see _reap_orphans), so the plain command passes as well.
+"""
 
 from __future__ import annotations
 
 import base64
 import json
+import os
+import re
+import socket
 import struct
 import subprocess
 import sys
@@ -209,9 +218,24 @@ def test_timeout_returns_504(base_url, monkeypatch):
     assert "error" in json.loads(body)
 
 
+def _reap_orphans() -> None:
+    """When pytest itself is PID 1 (docker run without --init), killed TeX
+    processes are reparented to it: reap them the way an init would."""
+    if os.getpid() != 1:
+        return
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+
+
 def _tex_processes() -> list[str]:
     """TeX/Quarto processes still alive, plus any zombie (unreaped) process."""
     time.sleep(0.5)  # give init a moment to reap
+    _reap_orphans()
     found = []
     for d in Path("/proc").glob("[0-9]*"):
         try:
@@ -226,18 +250,36 @@ def _tex_processes() -> list[str]:
     return found
 
 
-def test_timeout_kills_whole_process_tree(base_url, monkeypatch):
-    monkeypatch.setattr(server, "DOC_TIMEOUT", 6)
-    status, _, _ = post(base_url, {"markdown": "Loop $\\def\\x{\\x}\\x$ here.\n", "title": "", "images": {}})
-    assert status in (200, 504)
+LOOP = "\\def\\x{\\x}\\x"  # TeX expands \\x forever
+
+
+def test_looping_formula_is_refused_by_allowlist(base_url):
+    headers, pdf = render(base_url, f"Loop ${LOOP}$ and good $y^2$.\n")
+    assert headers["X-Typeset-Fallback"] == "1"
+    text = pdftext(pdf)
+    assert LOOP in text and "y^2" not in text
     assert _tex_processes() == []
 
 
-def test_looping_formula_reaches_fallback(base_url):
-    headers, pdf = render(base_url, "Loop $\\def\\x{\\x}\\x$ and good $y^2$.\n")
+def test_timeout_kills_whole_process_tree(base_url, monkeypatch):
+    # The allowlist is bypassed so xelatex really loops: the first render hits
+    # its cap, the probe hits the document budget, and every TeX process of
+    # both is killed (process group) and reaped.
+    monkeypatch.setattr(server, "formula_allowed", lambda src: True)
+    monkeypatch.setattr(server, "DOC_TIMEOUT", 6)
+    status, _, _ = post(base_url, {"markdown": f"Loop ${LOOP}$ here.\n", "title": "", "images": {}})
+    assert status == 504
+    assert _tex_processes() == []
+
+
+def test_looping_formula_reaches_fallback(base_url, monkeypatch):
+    monkeypatch.setattr(server, "formula_allowed", lambda src: True)
+    monkeypatch.setattr(server, "DOC_TIMEOUT", 40)
+    monkeypatch.setattr(server, "PROBE_CAP", 4.0)
+    headers, pdf = render(base_url, f"Loop ${LOOP}$ and good $y^2$.\n")
     assert headers["X-Typeset-Fallback"] == "1"
     text = pdftext(pdf)
-    assert "\\def\\x{\\x}\\x" in text and "y^2" not in text
+    assert LOOP in text and "y^2" not in text
     assert _tex_processes() == []
 
 
@@ -489,3 +531,80 @@ def test_typographic_punctuation_prints_as_written(base_url):
     assert "ASCII \"q\" 's' a -- b --- c done." in text, text
     for token in ["``", "''", "Newton's"]:
         assert token not in text, (token, text)
+
+
+# -- infra review hardening (2026-10-28) -----------------------------------------------
+
+
+def test_tex_cannot_write_outside_the_work_dir(base_url, monkeypatch):
+    """openout_any=p: with the allowlist bypassed, writes outside the work dir fail."""
+    monkeypatch.setattr(server, "formula_allowed", lambda src: True)
+    md = "W $\\immediate\\openout1=/tmp/escaped.tex \\immediate\\write1{x}\\immediate\\closeout1 y$ end.\n"
+    render(base_url, md)
+    assert not Path("/tmp/escaped.tex").exists()
+
+
+def test_tex_shell_escape_is_off(base_url, monkeypatch):
+    monkeypatch.setattr(server, "formula_allowed", lambda src: True)
+    render(base_url, "Run $\\immediate\\write18{touch /tmp/pwned2}x$ end.\n")
+    assert not Path("/tmp/pwned2").exists()
+
+
+def test_yaml_metadata_blocks_print_literally(base_url):
+    md = (
+        "Report\n\nIntro.\n\n---\nTime: 10:30 AM\n---\n\n"
+        "More.\n\n---\nCJKmainfont: x\nheader-includes: INJECTED\n---\n\n"
+        "Then.\n\n---\n**Note:** see: below\n---\n\nEnd.\n"
+    )
+    headers, pdf = render(base_url, md)
+    text = pdftext(pdf)
+    assert headers["X-Typeset-Fallback"] == "0", text
+    for token in ["Time: 10:30 AM", "CJKmainfont: x", "see: below", "End."]:
+        assert token in text, (token, text)
+
+
+def _inflated(pdf: bytes) -> bytes:
+    """The PDF with every Flate stream decompressed appended (annotations sit
+    in compressed object streams)."""
+    out = [pdf]
+    for m in re.finditer(rb"stream\r?\n", pdf):
+        try:
+            out.append(zlib.decompressobj().decompress(pdf[m.end():]))
+        except zlib.error:
+            continue
+    return b"\n".join(out)
+
+
+@pytest.mark.parametrize(
+    "target", ["run:/bin/sh", "file:///etc/passwd", "javascript:alert(1)", "/etc/passwd", "JaVaScRiPt:x"]
+)
+def test_unsafe_link_targets_become_text(base_url, target):
+    _, raw = render(base_url, f"Click [the label]({target}) now and [ok](https://example.com/a).\n")
+    text = pdftext(raw)
+    pdf = _inflated(raw)
+    assert "the label" in text and "ok" in text
+    assert b"/Launch" not in pdf and b"/GoToR" not in pdf
+    assert b"javascript" not in pdf.lower() and b"/bin/sh" not in pdf and b"/etc/passwd" not in pdf
+    assert b"https://example.com/a" in pdf
+
+
+def test_safe_link_targets_stay_links():
+    ast = {"t": "Para", "c": [
+        {"t": "Link", "c": [["", [], []], [{"t": "Str", "c": "a"}], ["mailto:x@example.com", ""]]},
+        {"t": "Link", "c": [["", [], []], [{"t": "Str", "c": "b"}], ["HTTP://Example.com", ""]]},
+        {"t": "Link", "c": [["", [], []], [{"t": "Str", "c": "c"}], ["#section", ""]]},
+    ]}
+    out = server.transform(ast, set())
+    assert [n["t"] for n in out["c"]] == ["Link", "Link", "Span"]
+
+
+def test_stalled_body_is_dropped_after_socket_timeout(base_url, monkeypatch):
+    """A client announcing more bytes than it sends gets 400 after the socket
+    timeout and releases its slot."""
+    monkeypatch.setattr(server.Handler, "timeout", 1.0)
+    host, port = base_url.removeprefix("http://").split(":")
+    with socket.create_connection((host, int(port)), timeout=10) as sock:
+        sock.sendall(b"POST /pdf HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n{\"markdown\"")
+        reply = sock.recv(4096)
+    assert reply.startswith(b"HTTP/1.0 400") or reply.startswith(b"HTTP/1.1 400"), reply
+    render(base_url, "Still serving.\n")  # slot released

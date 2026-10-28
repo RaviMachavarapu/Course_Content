@@ -64,6 +64,19 @@ COPY tests /app/tests
 RUN useradd --create-home --uid 10001 typeset
 USER typeset
 
+# Defense in depth behind the formula allowlist (kpathsea reads these from the
+# environment): TeX may write only inside the work dir (no absolute paths, no
+# `..`, no dotfiles) and never runs \write18. There is no read-side
+# equivalent: openin_any is a no-op since TeX Live 2026 (see texmf.cnf), so
+# reads are contained only by the allowlist and by this image holding no
+# secrets (no env secrets, no volumes; see docker-compose.yml).
+# Set after the warm-up so the build itself is unaffected. Quarto/deno caches
+# live under /tmp so the container can run with a read-only root filesystem
+# (compose: read_only + tmpfs /tmp).
+ENV openout_any=p \
+    shell_escape=f \
+    XDG_CACHE_HOME=/tmp/.cache
+
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).status == 200 else 1)"

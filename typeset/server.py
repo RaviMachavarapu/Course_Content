@@ -5,6 +5,7 @@ POST /pdf  {"markdown": str, "title": str, "images": {name: base64}}
     200 application/pdf
     400 {"error"}  malformed request
     422 {"error"}  even the fallback document could not be built
+    503 {"error": "busy"}  no slot within TYPESET_QUEUE_WAIT (body not read)
     504 {"error"}  the 120 s per-document budget ran out
 GET /health -> 200 {"status": "ok"}
 
@@ -59,9 +60,14 @@ QUEUE_WAIT = float(os.environ.get("TYPESET_QUEUE_WAIT", "30"))  # then 503 busy
 FIRST_RENDER_SHARE = 0.4
 PROBE_CAP = 8.0
 
-# Markdown in: no raw TeX/HTML and no citations, so plain text (backslashes,
-# <tags>, @handles) always prints literally. Math via $...$.
-MD_FORMAT = "markdown-raw_tex-raw_html-raw_attribute-citations"
+# Markdown in: no raw TeX/HTML, no citations and no YAML metadata blocks
+# (pandoc honours `---` ... `---` anywhere: template variables, lost text), so
+# plain text (backslashes, <tags>, @handles, `---` lines) always prints
+# literally. Math via $...$.
+MD_FORMAT = "markdown-raw_tex-raw_html-raw_attribute-citations-yaml_metadata_block"
+# Link targets kept as links; any other scheme (run:, file:, javascript:, ...)
+# becomes plain text, so no PDF /Launch, /GoToR or script URI is ever written.
+LINK_SCHEMES = ("http://", "https://", "mailto:")
 
 # pandoc's own LaTeX template (KOMA article), the preamble files after it.
 PANDOC_LATEX = [
@@ -230,6 +236,10 @@ def collect_math(ast: Any) -> list[tuple[str, str]]:
     return list(found)
 
 
+def _link_ok(target: str) -> bool:
+    return target.strip().lower().startswith(LINK_SCHEMES)
+
+
 def transform(
     ast: Any,
     images: set[str],
@@ -237,10 +247,13 @@ def transform(
     all_math: bool = False,
     drop_images: bool = False,
 ) -> Any:
-    """Point images at img/<name> (unknown ones become their alt text) and
-    replace the given formulas (or all) by their source in monospace."""
+    """Point images at img/<name> (unknown ones become their alt text),
+    turn links with a non-http(s)/mailto target into their text, and replace
+    the given formulas (or all) by their source in monospace."""
 
     def fn(n: dict[str, Any]) -> Any:
+        if n["t"] == "Link" and not _link_ok(n["c"][2][0]):
+            return {"t": "Span", "c": [["", [], []], n["c"][1]]}
         if n["t"] == "Image":
             target = n["c"][2][0]
             if drop_images or target not in images:
@@ -294,7 +307,9 @@ def _write_latex(
 ) -> subprocess.CompletedProcess[str]:
     """Document AST (+ title metadata) -> doc.tex with pandoc's LaTeX writer."""
     doc = dict(ast)
-    meta = dict(doc.get("meta") or {})
+    # Only our own metadata reaches pandoc's template (never document-supplied
+    # variables such as header-includes or CJKmainfont).
+    meta: dict[str, Any] = {}
     if title.strip():
         # The title is PDF metadata only; the caller prints its own heading.
         meta["title-meta"] = _meta_title(title)
@@ -479,6 +494,9 @@ def build_pdf(markdown: str, title: str, images: dict[str, str]) -> tuple[bytes,
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "typeset/1"
+    # Socket timeout: a client that announces more bytes than it sends (or
+    # stalls) cannot hold a thread, and with it a slot, forever.
+    timeout: float | None = float(os.environ.get("TYPESET_SOCKET_TIMEOUT", "60"))
 
     def log_message(self, fmt: str, *args: Any) -> None:  # route to logging
         if self.path != "/health":
@@ -492,6 +510,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _read_request(self, length: int) -> tuple[str, str, dict[str, str]]:
+        try:
+            body = self.rfile.read(length)
+        except OSError as exc:  # socket timeout included
+            self.close_connection = True
+            raise BadRequest(f"could not read body: {exc}") from exc
+        if len(body) != length:
+            self.close_connection = True
+            raise BadRequest("body shorter than Content-Length")
+        try:
+            req = json.loads(body)
+        except ValueError as exc:
+            raise BadRequest("body is not JSON") from exc
+        del body
+        if not isinstance(req, dict) or not isinstance(req.get("markdown"), str):
+            raise BadRequest("'markdown' (string) is required")
+        title = req.get("title") or ""
+        images = req.get("images") or {}
+        if not isinstance(title, str) or not isinstance(images, dict):
+            raise BadRequest("'title' must be a string and 'images' an object")
+        return req["markdown"], title, images
+
     def do_GET(self) -> None:
         if self.path == "/health":
             self._json(200, {"status": "ok"})
@@ -503,25 +543,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
             return
         try:
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError as exc:
+                raise BadRequest("bad Content-Length") from exc
             if length <= 0 or length > MAX_BODY:
                 raise BadRequest("missing or oversized body")
-            try:
-                req = json.loads(self.rfile.read(length))
-            except ValueError as exc:
-                raise BadRequest("body is not JSON") from exc
-            if not isinstance(req, dict) or not isinstance(req.get("markdown"), str):
-                raise BadRequest("'markdown' (string) is required")
-            title = req.get("title") or ""
-            images = req.get("images") or {}
-            if not isinstance(title, str) or not isinstance(images, dict):
-                raise BadRequest("'title' must be a string and 'images' an object")
             started = time.monotonic()
+            # Take the slot before reading: N waiting clients never hold N
+            # bodies (up to 100 MB each, several times that once parsed).
             if not _slots.acquire(timeout=QUEUE_WAIT):
+                self.close_connection = True  # the body was not read
                 self._json(503, {"error": "busy"})
                 return
             try:
-                pdf, fallback = build_pdf(req["markdown"], title, images)
+                pdf, fallback = build_pdf(*self._read_request(length))
             finally:
                 _slots.release()
             log.info("pdf built in %.1fs (%d bytes, fallback=%s)", time.monotonic() - started, len(pdf), fallback)
