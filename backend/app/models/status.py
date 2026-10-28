@@ -18,7 +18,10 @@ def derive_module_status(artifact_statuses: Sequence[ArtifactStatus]) -> ModuleS
 
     Precedence:
       1. any artifact still processing (or the module has no artifacts yet) -> processing
-      2. every artifact published                                          -> published
+      2. every requested artifact published                                -> published
+         (`pending` = a type never requested for this module, BR1; it doesn't
+         block "published" — otherwise a module made with 3 of 6 types could
+         never leave partially_published)
       3. some (1..n-1) artifacts published                                 -> partially_published
       4. any artifact in error                                             -> error
       5. any artifact ready                                                -> pending_review
@@ -29,7 +32,8 @@ def derive_module_status(artifact_statuses: Sequence[ArtifactStatus]) -> ModuleS
         return ModuleStatus.processing
 
     published = sum(1 for s in statuses if s is ArtifactStatus.published)
-    if published == len(statuses):
+    requested = sum(1 for s in statuses if s is not ArtifactStatus.pending)
+    if published and published == requested:
         return ModuleStatus.published
     if published > 0:
         return ModuleStatus.partially_published

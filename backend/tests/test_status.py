@@ -29,6 +29,11 @@ def s(*n: int) -> list[A]:
         (s(0, 1, 0, 0, 5), M.processing),  # processing beats published
         (s(0, 0, 0, 0, 6), M.published),  # all published
         (s(2, 0, 3, 0, 1), M.partially_published),  # some published
+        # types never requested stay `pending` and don't block "published"
+        (s(3, 0, 0, 0, 3), M.published),
+        (s(5, 0, 0, 0, 1), M.published),
+        (s(2, 0, 1, 0, 3), M.partially_published),
+        (s(2, 0, 0, 1, 3), M.partially_published),
         (s(0, 0, 5, 1, 0), M.error),  # error beats pending_review
         (s(2, 0, 4, 0, 0), M.pending_review),  # ready, none published/error
         (s(5, 0, 1, 0, 0), M.pending_review),
