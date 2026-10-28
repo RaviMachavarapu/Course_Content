@@ -58,7 +58,13 @@ class Settings(BaseSettings):
     # ---- auth ----
     admin_session_ttl_hours: int = 8
     student_session_ttl_days: int = 30
+    #: failed logins, per client IP and per email (successes don't count)
     login_rate_limit: str = "10/5m"
+    #: register attempts per client IP (each one costs an Argon2 hash)
+    register_rate_limit: str = "30/1h"
+    #: password-reset requests per client IP (429 beyond); per email the cap is
+    #: silent (still 202, no more mail) — see auth.password_reset
+    password_reset_rate_limit: str = "10/1h"
     password_reset_enabled: bool = True
 
     # ---- email ----
