@@ -2,6 +2,7 @@ import {
   apiFetch,
   ApiError,
   readCookie,
+  refreshCsrfToken,
   reportCsrfFailure,
   SESSION_EXPIRED_MESSAGE,
 } from "@/lib/api";
@@ -43,6 +44,7 @@ async function putChunk(
   offset: number,
   body: Blob,
   signal?: AbortSignal,
+  csrfRetried = false,
 ): Promise<ChunkResult> {
   const headers: Record<string, string> = { "Content-Type": "application/octet-stream" };
   const csrf = readCookie("sdp_csrf");
@@ -77,6 +79,10 @@ async function putChunk(
   }
   if (res.status === 403 && data?.error?.code === "csrf_failed") {
     const path = `/api/admin/uploads/${uploadId}`;
+    // rejected before it ran: refresh the token via /me and resend once
+    if (!csrfRetried && (await refreshCsrfToken(path, signal))) {
+      return putChunk(uploadId, offset, body, signal, true);
+    }
     reportCsrfFailure(path);
     throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE);
   }

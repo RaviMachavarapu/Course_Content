@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { type LoginRedirectState, safeFrom } from "@/app/csrfRecovery";
 import { Button, Input } from "@/components";
-import { ApiError } from "@/lib/api";
+import { authErrorMessage } from "@/lib/api";
 import { AuthShell } from "./AuthShell";
 import { emailError } from "./validation";
 import { useLogin } from "./useStudentAuth";
@@ -34,7 +34,7 @@ export function LoginPage(): JSX.Element {
         onSuccess: () =>
           navigate(safeFrom(location.state?.from, "/catalog", "student"), { replace: true }),
         onError: (err) => {
-          setFormError(err instanceof ApiError ? err.message : "Could not sign in. Try again.");
+          setFormError(authErrorMessage(err, "Could not sign in. Try again."));
         },
       },
     );

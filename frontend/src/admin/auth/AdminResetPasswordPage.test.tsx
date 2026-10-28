@@ -35,4 +35,13 @@ describe("AdminResetPasswordPage", () => {
     await userEvent.click(screen.getByTestId("btn-admin-reset-confirm"));
     await waitFor(() => expect(screen.getByText("ADMIN LOGIN")).toBeInTheDocument());
   });
+
+  it("says when password reset is turned off", async () => {
+    mockFetch({ status: 404, body: { error: { code: "password_reset_disabled", message: "x" } } });
+    renderPage("/admin/reset-password?token=abc123");
+    await userEvent.type(screen.getByLabelText("New password"), "brand-new-pw-2");
+    await userEvent.type(screen.getByLabelText("Confirm password"), "brand-new-pw-2");
+    await userEvent.click(screen.getByTestId("btn-admin-reset-confirm"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Password reset is turned off");
+  });
 });

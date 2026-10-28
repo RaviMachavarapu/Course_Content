@@ -56,16 +56,20 @@ export interface ApiOptions {
   signal?: AbortSignal;
 }
 
-export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
-  const method = (opts.method ?? "GET").toUpperCase();
-  const headers: Record<string, string> = { Accept: "application/json" };
+type ErrorBody = { code?: string; message?: string; fields?: unknown };
 
+interface Sent {
+  res: Response;
+  data: unknown;
+}
+
+async function send(path: string, method: string, opts: ApiOptions): Promise<Sent> {
+  const headers: Record<string, string> = { Accept: "application/json" };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (!SAFE.has(method)) {
     const csrf = readCookie("sdp_csrf");
     if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf);
   }
-
   const res = await fetch(path, {
     method,
     headers,
@@ -73,19 +77,58 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
     signal: opts.signal,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
+  const data: unknown = res.status === 204 ? null : await res.json().catch(() => null);
+  return { res, data };
+}
+
+function errorOf(data: unknown): ErrorBody | undefined {
+  return data && typeof data === "object" && "error" in data
+    ? (data as { error: ErrorBody }).error
+    : undefined;
+}
+
+export function isCsrfFailure(status: number, data: unknown): boolean {
+  return status === 403 && errorOf(data)?.code === "csrf_failed";
+}
+
+/**
+ * Ask the server for a fresh `sdp_csrf` cookie: GET `/auth/me` of the area the
+ * failed request belongs to re-issues it. True when still signed in there.
+ */
+export async function refreshCsrfToken(failedPath: string, signal?: AbortSignal): Promise<boolean> {
+  const area = failedPath.startsWith("/api/admin") ? "admin" : "student";
+  try {
+    const res = await fetch(`/api/${area}/auth/me`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      credentials: "include",
+      signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
+  const method = (opts.method ?? "GET").toUpperCase();
+
+  let { res, data } = await send(path, method, opts);
+
+  // An expired/missing CSRF token: the server rejected the request before
+  // running it, so refreshing the token and sending it again once is safe.
+  // Any other failure is never retried.
+  if (!SAFE.has(method) && isCsrfFailure(res.status, data)) {
+    if (await refreshCsrfToken(path, opts.signal)) ({ res, data } = await send(path, method, opts));
+  }
 
   if (res.status === 204) return undefined as T;
 
-  const data: unknown = await res.json().catch(() => null);
-
   if (!res.ok) {
-    const err =
-      data && typeof data === "object" && "error" in data
-        ? (data as { error: { code?: string; message?: string; fields?: unknown } }).error
-        : undefined;
-    if (res.status === 403 && err?.code === "csrf_failed") {
+    const err = errorOf(data);
+    if (isCsrfFailure(res.status, data)) {
       reportCsrfFailure(path);
-      throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE, err.fields);
+      throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE, err?.fields);
     }
     throw new ApiError(
       res.status,
@@ -109,4 +152,16 @@ export function errorMessage(err: unknown, fallback = "The request failed. Try a
   if (!first?.msg) return err.message;
   const loc = Array.isArray(first.loc) ? first.loc.filter((p) => p !== "body").join(".") : "";
   return loc ? `${loc}: ${first.msg}` : first.msg;
+}
+
+export const RATE_LIMITED_MESSAGE = "Too many attempts — please try again later.";
+export const RESET_DISABLED_MESSAGE =
+  "Password reset is turned off on this site. Contact your administrator to regain access.";
+
+/** Message for a failed sign-in / register / password-reset request. */
+export function authErrorMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  if (err.status === 429) return RATE_LIMITED_MESSAGE;
+  if (err.code === "password_reset_disabled") return RESET_DISABLED_MESSAGE;
+  return err.message;
 }

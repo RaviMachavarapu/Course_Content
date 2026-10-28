@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button, Icon, Input } from "@/components";
-import { ApiError } from "@/lib/api";
+import { authErrorMessage } from "@/lib/api";
 import { emailError } from "@/student/auth/validation";
 import { type LoginRedirectState, safeFrom } from "@/app/csrfRecovery";
 import { useAdminLogin } from "./useAdminAuth";
@@ -32,8 +32,7 @@ export function AdminLoginPage(): JSX.Element {
       {
         onSuccess: () =>
           navigate(safeFrom(location.state?.from, "/admin/ingestion", "admin"), { replace: true }),
-        onError: (err) =>
-          setFormError(err instanceof ApiError ? err.message : "Could not sign in. Try again."),
+        onError: (err) => setFormError(authErrorMessage(err, "Could not sign in. Try again.")),
       },
     );
   }

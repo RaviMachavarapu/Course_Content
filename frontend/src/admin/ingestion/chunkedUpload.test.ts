@@ -209,4 +209,24 @@ describe("uploadPdf", () => {
     expect(handler).toHaveBeenCalledWith("/api/admin/uploads/u1");
     setCsrfFailureHandler(null);
   });
+
+  it("refreshes an expired CSRF token via /me and resends the chunk once", async () => {
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    const calls = stubFetch([
+      START,
+      { status: 403, body: { error: { code: "csrf_failed", message: "x" } } },
+      { status: 200, body: { user: {} } },
+      { status: 200, body: { received_bytes: 10 } },
+    ]);
+    await expect(uploadPdf(pdf(10), vi.fn())).resolves.toBe("u1");
+    expect(calls.map((c) => [c.method, c.url.split("?")[0]])).toEqual([
+      ["POST", "/api/admin/uploads"],
+      ["PUT", "/api/admin/uploads/u1"],
+      ["GET", "/api/admin/auth/me"],
+      ["PUT", "/api/admin/uploads/u1"],
+    ]);
+    expect(handler).not.toHaveBeenCalled();
+    setCsrfFailureHandler(null);
+  });
 });
