@@ -1,3 +1,4 @@
+import { asArray } from "@/lib/asArray";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
 import { PdfDownloadLink } from "@/components/PdfDownloadLink";
@@ -28,7 +29,7 @@ export function SlidesViewer({
         .sort((a, b) => (a.page_index ?? 0) - (b.page_index ?? 0)),
     [data?.media],
   );
-  const slideNotes = (data?.content_json?.slides ?? []) as SlideNote[];
+  const slideNotes = asArray<SlideNote>(data?.content_json?.slides);
   const pptxUrl = data?.media.find((m) => m.kind === "pptx")?.url;
   const total = pages.length;
 
@@ -157,9 +158,9 @@ export function SlidesViewer({
         <p className="mt-2 whitespace-pre-line text-body-md text-on-surface">
           {note?.notes?.trim() ? <MathText text={note.notes} /> : "No notes for this slide."}
         </p>
-        {note?.tags && note.tags.length > 0 && (
+        {asArray(note?.tags).length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1">
-            {note.tags.map((tag) => (
+            {asArray<string>(note?.tags).map((tag) => (
               <span
                 key={tag}
                 className="rounded-full bg-tertiary-container/40 px-2 py-0.5 font-label-sm text-label-sm text-tertiary"

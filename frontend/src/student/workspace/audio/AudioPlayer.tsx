@@ -1,3 +1,4 @@
+import { asArray } from "@/lib/asArray";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
@@ -45,7 +46,7 @@ export function AudioPlayer({
 
   // NotebookLM's Audio Overview is AAC (m4a); fixture content is mp3.
   const src = data?.media.find((m) => m.kind === "audio_mp3" || m.kind === "audio_m4a")?.url;
-  const cues = (data?.content_json?.transcript ?? []) as Cue[];
+  const cues = asArray<Cue>(data?.content_json?.transcript);
   const fallbackDuration = Number(data?.content_json?.duration_seconds ?? 0);
   const totalDuration = duration || fallbackDuration;
 

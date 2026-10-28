@@ -38,7 +38,12 @@ function installFetch() {
     let body: unknown = { error: { code: "x", message: "x" } };
     let status = 404;
     if (url.includes("/progress") && method === "PUT") {
-      body = { completed: true, slide_last_index: null, audio_position_seconds: null, course_percent_complete: 100 };
+      body = {
+        completed: true,
+        slide_last_index: null,
+        audio_position_seconds: null,
+        course_percent_complete: 100,
+      };
       status = 200;
     } else if (url.includes("/api/student/artifacts/")) {
       body = ARTIFACT;
@@ -78,7 +83,8 @@ describe("ReportViewer math", () => {
     onTestFinished(() => {
       ARTIFACT.content_json.sections[0]!.html = orig;
     });
-    ARTIFACT.content_json.sections[0]!.html = '<p>Rate <span class="math-inline">S_N2</span></p><div class="math-display">\\frac{1}{2}</div>';
+    ARTIFACT.content_json.sections[0]!.html =
+      '<p>Rate <span class="math-inline">S_N2</span></p><div class="math-display">\\frac{1}{2}</div>';
     installFetch();
     const { container } = renderViewer();
     await screen.findByRole("heading", { name: "Neural Networks", level: 1 });
@@ -92,7 +98,9 @@ describe("ReportViewer", () => {
     installFetch();
     renderViewer();
 
-    expect(await screen.findByRole("heading", { name: "Neural Networks", level: 1 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Neural Networks", level: 1 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("7 min read")).toBeInTheDocument();
     expect(screen.getByText("Units combine non-linearly")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /1\. How they work/ })).toBeInTheDocument();
@@ -141,5 +149,22 @@ describe("ReportViewer", () => {
     await screen.findByRole("heading", { name: "Neural Networks", level: 1 });
     await userEvent.click(screen.getByTestId("btn-rp1"));
     expect(await screen.findByText("MODULE OVERVIEW")).toBeInTheDocument();
+  });
+});
+
+describe("ReportViewer malformed content", () => {
+  it("renders when key_takeaways is a string and sections is not a list", async () => {
+    const orig = ARTIFACT.content_json;
+    onTestFinished(() => {
+      ARTIFACT.content_json = orig;
+    });
+    ARTIFACT.content_json = {
+      ...orig,
+      key_takeaways: "just one" as unknown as string[],
+      sections: {} as unknown as typeof orig.sections,
+    };
+    installFetch();
+    renderViewer();
+    expect(await screen.findByText("Neural Networks")).toBeInTheDocument();
   });
 });

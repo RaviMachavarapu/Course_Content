@@ -1,3 +1,4 @@
+import { asArray } from "@/lib/asArray";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, ErrorState, Skeleton } from "@/components";
 import { PdfDownloadLink } from "@/components/PdfDownloadLink";
@@ -36,7 +37,7 @@ export function FlashcardsViewer({
   const rate = useFlashcardRating(artifactId);
   const progress = useArtifactProgress(artifactId, slug);
 
-  const cards = (data?.content_json?.cards ?? []) as Card[];
+  const cards = asArray<Card>(data?.content_json?.cards);
   const ratings = data?.flashcard_ratings ?? {};
 
   // Hard-first order, decided once when the deck loads (spec §3.11). Keyed on

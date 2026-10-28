@@ -1,3 +1,4 @@
+import { asArray } from "@/lib/asArray";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
@@ -39,7 +40,8 @@ export function ReportViewer({
     return <ErrorState title="Report isn’t ready" onRetry={() => void refetch()} />;
 
   const content = (data.content_json ?? {}) as ReportContent;
-  const sections = content.sections ?? [];
+  const sections = asArray<Section>(content.sections);
+  const takeaways = asArray<string>(content.key_takeaways);
 
   return (
     <div className="relative mx-auto max-w-3xl pb-24">
@@ -53,13 +55,13 @@ export function ReportViewer({
         </h1>
       </div>
 
-      {content.key_takeaways && content.key_takeaways.length > 0 && (
+      {takeaways.length > 0 && (
         <aside className="mt-6 rounded-xl border-l-4 border-tertiary bg-tertiary-container/20 p-4">
           <p className="font-label-md text-label-md uppercase tracking-wide text-tertiary">
             Key takeaways
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-body-md">
-            {content.key_takeaways.map((t, i) => (
+            {takeaways.map((t, i) => (
               <li key={i}>
                 <MathText text={t} />
               </li>

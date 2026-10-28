@@ -1,3 +1,4 @@
+import { asArray } from "@/lib/asArray";
 import type { ArtifactType } from "../api";
 import type { InspectVersion } from "../staging/api";
 import { MathText } from "@/components/math/MathText";
@@ -19,7 +20,7 @@ export function ContentView({
     // content_json, like the student report: content_html escapes $…$ as plain text
     if (!Array.isArray(c.sections)) return <ReportHtml html={version.content_html ?? ""} />;
     const sections = c.sections as { heading: string; html: string }[];
-    const takeaways = (Array.isArray(c.key_takeaways) ? c.key_takeaways : []) as string[];
+    const takeaways = asArray<string>(c.key_takeaways);
     return (
       <div className="flex flex-col gap-4">
         <h1 className="font-headline-lg text-headline-lg text-primary">
@@ -50,7 +51,7 @@ export function ContentView({
   }
 
   if (type === "slide_deck") {
-    const slides = (c.slides ?? []) as { title: string; bullets: string[]; notes?: string }[];
+    const slides = asArray<{ title: string; bullets?: string[]; notes?: string }>(c.slides);
     return (
       <ol className="flex flex-col gap-4">
         {slides.map((s, i) => (
@@ -60,7 +61,7 @@ export function ContentView({
               <MathText text={s.title} />
             </p>
             <ul className="mt-2 list-disc pl-6 text-body-md">
-              {s.bullets.map((b, j) => (
+              {asArray<string>(s.bullets).map((b, j) => (
                 <li key={j}>
                   <MathText text={b} />
                 </li>
@@ -78,7 +79,7 @@ export function ContentView({
   }
 
   if (type === "flashcards") {
-    const cards = (c.cards ?? []) as { front: string; back: string; category?: string }[];
+    const cards = asArray<{ front: string; back: string; category?: string }>(c.cards);
     return (
       <div className="grid gap-3 sm:grid-cols-2">
         {cards.map((card, i) => (
@@ -101,12 +102,12 @@ export function ContentView({
   }
 
   if (type === "quiz") {
-    const qs = (c.questions ?? []) as {
+    const qs = asArray<{
       question: string;
-      options: string[];
+      options?: string[];
       correct_index: number;
       explanation: string;
-    }[];
+    }>(c.questions);
     return (
       <ol className="flex flex-col gap-4">
         {qs.map((q, i) => (
@@ -115,7 +116,7 @@ export function ContentView({
               {i + 1}. <MathText text={q.question} />
             </p>
             <ul className="mt-2 flex flex-col gap-1">
-              {q.options.map((opt, j) => (
+              {asArray<string>(q.options).map((opt, j) => (
                 <li
                   key={j}
                   className={
@@ -177,7 +178,7 @@ export function ContentView({
   }
 
   // audio_overview
-  const transcript = (c.transcript ?? []) as { t: number; text: string }[];
+  const transcript = asArray<{ t: number; text: string }>(c.transcript);
   const mp3 = version.media.find((m) => m.kind === "audio_mp3" || m.kind === "audio_m4a");
   return (
     <div className="flex flex-col gap-3">

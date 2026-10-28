@@ -92,3 +92,18 @@ describe("ContentView infographic", () => {
     expect(screen.getByText("OVERVIEW text")).toBeVisible();
   });
 });
+
+describe("ContentView malformed content", () => {
+  const v = (content_json: Record<string, unknown>) => ({ ...version([]), content_json });
+  it.each([
+    ["quiz", { questions: [{ question: "Q", correct_index: 0, explanation: "" }] }],
+    ["quiz", { questions: "oops" }],
+    ["slide_deck", { slides: [{ title: "T" }] }],
+    ["slide_deck", { slides: {} }],
+    ["flashcards", { cards: "x" }],
+    ["audio_overview", { transcript: "x" }],
+    ["report", { sections: [], key_takeaways: "one string" }],
+  ] as const)("%s %j renders without crashing", (type, content) => {
+    expect(() => render(<ContentView type={type} version={v(content)} />)).not.toThrow();
+  });
+});
