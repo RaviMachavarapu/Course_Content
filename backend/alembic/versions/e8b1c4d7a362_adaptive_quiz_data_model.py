@@ -8,6 +8,11 @@ Adds `quiz_question_set` (per-student question sets, with a partial unique
 index allowing one pending/ready chat set per student+quiz), links attempts to
 their set (`quiz_attempt.question_set_id`, `completed_at`), and adds
 `module.quiz_fresh_retakes` (default on).
+
+Downgrade is one-way in practice: it drops the question sets but keeps
+attempts whose answers use the per-answer shape and whose questions came from
+a (chat) set, which pre-adaptive code would grade against the Studio quiz. It
+refuses to run while such attempts exist unless `-x allow_data_loss=1` is given.
 """
 
 from __future__ import annotations
@@ -15,13 +20,26 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "e8b1c4d7a362"
 down_revision: str | None = "d7a3e6c2b145"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+
+def _refuse_data_loss(count_sql: str, what: str) -> None:
+    """Downgrade guard (review 2026-10-28): refuse to destroy data silently.
+    Override with `alembic -x allow_data_loss=1 downgrade ...`."""
+    if context.get_x_argument(as_dictionary=True).get("allow_data_loss") == "1":
+        return
+    n = op.get_bind().execute(sa.text(count_sql)).scalar() or 0
+    if n:
+        raise RuntimeError(
+            f"refusing to downgrade: {n} {what}. "
+            "Re-run with -x allow_data_loss=1 to accept that."
+        )
 
 
 def upgrade() -> None:
@@ -95,6 +113,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    _refuse_data_loss(
+        "SELECT count(*) FROM quiz_attempt WHERE question_set_id IS NOT NULL",
+        "quiz attempt(s) were made with question sets the old code can't read",
+    )
     op.drop_column("module", "quiz_fresh_retakes")
     op.drop_constraint(
         op.f("fk_quiz_attempt_question_set_id_quiz_question_set"),

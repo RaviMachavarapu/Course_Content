@@ -9,6 +9,11 @@ columns that track the once-per-module "add sources to NotebookLM" step, and
 makes `module.source_url` nullable (a module may have PDFs and no link).
 Modules that already have a notebook were created with their link added, so
 their sources count as ready.
+
+Downgrade is one-way in practice: PDF-only modules (no link) can't exist in
+the old schema, so they are deleted with their artifacts, attempts and
+progress, and their PDFs are left on disk. It refuses to run while such
+modules exist unless `-x allow_data_loss=1` is given.
 """
 
 from __future__ import annotations
@@ -16,13 +21,26 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "b3e8a1d54f27"
 down_revision: str | None = "9d4b2f61c7e8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+
+def _refuse_data_loss(count_sql: str, what: str) -> None:
+    """Downgrade guard (review 2026-10-28): refuse to destroy data silently.
+    Override with `alembic -x allow_data_loss=1 downgrade ...`."""
+    if context.get_x_argument(as_dictionary=True).get("allow_data_loss") == "1":
+        return
+    n = op.get_bind().execute(sa.text(count_sql)).scalar() or 0
+    if n:
+        raise RuntimeError(
+            f"refusing to downgrade: {n} {what}. "
+            "Re-run with -x allow_data_loss=1 to accept that."
+        )
 
 
 def upgrade() -> None:
@@ -103,6 +121,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    _refuse_data_loss(
+        "SELECT count(*) FROM module WHERE source_url IS NULL",
+        "PDF-only module(s) would be deleted (artifacts, attempts, progress; "
+        "their PDFs stay on disk)",
+    )
     # A module with no link has nothing to put in a NOT NULL source_url, so
     # those (PDF-only) modules are deleted first; their artifacts cascade.
     op.execute("DELETE FROM module WHERE source_url IS NULL")
