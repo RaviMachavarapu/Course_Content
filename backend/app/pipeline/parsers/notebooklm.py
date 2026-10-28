@@ -327,7 +327,7 @@ def _sections_from_blocks(blocks: list[Any]) -> list[dict[str, str]]:
 
     for block in blocks:
         body = _at(block, 2)
-        if not isinstance(body, list):
+        if not isinstance(body, list) or not body:
             continue  # embedded Studio item
         runs = body[0] if isinstance(body[0], list) else []
         inner = "".join(_run_html(r) for r in runs)
@@ -412,6 +412,9 @@ def parse_flashcards(html: str | None) -> NotebookLmParse:
     cards_raw = _app_data(html, "flashcards").get("flashcards")
     if not isinstance(cards_raw, list) or not cards_raw:
         raise ArtifactParseError("flashcards: NotebookLM gave no cards")
+    for i, c in enumerate(cards_raw):
+        if not isinstance(c, dict):
+            raise ArtifactParseError(f"flashcards: card {i + 1} is not an object")
     cards = [
         {
             "front": _block_text(c.get("f"), f"card {i + 1} front"),
@@ -435,6 +438,8 @@ def parse_quiz(html: str | None) -> NotebookLmParse:
                 f"quiz: question {i + 1} has {len(options) if isinstance(options, list) else 0} "
                 "options; the quiz player supports exactly 4"
             )
+        if not all(isinstance(o, dict) for o in options):
+            raise ArtifactParseError(f"quiz: question {i + 1} has an option that isn't an object")
         correct = [j for j, o in enumerate(options) if o.get("isCorrect") is True]
         if len(correct) != 1:
             raise ArtifactParseError(
@@ -466,7 +471,21 @@ def parse_notebooklm(
     kind: ArtifactType, row: list[Any] | None, html: str | None
 ) -> NotebookLmParse:
     """Dispatch on artifact type. Audio is handled by the caller (its content
-    needs the downloaded file's duration)."""
+    needs the downloaded file's duration). A layout this parser doesn't expect
+    is an `ArtifactParseError`, never a bare IndexError/TypeError."""
+    try:
+        return _parse_notebooklm(kind, row, html)
+    except ArtifactParseError:
+        raise
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise ArtifactParseError(
+            f"{kind.value}: unexpected data shape from NotebookLM ({type(exc).__name__}: {exc})"
+        ) from exc
+
+
+def _parse_notebooklm(
+    kind: ArtifactType, row: list[Any] | None, html: str | None
+) -> NotebookLmParse:
     if kind is ArtifactType.flashcards:
         return parse_flashcards(html)
     if kind is ArtifactType.quiz:

@@ -229,9 +229,7 @@ def test_real_code_stays_code() -> None:
 
 
 def test_stray_backtick_does_not_unprotect_math_across_paragraphs() -> None:
-    out = _doc_html(
-        "## S\nThe prime ` symbol.\n\nRate $k_1 * [A]_0$ here.\n\nUse `print(x)` now."
-    )
+    out = _doc_html("## S\nThe prime ` symbol.\n\nRate $k_1 * [A]_0$ here.\n\nUse `print(x)` now.")
     assert '<span class="math-inline">k_1 * [A]_0</span>' in out
     assert "<em>" not in out
     assert "<code>print(x)</code>" in out
@@ -287,3 +285,43 @@ def test_plain_run_dollar_display_math_and_bold() -> None:
 def test_plain_run_currency_stays_text() -> None:
     out = _run_report([0, 20, ["It costs $5 and $10", None]])
     assert out == "<p>It costs $5 and $10</p>"
+
+
+# -- unexpected shapes are parse errors, not crashes (review 2026-10-28) ---------------
+def test_an_interactive_block_with_an_empty_body_is_skipped() -> None:
+    from app.pipeline.parsers import notebooklm as nb
+
+    sections = nb._sections_from_blocks([[None, None, []], [None, None, [[[["x"]]], [None, 1]]]])
+    assert isinstance(sections, list)
+
+
+def test_a_flashcard_that_is_not_an_object_is_a_parse_error() -> None:
+    page = _page({"flashcards": [["front", "back"]]})
+    with pytest.raises(ArtifactParseError, match="card 1"):
+        parse_notebooklm(ArtifactType.flashcards, None, page)
+
+
+def test_a_quiz_option_that_is_not_an_object_is_a_parse_error() -> None:
+    page = _page({"quiz": [{"question": "q", "answerOptions": ["a", "b", "c", "d"]}]})
+    with pytest.raises(ArtifactParseError, match="question 1"):
+        parse_notebooklm(ArtifactType.quiz, None, page)
+
+
+def test_any_other_unexpected_shape_is_a_parse_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.pipeline.parsers import notebooklm as nb
+
+    def broken(_row: Any) -> Any:
+        raise TypeError("'int' object is not subscriptable")
+
+    monkeypatch.setattr(nb, "parse_slide_deck", broken)
+    with pytest.raises(ArtifactParseError, match="slide_deck: unexpected data shape"):
+        parse_notebooklm(ArtifactType.slide_deck, [1, 2], None)
+
+
+def test_a_truncated_mvhd_box_gives_no_duration() -> None:
+    data = _mp4(44100, 44100)
+    moov_at = data.index(b"moov") - 4
+    # keep the box headers but cut the mvhd payload short
+    header = struct.pack(">I4s", 8 + 8 + 10, b"moov") + struct.pack(">I4s", 8 + 10, b"mvhd")
+    truncated = data[:moov_at] + header + bytes(10)
+    assert mp4_duration_seconds(truncated) is None

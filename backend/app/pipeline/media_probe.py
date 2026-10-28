@@ -37,10 +37,13 @@ def mp4_duration_seconds(data: bytes) -> float | None:
         for inner, ibody, _iend in _boxes(data, body, end):
             if inner != b"mvhd":
                 continue
-            version = data[ibody]
-            if version == 1:
-                timescale, duration = struct.unpack(">IQ", data[ibody + 20 : ibody + 32])
-            else:
-                timescale, duration = struct.unpack(">II", data[ibody + 12 : ibody + 20])
+            try:
+                version = data[ibody]
+                if version == 1:
+                    timescale, duration = struct.unpack(">IQ", data[ibody + 20 : ibody + 32])
+                else:
+                    timescale, duration = struct.unpack(">II", data[ibody + 12 : ibody + 20])
+            except (IndexError, struct.error):  # truncated mvhd
+                return None
             return duration / timescale if timescale else None
     return None
