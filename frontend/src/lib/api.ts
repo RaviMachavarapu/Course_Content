@@ -5,6 +5,9 @@
  * - mirrors the server's CSRF double-submit: for non-GET requests it copies the
  *   `sdp_csrf` cookie into the `X-CSRF-Token` header
  * - unwraps the `{ error: { code, message } }` envelope into a typed `ApiError`
+ * - reports a session that ended (401 outside `/auth/`) and a stale CSRF token
+ *   (403 `csrf_failed`, after one refresh-and-resend) to the app, which sends
+ *   the user to the right login page
  */
 
 export class ApiError extends Error {
@@ -32,24 +35,47 @@ export class ApiError extends Error {
 
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
-export const SESSION_EXPIRED_MESSAGE = "Your session has expired — please sign in again.";
+export const SESSION_ENDED_MESSAGE = "Session ended — please sign in again.";
+/** The same notice: a CSRF token that can't be refreshed means no session. */
+export const SESSION_EXPIRED_MESSAGE = SESSION_ENDED_MESSAGE;
 
-type CsrfFailureHandler = (path: string) => void;
-let csrfFailureHandler: CsrfFailureHandler | null = null;
+type FailureHandler = (path: string) => void;
+let csrfFailureHandler: FailureHandler | null = null;
+let sessionEndedHandler: FailureHandler | null = null;
 
 /**
  * Register what happens when the server rejects a mutation with
- * `403 csrf_failed` (the `sdp_csrf` cookie is gone or stale). The server has
- * no endpoint that re-issues the token, only login does, so the app sends the
- * user to sign in again rather than failing silently.
+ * `403 csrf_failed` (the `sdp_csrf` cookie is gone or stale) and refreshing it
+ * through `/auth/me` didn't help: the app sends the user to sign in again
+ * rather than failing silently.
  */
-export function setCsrfFailureHandler(handler: CsrfFailureHandler | null): void {
+export function setCsrfFailureHandler(handler: FailureHandler | null): void {
   csrfFailureHandler = handler;
 }
 
 /** Shared by `apiFetch` and raw-fetch callers (chunked upload). */
 export function reportCsrfFailure(path: string): void {
   csrfFailureHandler?.(path);
+}
+
+/**
+ * Register what happens when a request is rejected with 401 because the
+ * session ended (idle or absolute expiry, a password reset elsewhere, the
+ * account deactivated): queries, mutations and polls alike.
+ */
+export function setSessionEndedHandler(handler: FailureHandler | null): void {
+  sessionEndedHandler = handler;
+}
+
+/** A 401 from a signed-in area's API. The auth endpoints (`/auth/me`, login,
+ * reset…) answer 401 as part of their contract and are left to their callers. */
+export function isSessionEnded(status: number, path: string): boolean {
+  return status === 401 && /^\/api\/(admin|student)\//.test(path) && !path.includes("/auth/");
+}
+
+/** Shared by `apiFetch` and raw-fetch callers (chunked upload). */
+export function reportSessionEnded(path: string): void {
+  sessionEndedHandler?.(path);
 }
 
 export function readCookie(name: string): string | undefined {
@@ -107,11 +133,9 @@ export function isCsrfFailure(status: number, data: unknown): boolean {
   return status === 403 && errorOf(data)?.code === "csrf_failed";
 }
 
-/**
- * Ask the server for a fresh `sdp_csrf` cookie: GET `/auth/me` of the area the
- * failed request belongs to re-issues it. True when still signed in there.
- */
-export async function refreshCsrfToken(failedPath: string, signal?: AbortSignal): Promise<boolean> {
+type CsrfRefresh = "refreshed" | "signed_out" | "failed";
+
+async function tryRefreshCsrf(failedPath: string, signal?: AbortSignal): Promise<CsrfRefresh> {
   const area = failedPath.startsWith("/api/admin") ? "admin" : "student";
   try {
     const res = await fetch(`/api/${area}/auth/me`, {
@@ -120,10 +144,20 @@ export async function refreshCsrfToken(failedPath: string, signal?: AbortSignal)
       credentials: "include",
       signal,
     });
-    return res.ok;
+    if (res.ok) return "refreshed";
+    return res.status === 401 ? "signed_out" : "failed";
   } catch {
-    return false;
+    return "failed";
   }
+}
+
+/**
+ * Ask the server for a fresh `sdp_csrf` cookie: GET `/auth/me` of the area the
+ * failed request belongs to re-issues it (as login does). True when still
+ * signed in there.
+ */
+export async function refreshCsrfToken(failedPath: string, signal?: AbortSignal): Promise<boolean> {
+  return (await tryRefreshCsrf(failedPath, signal)) === "refreshed";
 }
 
 export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
@@ -135,13 +169,20 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
   // running it, so refreshing the token and sending it again once is safe.
   // Any other failure is never retried.
   if (!SAFE.has(method) && isCsrfFailure(res.status, data)) {
-    if (await refreshCsrfToken(path, opts.signal)) ({ res, data } = await send(path, method, opts));
+    const refresh = await tryRefreshCsrf(path, opts.signal);
+    if (refresh === "refreshed") ({ res, data } = await send(path, method, opts));
+    // logging out with neither a session nor a CSRF token left: already out
+    else if (refresh === "signed_out" && path.endsWith("/auth/logout")) return undefined as T;
   }
 
   if (res.status === 204) return undefined as T;
 
   if (!res.ok) {
     const err = errorOf(data);
+    if (isSessionEnded(res.status, path)) {
+      reportSessionEnded(path);
+      throw new ApiError(401, err?.code ?? "unauthorized", SESSION_ENDED_MESSAGE);
+    }
     if (isCsrfFailure(res.status, data)) {
       reportCsrfFailure(path);
       throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE, err?.fields);

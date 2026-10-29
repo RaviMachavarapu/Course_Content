@@ -76,8 +76,10 @@ function installFetch(over: Record<string, { status?: number; body: unknown }> =
   return fn;
 }
 
-function renderAt(path: string) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderAt(
+  path: string,
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
@@ -87,6 +89,7 @@ function renderAt(path: string) {
             <Route path=":moduleIndex/:type" element={<ArtifactRoute />} />
           </Route>
           <Route path="/catalog" element={<div>CATALOG</div>} />
+          <Route path="/login" element={<div>LOGIN PAGE</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -131,7 +134,12 @@ describe("WorkspaceLayout", () => {
   });
 
   it("shows a friendly panel when the course is not published (404)", async () => {
-    installFetch({ "/api/student/courses/neural-nets": { status: 404, body: { error: { code: "not_found", message: "x" } } } });
+    installFetch({
+      "/api/student/courses/neural-nets": {
+        status: 404,
+        body: { error: { code: "not_found", message: "x" } },
+      },
+    });
     renderAt("/learn/neural-nets");
     expect(await screen.findByText("Course not available")).toBeInTheDocument();
   });
@@ -143,5 +151,37 @@ describe("WorkspaceLayout", () => {
     await userEvent.selectOptions(screen.getByTestId("module-switcher"), "1");
     // module 1 keeps 'report' (it publishes one)
     expect(await screen.findByText("Current: Unit 2")).toBeInTheDocument();
+  });
+
+  it("has a Log out button that signs out and goes to the login page", async () => {
+    const fetchMock = installFetch({ "/api/student/auth/logout": { status: 204, body: null } });
+    renderAt("/learn/neural-nets");
+    await userEvent.click(await screen.findByTestId("btn-ws9"));
+    expect(await screen.findByText("LOGIN PAGE")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) => {
+        const [url, init] = call as unknown as [string, RequestInit | undefined];
+        return url.includes("/api/student/auth/logout") && init?.method === "POST";
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the open lesson when a background refresh of the course fails", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let failing = false;
+    const fetchMock = installFetch();
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: string | URL) =>
+      failing && String(input).includes("/api/student/courses/")
+        ? Promise.reject(new TypeError("network down"))
+        : real(input),
+    );
+    renderAt("/learn/neural-nets/0/report", qc);
+    expect(await screen.findByTestId("btn-rp2")).toBeInTheDocument();
+    failing = true;
+    await qc.refetchQueries({ queryKey: ["student", "workspace", "neural-nets"] });
+    expect(screen.getByTestId("btn-rp2")).toBeInTheDocument();
+    expect(screen.queryByText("Could not load the course")).not.toBeInTheDocument();
+    expect(await screen.findByText(/couldn’t refresh/i)).toBeInTheDocument();
   });
 });

@@ -125,4 +125,30 @@ describe("LoginPage rate limit countdown", () => {
       "You can try signing in again.",
     );
   });
+
+  it("has 'Remember this device' ticked by default and sends it", async () => {
+    const fetchMock = mockFetch({ status: 200, body: { user } });
+    renderAuthRoute("/login");
+    const box = screen.getByRole("checkbox", { name: "Remember this device" });
+    expect(box).toBeChecked();
+    await userEvent.type(screen.getByLabelText("Email"), "sam@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "correct-pw-123");
+    await userEvent.click(screen.getByTestId("btn-sl2"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    const body: unknown = JSON.parse(init.body as string);
+    expect(body).toEqual({ email: "sam@example.com", password: "correct-pw-123", remember: true });
+  });
+
+  it("sends remember=false when the box is unticked", async () => {
+    const fetchMock = mockFetch({ status: 200, body: { user } });
+    renderAuthRoute("/login");
+    await userEvent.click(screen.getByLabelText("Remember this device"));
+    await userEvent.type(screen.getByLabelText("Email"), "sam@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "correct-pw-123");
+    await userEvent.click(screen.getByTestId("btn-sl2"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(JSON.parse(init.body as string).remember).toBe(false);
+  });
 });

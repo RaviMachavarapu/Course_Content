@@ -20,10 +20,10 @@ const BASE = "/api/student/auth";
 export const studentAuthApi = {
   me: () => apiFetch<UserEnvelope>(`${BASE}/me`).then((r) => r.user),
 
-  login: (email: string, password: string) =>
+  login: (email: string, password: string, remember = true) =>
     apiFetch<UserEnvelope>(`${BASE}/login`, {
       method: "POST",
-      body: { email, password },
+      body: { email, password, remember },
     }).then((r) => r.user),
 
   register: (email: string, password: string, display_name: string) =>

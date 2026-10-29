@@ -8,6 +8,7 @@ export { Input } from "./Input";
 export { Modal } from "./Modal";
 export { ProgressBar } from "./ProgressBar";
 export { RateLimitAlert } from "./RateLimitAlert";
+export { RememberDevice } from "./RememberDevice";
 export { Select, type SelectOption } from "./Select";
 export { SidebarNav, type NavItem } from "./SidebarNav";
 export { Skeleton } from "./Skeleton";

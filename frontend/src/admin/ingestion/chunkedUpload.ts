@@ -4,6 +4,8 @@ import {
   readCookie,
   refreshCsrfToken,
   reportCsrfFailure,
+  reportSessionEnded,
+  SESSION_ENDED_MESSAGE,
   SESSION_EXPIRED_MESSAGE,
 } from "@/lib/api";
 
@@ -76,6 +78,11 @@ async function putChunk(
   }
   if (res.status >= 500) {
     return { kind: "retry", error: new Error(`Upload failed (${res.status})`) };
+  }
+  if (res.status === 401) {
+    const path = `/api/admin/uploads/${uploadId}`;
+    reportSessionEnded(path);
+    throw new ApiError(401, "unauthorized", SESSION_ENDED_MESSAGE);
   }
   if (res.status === 403 && data?.error?.code === "csrf_failed") {
     const path = `/api/admin/uploads/${uploadId}`;

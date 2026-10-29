@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Button, Icon, Input, RateLimitAlert } from "@/components";
+import { Button, Icon, Input, RateLimitAlert, RememberDevice } from "@/components";
 import { authErrorMessage, retryAfterSeconds } from "@/lib/api";
 import { useCountdown } from "@/lib/useCountdown";
 import { emailError } from "@/student/auth/validation";
@@ -15,6 +15,7 @@ export function AdminLoginPage(): JSX.Element {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const countdown = useCountdown();
@@ -32,7 +33,7 @@ export function AdminLoginPage(): JSX.Element {
     if (next.email || next.password) return;
 
     login.mutate(
-      { email, password },
+      { email, password, remember },
       {
         onSuccess: () =>
           navigate(safeFrom(location.state?.from, "/admin/ingestion", "admin"), { replace: true }),
@@ -94,6 +95,7 @@ export function AdminLoginPage(): JSX.Element {
               onChange={(e) => setPassword(e.target.value)}
               error={errors.password}
             />
+            <RememberDevice checked={remember} onChange={setRemember} testid="remember-device" />
             <div className="flex justify-end">
               <Link
                 to="/admin/forgot-password"

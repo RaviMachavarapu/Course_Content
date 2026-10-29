@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { useAdminLogin, useAdminLogout } from "@/admin/auth/useAdminAuth";
+import { useAdminLogin, useAdminLogout, useAdminSession } from "@/admin/auth/useAdminAuth";
+import { setSessionEndedHandler } from "@/lib/api";
 import { useUIStore } from "@/lib/store";
 import { mockFetch } from "./authTestUtils";
-import { useLogin, useLogout } from "./useStudentAuth";
+import { useLogin, useLogout, useStudentSession } from "./useStudentAuth";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -75,5 +76,38 @@ describe.each([
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(qc.getQueryData(["student", "artifact", "x"])).toBeUndefined();
     expect(qc.getQueryData([...sessionKey])).toEqual(user);
+  });
+});
+
+describe.each([
+  ["student", useStudentSession, ["student", "session"], "/api/student/auth/me"],
+  ["admin", useAdminSession, ["admin", "session"], "/api/admin/auth/me"],
+] as const)("%s session check", (_name, hook, sessionKey, mePath) => {
+  afterEach(() => setSessionEndedHandler(null));
+
+  it("reports a session that ended while signed in", async () => {
+    const { qc, wrapper } = setup();
+    qc.setQueryData(sessionKey, user);
+    void qc.invalidateQueries({ queryKey: sessionKey });
+    const ended = vi.fn();
+    setSessionEndedHandler(ended);
+    mockFetch({ status: 401, body: { error: { code: "unauthorized", message: "x" } } });
+    const { result } = renderHook(() => hook(), { wrapper });
+    await waitFor(() => expect(result.current.user).toBeNull());
+    expect(ended).toHaveBeenCalledWith(mePath);
+  });
+
+  it("says nothing for a visitor who was never signed in", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const ended = vi.fn();
+    setSessionEndedHandler(ended);
+    mockFetch({ status: 401, body: { error: { code: "unauthorized", message: "x" } } });
+    const { result } = renderHook(() => hook(), { wrapper });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.user).toBeNull();
+    expect(ended).not.toHaveBeenCalled();
   });
 });

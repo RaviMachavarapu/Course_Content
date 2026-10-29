@@ -5,11 +5,13 @@ import {
   errorMessage,
   formatCountdown,
   setCsrfFailureHandler,
+  setSessionEndedHandler,
 } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   setCsrfFailureHandler(null);
+  setSessionEndedHandler(null);
   document.cookie = "sdp_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
 });
 
@@ -52,7 +54,7 @@ describe("apiFetch", () => {
     );
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("csrf_failed");
-    expect((err as ApiError).message).toMatch(/session has expired/i);
+    expect((err as ApiError).message).toMatch(/session ended/i);
     expect(handler).toHaveBeenCalledWith("/api/admin/modules");
   });
 
@@ -62,6 +64,58 @@ describe("apiFetch", () => {
     setCsrfFailureHandler(handler);
     await expect(apiFetch("/api/admin/x", { method: "POST" })).rejects.toThrow("Nope");
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe("apiFetch — a session that ended (401)", () => {
+  it.each([
+    ["GET", "/api/admin/staging/modules/m1"],
+    ["POST", "/api/admin/modules/m1/publish"],
+    ["PUT", "/api/student/artifacts/a/progress"],
+    ["GET", "/api/student/catalog"],
+  ])("reports %s %s and throws a 'Session ended' error", async (method, path) => {
+    respond(401, { error: { code: "unauthorized", message: "Not authenticated" } });
+    const handler = vi.fn();
+    setSessionEndedHandler(handler);
+    const err = await apiFetch(path, { method }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
+    expect((err as ApiError).message).toBe("Session ended — please sign in again.");
+    expect(handler).toHaveBeenCalledWith(path);
+  });
+
+  it.each([
+    "/api/student/auth/me",
+    "/api/admin/auth/me",
+    "/api/student/auth/login",
+    "/api/admin/auth/password-reset/confirm",
+  ])("leaves the auth endpoint %s to its caller", async (path) => {
+    respond(401, { error: { code: "invalid_credentials", message: "Invalid email or password" } });
+    const handler = vi.fn();
+    setSessionEndedHandler(handler);
+    await expect(apiFetch(path, { method: "POST" })).rejects.toThrow(/invalid email|.+/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("treats a logout whose session and CSRF token are both gone as done", async () => {
+    const fn = vi.fn((input: string) =>
+      Promise.resolve({
+        ok: false,
+        status: input.endsWith("/me") ? 401 : 403,
+        statusText: "",
+        json: () =>
+          Promise.resolve(
+            input.endsWith("/me")
+              ? { error: { code: "unauthorized", message: "Not authenticated" } }
+              : { error: { code: "csrf_failed", message: "Missing or invalid CSRF token" } },
+          ),
+      } as Response),
+    );
+    vi.stubGlobal("fetch", fn);
+    const csrf = vi.fn();
+    setCsrfFailureHandler(csrf);
+    await expect(apiFetch("/api/student/auth/logout", { method: "POST" })).resolves.toBeUndefined();
+    expect(csrf).not.toHaveBeenCalled();
   });
 });
 
@@ -137,7 +191,7 @@ describe("apiFetch CSRF recovery", () => {
     setCsrfFailureHandler(handler);
     const fn = sequence([CSRF_403, { status: 401, body: { error: { code: "unauthorized" } } }]);
     await expect(apiFetch("/api/admin/modules", { method: "POST" })).rejects.toThrow(
-      /session has expired/i,
+      /session ended/i,
     );
     expect(fn).toHaveBeenCalledTimes(2);
     expect(handler).toHaveBeenCalledWith("/api/admin/modules");

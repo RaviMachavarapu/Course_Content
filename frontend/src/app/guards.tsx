@@ -1,5 +1,5 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { EmptyState, Skeleton, TopBar } from "@/components";
+import { EmptyState, ErrorState, Skeleton, TopBar } from "@/components";
 import { AdminLayout } from "@/admin/AdminLayout";
 import { useAdminSession } from "@/admin/auth/useAdminAuth";
 import { StudentChrome } from "@/student/StudentChrome";
@@ -10,6 +10,20 @@ function FullPageLoading(): JSX.Element {
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface">
       <Skeleton className="h-6 w-40" />
+    </div>
+  );
+}
+
+/** `/me` failed with a server or network error: we don't know whether the
+ * user is signed in, so offer a retry rather than sending them to log in. */
+function SessionCheckFailed({ onRetry }: { onRetry: () => unknown }): JSX.Element {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-surface p-4">
+      <ErrorState
+        title="Couldn’t reach the server"
+        description="Check your connection and try again."
+        onRetry={() => void onRetry()}
+      />
     </div>
   );
 }
@@ -45,7 +59,10 @@ export function RequireAdmin(): JSX.Element {
   if (admin.isPending || student.isPending) return <FullPageLoading />;
   if (admin.user) return <AdminLayout />;
   if (student.user) return <StudentNotFound />;
-  return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />;
+  if (admin.isError) return <SessionCheckFailed onRetry={admin.refetch} />;
+  return (
+    <Navigate to="/admin/login" replace state={{ from: location.pathname + location.search }} />
+  );
 }
 
 /**
@@ -59,7 +76,8 @@ export function RequireStudent(): JSX.Element {
 
   if (student.isPending) return <FullPageLoading />;
   if (student.user) return <StudentLayout />;
-  return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (student.isError) return <SessionCheckFailed onRetry={student.refetch} />;
+  return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
 }
 
 /** Student session gate that renders a bare `<Outlet />` — for route trees
@@ -70,5 +88,6 @@ export function RequireStudentRaw(): JSX.Element {
 
   if (student.isPending) return <FullPageLoading />;
   if (student.user) return <Outlet />;
-  return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (student.isError) return <SessionCheckFailed onRetry={student.refetch} />;
+  return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
 }

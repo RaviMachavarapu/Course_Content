@@ -1,5 +1,6 @@
-import { Link, Outlet, useParams } from "react-router-dom";
-import { ErrorState, Icon, Skeleton } from "@/components";
+import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
+import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { useLogout } from "../auth/useStudentAuth";
 import type { ArtifactType } from "../catalog/api";
 import type { WorkspaceCourse } from "./api";
 import { ModuleExplorer } from "./ModuleExplorer";
@@ -12,6 +13,8 @@ export interface WorkspaceContext {
 export function WorkspaceLayout(): JSX.Element {
   const { slug = "", moduleIndex, type } = useParams();
   const { data: course, isPending, isError, error, refetch } = useWorkspaceCourse(slug);
+  const navigate = useNavigate();
+  const logout = useLogout();
 
   if (isPending) {
     return (
@@ -21,18 +24,15 @@ export function WorkspaceLayout(): JSX.Element {
     );
   }
 
-  if (isError || !course) {
+  // a failed background refresh keeps the page (and the open viewer) as it is
+  if (!course) {
     const notFound =
       error && typeof error === "object" && "status" in error && error.status === 404;
     return (
       <div className="min-h-screen bg-background p-6">
         <ErrorState
           title={notFound ? "Course not available" : "Could not load the course"}
-          description={
-            notFound
-              ? "This course isn’t published, or the link is wrong."
-              : undefined
-          }
+          description={notFound ? "This course isn’t published, or the link is wrong." : undefined}
           onRetry={notFound ? undefined : () => void refetch()}
         />
         <Link
@@ -46,8 +46,7 @@ export function WorkspaceLayout(): JSX.Element {
     );
   }
 
-  const activeModuleIndex =
-    moduleIndex != null ? Number(moduleIndex) : course.current_module_index;
+  const activeModuleIndex = moduleIndex != null ? Number(moduleIndex) : course.current_module_index;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-on-background">
@@ -64,7 +63,7 @@ export function WorkspaceLayout(): JSX.Element {
             {course.title} · Course Overview
           </Link>
         </div>
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:gap-4">
           <span className="font-label-md text-label-md tabular-nums text-on-surface-variant">
             {course.percent_complete}% Complete
           </span>
@@ -76,8 +75,39 @@ export function WorkspaceLayout(): JSX.Element {
             <Icon name="arrow_back" className="text-[16px]" />
             Back to Dashboard
           </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            iconLeft="logout"
+            data-testid="btn-ws9"
+            loading={logout.isPending}
+            onClick={() =>
+              logout.mutate(undefined, {
+                // only on success: a failed logout leaves the session live, and
+                // the hook tells the user so
+                onSuccess: () => navigate("/login", { replace: true }),
+              })
+            }
+          >
+            Log out
+          </Button>
         </div>
       </header>
+      {isError && (
+        <p
+          role="status"
+          className="border-b border-outline-variant bg-surface-container-high px-4 py-1.5 font-label-sm text-label-sm text-on-surface-variant md:px-margin-desktop"
+        >
+          Couldn’t refresh the course just now — your place is kept.{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2"
+            onClick={() => void refetch()}
+          >
+            Try again
+          </button>
+        </p>
+      )}
 
       <div className="flex flex-1 flex-col lg:flex-row">
         <ModuleExplorer

@@ -62,4 +62,14 @@ describe("RequireAdmin", () => {
     // student chrome present, not admin
     expect(screen.getByRole("link", { name: /catalog/i })).toBeInTheDocument();
   });
+
+  it("offers a retry instead of the login page when /me fails with a server error", async () => {
+    mockFetchRoutes({
+      "/api/admin/auth/me": { status: 502, body: null },
+      "/api/student/auth/me": UNAUTH,
+    });
+    renderAt("/admin/ingestion");
+    expect(await screen.findByText("Couldn’t reach the server")).toBeInTheDocument();
+    expect(screen.queryByText("ADMIN LOGIN")).not.toBeInTheDocument();
+  });
 });

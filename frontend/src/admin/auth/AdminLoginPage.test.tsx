@@ -122,4 +122,22 @@ describe("AdminLoginPage rate limit countdown", () => {
       "You can try signing in again.",
     );
   });
+
+  it("has 'Remember this device' ticked by default and sends the choice", async () => {
+    const fetchMock = mockFetch({ status: 200, body: { user: admin } });
+    renderPage();
+    const box = screen.getByRole("checkbox", { name: "Remember this device" });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    await userEvent.type(screen.getByLabelText("Email"), "boss@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "admin-pw-12345");
+    await userEvent.click(screen.getByTestId("btn-al1"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({
+      email: "boss@example.com",
+      password: "admin-pw-12345",
+      remember: false,
+    });
+  });
 });

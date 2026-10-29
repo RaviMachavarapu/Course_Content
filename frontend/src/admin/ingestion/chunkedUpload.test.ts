@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setCsrfFailureHandler } from "@/lib/api";
+import { setCsrfFailureHandler, setSessionEndedHandler } from "@/lib/api";
 import { uploadPdf } from "./chunkedUpload";
 
 const MB = 1024 * 1024;
@@ -205,9 +205,21 @@ describe("uploadPdf", () => {
         body: { error: { code: "csrf_failed", message: "Missing or invalid CSRF token" } },
       },
     ]);
-    await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow(/session has expired/i);
+    await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow(/session ended/i);
     expect(handler).toHaveBeenCalledWith("/api/admin/uploads/u1");
     setCsrfFailureHandler(null);
+  });
+
+  it("reports a session that ended mid-upload (401) instead of a bare error", async () => {
+    const handler = vi.fn();
+    setSessionEndedHandler(handler);
+    stubFetch([
+      START,
+      { status: 401, body: { error: { code: "unauthorized", message: "Not authenticated" } } },
+    ]);
+    await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow(/session ended/i);
+    expect(handler).toHaveBeenCalledWith("/api/admin/uploads/u1");
+    setSessionEndedHandler(null);
   });
 
   it("refreshes an expired CSRF token via /me and resends the chunk once", async () => {
