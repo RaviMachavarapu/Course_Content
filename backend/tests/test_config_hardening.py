@@ -56,10 +56,14 @@ def test_prod_refuses_the_dev_mail_relay_while_reset_is_on() -> None:
 
 
 @pytest.mark.parametrize("env", ["staging", "prod"])
-@pytest.mark.parametrize("secret", ["dev-only-device-cookie-secret-change-me", ""])
+@pytest.mark.parametrize("secret", ["dev-only-device-cookie-secret-change-me", "", "x", "s" * 31])
 def test_device_cookie_secret_must_be_set_outside_dev(env: str, secret: str) -> None:
     with pytest.raises(ValidationError, match="DEVICE_COOKIE_SECRET"):
         _settings(app_env=env, **{**_REAL, "device_cookie_secret": secret})
+
+
+def test_a_32_character_device_cookie_secret_is_enough() -> None:
+    assert _settings(app_env="prod", **{**_REAL, "device_cookie_secret": "s" * 32})
 
 
 def test_dev_has_a_device_cookie_secret_default() -> None:

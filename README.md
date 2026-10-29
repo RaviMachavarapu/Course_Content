@@ -54,8 +54,8 @@ Login protection (both areas; see `docs/superpowers/specs/2026-10-29-login-prote
   attempt waits 2, 4, 8 … 60 s (429 with `retry_after`) instead of a hard lock-out.
 - `DEVICE_COOKIE_SECRET`, `DEVICE_COOKIE_MAX_AGE_DAYS` (180), `LOGIN_DEVICE_FREE_FAILURES`
   (10): a browser that has signed in before carries a signed `sdp_device_<area>` cookie and
-  is not held up by failures elsewhere. **`DEVICE_COOKIE_SECRET` must be set to a long
-  random value outside dev** (the app refuses to start otherwise); changing it only signs
+  is not held up by failures elsewhere. **`DEVICE_COOKIE_SECRET` must be set to a random
+  value of at least 32 characters outside dev** (the app refuses to start otherwise); changing it only signs
   everyone's devices out of the trusted state.
 - `REGISTER_RATE_LIMIT` (`100/1h`) and `PASSWORD_RESET_RATE_LIMIT` (`30/1h`) per client IP;
   reset mail is capped at 3 per hour per address.

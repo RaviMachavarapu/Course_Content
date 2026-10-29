@@ -20,6 +20,7 @@ _DEV_DB_CREDENTIALS = "shikshak:shikshak@"
 _DEV_PUBLIC_BASE_URL = "http://localhost:5173"
 _DEV_SMTP_URL = "smtp://mailhog:1025"
 _DEV_DEVICE_COOKIE_SECRET = "dev-only-device-cookie-secret-change-me"
+_MIN_DEVICE_COOKIE_SECRET_LEN = 32
 
 
 class Settings(BaseSettings):
@@ -121,8 +122,12 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL uses the dev credentials")
         if self.public_base_url.rstrip("/") == _DEV_PUBLIC_BASE_URL:
             problems.append("PUBLIC_BASE_URL is the dev default (reset links would point there)")
-        if self.device_cookie_secret in {"", _DEV_DEVICE_COOKIE_SECRET}:
-            problems.append("DEVICE_COOKIE_SECRET is unset or the dev default")
+        if self.device_cookie_secret == _DEV_DEVICE_COOKIE_SECRET:
+            problems.append("DEVICE_COOKIE_SECRET is the dev default")
+        elif len(self.device_cookie_secret) < _MIN_DEVICE_COOKIE_SECRET_LEN:
+            problems.append(
+                f"DEVICE_COOKIE_SECRET must be at least {_MIN_DEVICE_COOKIE_SECRET_LEN} characters"
+            )
         if self.is_prod and self.password_reset_enabled and self.smtp_url == _DEV_SMTP_URL:
             problems.append("SMTP_URL is the dev mailhog (or set PASSWORD_RESET_ENABLED=false)")
         if problems:

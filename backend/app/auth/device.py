@@ -28,6 +28,8 @@ DEVICE_COOKIE_NAMES: dict[SessionScope, str] = {
 }
 _VERSION = "v1"
 _SCOPES: frozenset[str] = frozenset(DEVICE_COOKIE_NAMES)
+#: a genuine token is ~150 bytes; anything far larger is not worth parsing
+MAX_TOKEN_LENGTH = 1024
 
 
 @dataclass(frozen=True)
@@ -80,10 +82,14 @@ def read_device_token(
 ) -> DeviceClaims | None:
     """The claims of a genuine, unexpired token for this scope; else None.
     Whether it belongs to the account being signed into is `matches`."""
-    if not token:
+    # malformed (a cookie header is latin-1, so anything can arrive) or
+    # oversized: treated as no cookie at all
+    if not token or len(token) > MAX_TOKEN_LENGTH or not token.isascii():
         return None
     payload, _, signature = token.rpartition(".")
-    if not payload or not hmac.compare_digest(signature, _sign(settings, payload)):
+    if not payload or not hmac.compare_digest(
+        signature.encode(), _sign(settings, payload).encode()
+    ):
         return None
     parts = payload.split(".")
     if len(parts) != 6 or parts[0] != _VERSION:
@@ -106,6 +112,8 @@ def matches(
     """Same account, and its password hasn't changed since the cookie was set."""
     return (
         claims is not None
-        and hmac.compare_digest(claims.user_id, user_id)
-        and hmac.compare_digest(claims.stamp, credential_stamp(settings, password_hash))
+        and hmac.compare_digest(claims.user_id.encode(), user_id.encode())
+        and hmac.compare_digest(
+            claims.stamp.encode(), credential_stamp(settings, password_hash).encode()
+        )
     )

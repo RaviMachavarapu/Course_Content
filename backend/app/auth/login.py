@@ -17,7 +17,9 @@
   mailed (at most once an hour), after the response is sent.
 
 Counters are Redis sorted sets of failure timestamps from the injected clock,
-so tests can drive time; their Redis TTLs only clean up.
+so tests can drive time; their Redis TTLs only clean up. The limit check and
+recording the attempt are one Lua call (`_RESERVE_LUA`), so concurrent
+requests can't all slip through the same opening.
 """
 
 from __future__ import annotations
@@ -75,38 +77,80 @@ def growing_delay(failures: int, *, free: int, base: int, cap: int) -> int:
     return int(min(base * 2 ** (failures - free - 1), cap))
 
 
-class _FailureLog:
-    """Failure timestamps per key in a sliding window (Redis sorted set)."""
+#: Atomically: drop failures older than each window, decide whether this
+#: attempt may run (per-IP cap; per-account growing delay), and if so record it
+#: as a provisional failure in both sets — so a burst sent the moment a wait
+#: ends gets exactly one password check. Returns "" when reserved, else the
+#: wait in seconds.
+#: KEYS: ip set, account set. ARGV: now, member, ttl, ip_limit, ip_window,
+#: window, free, base, cap.
+_RESERVE_LUA = """
+local now = tonumber(ARGV[1])
+local member = ARGV[2]
+local ttl = tonumber(ARGV[3])
+local ip_limit, ip_window = tonumber(ARGV[4]), tonumber(ARGV[5])
+local window, free = tonumber(ARGV[6]), tonumber(ARGV[7])
+local base, cap = tonumber(ARGV[8]), tonumber(ARGV[9])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - ip_window)
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now - window)
+local wait = 0
+if redis.call('ZCARD', KEYS[1]) >= ip_limit then
+  local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+  wait = tonumber(oldest[2]) + ip_window - now
+end
+local count = redis.call('ZCARD', KEYS[2])
+if count > free then
+  local delay = math.min(base * 2 ^ (count - free - 1), cap)
+  local latest = redis.call('ZRANGE', KEYS[2], -1, -1, 'WITHSCORES')
+  wait = math.max(wait, tonumber(latest[2]) + delay - now)
+end
+if wait > 0 then
+  return string.format('%.6f', wait)
+end
+redis.call('ZADD', KEYS[1], now, member)
+redis.call('ZADD', KEYS[2], now, member)
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('EXPIRE', KEYS[2], ttl)
+return ''
+"""
 
-    def __init__(self, client: RedisClient, now: float, ttl: int) -> None:
-        self._r = client
-        self._now = now
-        self._ttl = ttl
 
-    def window(self, key: str, seconds: int) -> tuple[int, float, float]:
-        """(count, oldest, latest) of the failures in the last `seconds`."""
-        pipe = self._r.pipeline()
-        pipe.zremrangebyscore(key, "-inf", self._now - seconds)
-        pipe.zcard(key)
-        pipe.zrange(key, 0, 0, withscores=True)
-        pipe.zrange(key, -1, -1, withscores=True)
-        _, count, first, last = pipe.execute()
-        if not count:
-            return 0, 0.0, 0.0
-        return int(count), float(first[0][1]), float(last[0][1])
-
-    def record(self, key: str) -> None:
-        pipe = self._r.pipeline()
-        pipe.zadd(key, {f"{self._now}:{secrets.token_hex(4)}": self._now})
-        pipe.expire(key, self._ttl)
-        pipe.execute()
-
-    def clear(self, *keys: str) -> None:
-        self._r.delete(*keys)
+def _reserve(
+    redis_client: RedisClient,
+    *,
+    ip_key: str,
+    account_key: str,
+    member: str,
+    now: float,
+    ttl: int,
+    ip_limit: int,
+    ip_window: int,
+    window: int,
+    free: int,
+    settings: Settings,
+) -> float:
+    """0 when the attempt is reserved (recorded as a provisional failure),
+    else the seconds to wait (nothing recorded)."""
+    result = redis_client.eval(  # type: ignore[no-untyped-call]  # untyped in the stubs
+        _RESERVE_LUA,
+        2,
+        ip_key,
+        account_key,
+        repr(now),
+        member,
+        ttl,
+        ip_limit,
+        ip_window,
+        window,
+        free,
+        settings.login_delay_base_sec,
+        settings.login_delay_max_sec,
+    )
+    return float(result) if result else 0.0
 
 
 def _rate_limited(wait: float) -> APIError:
-    retry_after = max(1, math.ceil(wait))
+    retry_after = max(1, math.ceil(wait - 1e-6))
     return APIError(
         status.HTTP_429_TOO_MANY_REQUESTS,
         "rate_limited",
@@ -146,7 +190,7 @@ def login_flow(
     email_key = f"{ns}:email:{normalized}"
     ip_limit, ip_window = parse_rate(settings.login_rate_limit)
     window = settings.login_failure_window_sec
-    failures = _FailureLog(redis_client, now, max(ip_window, window) + settings.login_delay_max_sec)
+    ttl = max(ip_window, window) + settings.login_delay_max_sec
 
     user = db.scalar(select(User).where(User.email == normalized))
     if user is not None and (user.role is not role or not user.is_active):
@@ -164,16 +208,23 @@ def login_flow(
     else:
         account_key, free = email_key, settings.login_free_failures
 
-    # Check before doing any work: an early attempt is rejected without
-    # checking the password and doesn't count as a failure.
-    ip_count, ip_oldest, _ = failures.window(ip_key, ip_window)
-    ip_wait = ip_oldest + ip_window - now if ip_count >= ip_limit else 0.0
-    count, _, latest = failures.window(account_key, window)
-    delay = growing_delay(
-        count, free=free, base=settings.login_delay_base_sec, cap=settings.login_delay_max_sec
+    # Check and reserve in one atomic step, before any work: an early attempt
+    # is rejected without checking the password and isn't a failure; an
+    # allowed one is recorded as a failure now, so concurrent attempts see it.
+    member = f"{now}:{secrets.token_hex(8)}"
+    wait = _reserve(
+        redis_client,
+        ip_key=ip_key,
+        account_key=account_key,
+        member=member,
+        now=now,
+        ttl=ttl,
+        ip_limit=ip_limit,
+        ip_window=ip_window,
+        window=window,
+        free=free,
+        settings=settings,
     )
-    account_wait = latest + delay - now if delay else 0.0
-    wait = max(ip_wait, account_wait)
     if wait > 0:
         raise _rate_limited(wait)
 
@@ -181,14 +232,17 @@ def login_flow(
     # "wrong password".
     password_ok = verify_password(user.password_hash if user else dummy_hash(), password)
     if user is None or not password_ok:
-        failures.record(ip_key)
-        failures.record(account_key)
+        # the reservation stays: it is this failure
         background = (
             None if trusted else _note_failure(redis_client, settings, scope, normalized, user, now)
         )
         raise _invalid(background)
 
-    failures.clear(email_key, f"{ns}:streak:{normalized}", account_key)
+    # successes never count: release the reservation, clear the account
+    pipe = redis_client.pipeline()
+    pipe.zrem(ip_key, member)
+    pipe.delete(email_key, f"{ns}:streak:{normalized}", account_key)
+    pipe.execute()
     user.last_login_at = dt.datetime.now(tz=dt.UTC)
     db.flush()
     token = store.create(str(user.id), scope)
@@ -219,7 +273,11 @@ def _note_failure(
     alerted_key = f"lg:{scope}:alerted:{email}"
     pipe = redis_client.pipeline()
     pipe.incr(streak_key)
-    pipe.expire(streak_key, _STREAK_TTL_SEC)
+    # an unknown email's streak can never alert: let it go with the window
+    # (same Redis work either way)
+    pipe.expire(
+        streak_key, _STREAK_TTL_SEC if user is not None else settings.login_failure_window_sec
+    )
     pipe.get(alerted_key)
     streak, _, alerted = pipe.execute()
     if user is None or int(streak) < ALERT_AFTER_FAILURES:

@@ -595,3 +595,148 @@ def test_reset_mail_capped_at_3_per_hour_per_email_in_both_areas(
         )
         assert r.status_code == status.HTTP_202_ACCEPTED
     assert sent == ["boss@example.com"] * 3
+
+
+# ------------------------------------------------- review round 1 (2026-10-29)
+
+
+@pytest.fixture
+def slow_verify(fast_verify: list[str], monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Each password check takes a moment, like Argon2 does, so concurrent
+    requests overlap between the limit check and the outcome."""
+    import time
+
+    quick = login.verify_password
+
+    def slow(password_hash: str, password: str) -> bool:
+        time.sleep(0.05)
+        return quick(password_hash, password)
+
+    monkeypatch.setattr(login, "verify_password", slow)
+    return fast_verify
+
+
+def _burst(client: TestClient, email: str, n: int, password: str = BAD_PW) -> list[Any]:
+    """`n` simultaneous login attempts from `n` addresses."""
+    import threading
+
+    barrier = threading.Barrier(n)
+    results: list[Any] = [None] * n
+
+    def go(i: int) -> None:
+        c = _other(client, f"10.99.{i // 250}.{i % 250 + 1}")
+        barrier.wait()
+        results[i] = _login(c, email, password)
+
+    threads = [threading.Thread(target=go, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return results
+
+
+def test_concurrent_attempts_after_a_wait_get_one_password_check(
+    app_client: TestClient, clock: FakeClock, slow_verify: list[str]
+) -> None:
+    """The check and the reservation are one atomic step: a burst sent the
+    moment a wait ends gets exactly one guess; the rest wait for the next step."""
+    _register(app_client, "target@example.com")
+    _lock_email(app_client, "target@example.com")  # 6 failures, then a 2 s wait
+    clock.advance(2)
+    checks = len(slow_verify)
+    results = _burst(app_client, "target@example.com", 16)
+    codes = sorted(r.status_code for r in results)
+    assert codes == [401] + [429] * 15
+    assert len(slow_verify) - checks == 1
+    assert {r.json()["error"]["retry_after"] for r in results if r.status_code == 429} == {4}
+
+
+def test_concurrent_attempts_for_an_unknown_email_behave_the_same(
+    app_client: TestClient, clock: FakeClock, slow_verify: list[str]
+) -> None:
+    _lock_email(app_client, "ghost@example.com")
+    clock.advance(2)
+    codes = sorted(r.status_code for r in _burst(app_client, "ghost@example.com", 16))
+    assert codes == [401] + [429] * 15
+
+
+def test_concurrent_attempts_cannot_overshoot_the_ip_limit(
+    app_client: TestClient, clock: FakeClock, slow_verify: list[str]
+) -> None:
+    import threading
+
+    school = _other(app_client, "10.20.0.1")
+    for _ in range(95):
+        _login(school, f"{uuid.uuid4().hex}@example.com", BAD_PW)
+    n = 20
+    barrier = threading.Barrier(n)
+    codes: list[int] = []
+    lock = threading.Lock()
+
+    def go() -> None:
+        c = _other(app_client, "10.20.0.1")
+        barrier.wait()
+        code = _login(c, f"{uuid.uuid4().hex}@example.com", BAD_PW).status_code
+        with lock:
+            codes.append(code)
+
+    threads = [threading.Thread(target=go) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(codes) == [401] * 5 + [429] * 15
+
+
+def test_a_success_releases_its_reservation(
+    app_client: TestClient, clock: FakeClock, fast_verify: list[str]
+) -> None:
+    """The provisional failure taken before the password check is dropped on
+    success: successes still never count toward the IP limit."""
+    _register(app_client, "class@example.com")
+    school = _other(app_client, "10.21.0.1")
+    for _ in range(99):
+        _login(school, f"{uuid.uuid4().hex}@example.com", BAD_PW)
+    for _ in range(5):
+        assert _login(school, "class@example.com").status_code == status.HTTP_200_OK
+        school.cookies.clear()
+    assert _login(school, f"{uuid.uuid4().hex}@example.com", BAD_PW).status_code == 401
+    assert _login(school, "class@example.com").status_code == 429
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"sdp_device_student=a.b.\xc3\xa9", b"sdp_device_student=" + b"A" * 1100 + b".sig"],
+    ids=["non_ascii", "oversized"],
+)
+def test_malformed_device_cookies_are_ignored(app_client: TestClient, raw: bytes) -> None:
+    _register(app_client, "owner@example.com")
+    r = _other(app_client, "10.31.0.1").post(
+        STUDENT_LOGIN,
+        json={"email": "owner@example.com", "password": GOOD_PW},
+        headers={"Cookie": raw},  # type: ignore[dict-item]
+    )
+    assert r.status_code == status.HTTP_200_OK
+
+
+def test_read_device_token_rejects_non_ascii_and_oversized(
+    settings: Settings, clock: FakeClock
+) -> None:
+    assert device.read_device_token(settings, "a.b.\xe9", scope="student", now=clock()) is None
+    assert (
+        device.read_device_token(settings, "x" * 1025 + ".s", scope="student", now=clock()) is None
+    )
+
+
+def test_streak_keys_for_unknown_emails_expire_with_the_window(
+    app_client: TestClient, redis_client: Any, fast_verify: list[str], settings: Settings
+) -> None:
+    _register(app_client, "owner@example.com")
+    _login(_other(app_client, "10.41.0.1"), "ghost@example.com", BAD_PW)
+    _login(_other(app_client, "10.41.0.2"), "owner@example.com", BAD_PW)
+    ghost_ttl = redis_client.ttl("lg:student:streak:ghost@example.com")
+    assert 0 < ghost_ttl <= settings.login_failure_window_sec
+    assert redis_client.ttl("lg:student:streak:owner@example.com") > (
+        settings.login_failure_window_sec
+    )
