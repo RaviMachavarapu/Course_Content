@@ -48,7 +48,7 @@ export function WorkspaceLayout(): JSX.Element {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-on-background">
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-outline-variant bg-surface-container-lowest px-4 py-3 md:px-margin-desktop">
+      <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-outline-variant bg-surface-container-lowest px-4 py-3 md:px-margin-desktop">
         <div className="flex min-w-0 flex-col">
           <span className="font-label-sm text-label-sm text-on-surface-variant">
             Individual Course
@@ -61,7 +61,7 @@ export function WorkspaceLayout(): JSX.Element {
             {course.title} · Course Overview
           </Link>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:gap-4">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 md:gap-4">
           <span className="font-label-md text-label-md tabular-nums text-on-surface-variant">
             {course.percent_complete}% Complete
           </span>
