@@ -637,3 +637,35 @@ def test_refresh_report_math_hints_at_rebuilding_pdfs(
         out = capsys.readouterr().out
         assert (out.strip().splitlines()[-1] == cli.REBUILD_REPORT_PDFS) is hinted
         assert ("rebuild-pdfs --type report" in out) is hinted
+
+
+def test_the_typeset_down_marker_makes_the_service_unavailable(
+    db_session: Session,
+    task_sessions: None,
+    fake: FakeTypeset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E2E fault injection (fixture provider only): retried, then "gave up"; the
+    artifact stays ready and nothing is sent to the typeset service."""
+    course = Course(title="C", slug=f"c-{uuid.uuid4()}")
+    module = Module(
+        course=course,
+        order_index=0,
+        title="Week 1 [fixture:typeset-down]",
+        source_url="https://youtu.be/x",
+        source_type=ModuleSourceType.youtube,
+    )
+    version = _version(db_session, ArtifactType.report, module=module)
+    scheduled: list[dict[str, Any]] = []
+
+    def fake_retry(**kwargs: Any) -> Exception:
+        scheduled.append(kwargs)
+        return RuntimeError("retry")
+
+    monkeypatch.setattr(pdf_task.build_artifact_pdf, "retry", fake_retry)
+    with pytest.raises(RuntimeError, match="retry"):
+        _run_task(version.id)
+    assert isinstance(scheduled[0]["exc"], TypesetUnavailable)
+    assert _run_task(version.id, retries=pdf_task.MAX_RETRIES) == "gave up"
+    assert fake.calls == []
+    assert _pdfs(db_session, version) == []

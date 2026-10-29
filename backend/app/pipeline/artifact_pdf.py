@@ -32,6 +32,7 @@ from app.logging import get_logger
 from app.models.artifact_version import ArtifactVersion
 from app.models.enums import ArtifactType, MediaFileKind
 from app.models.media_file import MediaFile
+from app.pipeline.fixture import typeset_down
 from app.render.typeset_client import TypesetResult, render_pdf
 from app.render.typeset_docs import (
     PDF_KINDS,
@@ -82,6 +83,8 @@ class PdfSource:
     version_id: uuid.UUID
     kind: MediaFileKind
     doc: TypesetDoc
+    #: E2E fault injection (`[fixture:typeset-down]`, fixture provider only)
+    typeset_down: bool = False
 
 
 @dataclass(frozen=True)
@@ -144,7 +147,10 @@ def prepare_pdfs(session: Session, version_id: uuid.UUID) -> list[PdfSource]:
         title=f"{module.title}: {label}" if label else None,
         load_media=course_media_loader(session, module.course_id),
     )
-    return [PdfSource(version_id=version_id, kind=k, doc=d) for k, d in docs.items()]
+    down = typeset_down(module.title)
+    return [
+        PdfSource(version_id=version_id, kind=k, doc=d, typeset_down=down) for k, d in docs.items()
+    ]
 
 
 def store_pdf(

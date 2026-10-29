@@ -29,6 +29,7 @@ from app.pipeline.fixture import FixtureProvider
 from app.pipeline.parsers.base import ArtifactParseError
 from app.pipeline.provider import (
     GenerationTimeout,
+    ProviderError,
     RawArtifact,
     StudioJobRef,
     StudioStatus,
@@ -711,3 +712,68 @@ def test_the_delete_task_logs_failures_and_retries_transient_ones(
         run("nb-x")
     assert scheduled and scheduled[0]["countdown"] == 60
     assert run("nb-x", retries=maintenance.DELETE_NOTEBOOK_RETRIES) == "gave up"
+
+
+# -- fixture fault markers through the whole pipeline ------------------------------------
+def _marked(
+    db: Session, title: str, kind: ArtifactType = ArtifactType.report
+) -> tuple[Artifact, uuid.UUID]:
+    module = _module(db)
+    module.title = title
+    db.flush()
+    jobs = orchestrator.start_module_generation(db, FixtureProvider(), module.id, [kind])
+    db.flush()
+    artifact = db.get(Artifact, jobs[0].artifact_id)
+    assert artifact is not None
+    return artifact, jobs[0].job_id
+
+
+def _run_marked(db: Session, artifact: Artifact, job_id: uuid.UUID, **kw: Any) -> Any:
+    return orchestrator.run_artifact_generation(
+        db, FixtureProvider(), artifact.id, job_id=job_id, **kw
+    )
+
+
+@pytest.mark.parametrize(
+    ("marker", "error", "resumable"),
+    [
+        ("fail-generate", "ProviderError", False),
+        ("studio-failed", "StudioGenerationFailed", False),
+        ("malformed", "ArtifactParseError", False),
+        ("source-fail", "NotebookLM couldn't read", False),
+    ],
+)
+def test_fixture_markers_fail_the_artifact_as_described(
+    db_session: Session, marker: str, error: str, resumable: bool
+) -> None:
+    artifact, job_id = _marked(db_session, f"Week 1 [fixture:{marker}]")
+    with pytest.raises((ProviderError, ArtifactParseError, orchestrator.StudioGenerationFailed)):
+        _run_marked(db_session, artifact, job_id)
+    db_session.expire_all()
+    art = db_session.get(Artifact, artifact.id)
+    assert art.status is ArtifactStatus.error
+    assert error in (art.last_error or "")
+    assert orchestrator.can_resume(art) is resumable
+
+
+def test_the_transient_generate_marker_requeues_while_retries_are_left(db_session: Session) -> None:
+    artifact, job_id = _marked(db_session, "Week 1 [fixture:transient-generate]")
+    with pytest.raises(TransientProviderError):
+        _run_marked(db_session, artifact, job_id, retry_transient=True)
+    assert _job(db_session, job_id).state is GenerationJobState.queued
+
+
+def test_the_stuck_marker_times_out(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(orchestrator, "_POLL_INTERVAL_SEC", 0)
+    monkeypatch.setattr(orchestrator, "settings_timeout", lambda _a: 0)
+    artifact, job_id = _marked(db_session, "Week 1 [fixture:stuck]")
+    with pytest.raises(GenerationTimeout):
+        _run_marked(db_session, artifact, job_id)
+    db_session.expire_all()
+    assert orchestrator.can_resume(db_session.get(Artifact, artifact.id))
+
+
+def test_the_quiz_marker_sizes_the_studio_quiz(db_session: Session) -> None:
+    artifact, job_id = _marked(db_session, "Week 1 [fixture:quiz=10]", ArtifactType.quiz)
+    version = _run_marked(db_session, artifact, job_id)
+    assert len(version.content_json["questions"]) == 10

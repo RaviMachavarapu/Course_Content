@@ -46,6 +46,8 @@ def build_artifact_pdf(self: Task, version_id: str) -> str:
         with session_scope() as session:
             sources = prepare_pdfs(session, vid)
         for source in sources:
+            if source.typeset_down:
+                raise TypesetUnavailable("fixture: typeset service down ([fixture:typeset-down])")
             result = render_pdf(*source.doc)
             stored: StoredPdf | None = None
             try:

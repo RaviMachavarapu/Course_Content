@@ -145,6 +145,27 @@ under `e2e-results/test-results` (`npx playwright show-trace <trace.zip>`).
 With `--keep`, tear down later with
 `docker compose -p shikshak-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v`.
 
+**Worst-case scenarios (fault injection).** With `CONTENT_PROVIDER=fixture`
+only, a marker in a **module title** makes the fixture provider misbehave for
+that module's jobs (any worker; several markers combine; no marker = normal).
+Details in `backend/app/pipeline/fixture.py`.
+
+| Marker | Effect |
+|---|---|
+| `[fixture:fail-generate]` | generation rejected (permanent): cards error, Retry fails again |
+| `[fixture:transient-generate]` | generation fails as transient: 3 Celery retries, then error |
+| `[fixture:studio-failed]` | NotebookLM reports the generation failed; Retry generates anew |
+| `[fixture:slow=N]` | cards stay "Generating…" for N seconds, then ready |
+| `[fixture:stuck]` | pending until the job's timeout (`MCP_TIMEOUT_*_SEC`): Cancel / reaper |
+| `[fixture:malformed]` | output can't be parsed: error, Retry generates again |
+| `[fixture:source-fail]` | sources fail: "NotebookLM couldn't read …" |
+| `[fixture:chat-fail]` | quiz chat rejected: a fresh retake isn't available |
+| `[fixture:quiz=N]` | Studio quiz of N questions (≤ 30); chat serves fresh retakes from a pool of 60 (link modules) |
+| `[fixture:typeset-down]` | PDFs: typeset unavailable, retried, then "gave up" (artifact stays ready) |
+
+Infrastructure faults (Redis, typeset, workers) are injected by stopping or
+restarting that service of the `shikshak-e2e` project.
+
 ## Production checklist
 
 `docker-compose.yml` is the dev stack. Its secrets and public address have
