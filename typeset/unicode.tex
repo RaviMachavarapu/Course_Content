@@ -1,0 +1,127 @@
+% Extra preamble after header.tex (which stays verbatim from the spike).
+% Latin Modern Math has no U+00B5 MICRO SIGN, so xelatex silently dropped µ
+% inside formulas. Typeset it as an upright mu in math; keep the text glyph
+% (from the main font) in text. The formula source itself is not changed.
+\usepackage{newunicodechar}
+\newunicodechar{µ}{\ifmmode\upmu\else\symbol{"00B5}\fi}
+
+% Missing glyphs are logged ("Missing character: There is no ...") so the
+% service can report them; it never ships them silently.
+\tracinglostchars=2
+
+% Numbers exactly as written (owner decision): \num/\SI/\qty print their
+% number without parsing or reformatting (1,500 / 12345 / .5 / 1.5e3 stay so).
+% Unparsed, siunitx would print the input as plain math: a comma followed by
+% punctuation space ("1, 500") and letters in italic (1.5𝑒3). So an unparsed
+% number is printed upright (\symup), every comma as an ordinary character.
+% This hooks siunitx's internal number printer: if siunitx renames it, the
+% preamble stops with an error (and the typeset tests fail) instead of numbers
+% silently changing. The web page's KaTeX macros print the same.
+\sisetup{parse-numbers=false}
+\ExplSyntaxOn
+\cs_if_exist:NF \__siunitx_print_number:n
+  { \msg_critical:nn { typeset } { siunitx-hook } }
+\msg_new:nnn { typeset } { siunitx-hook }
+  { siunitx~has~no~\__siunitx_print_number:n~to~hook~(numbers~as~written). }
+\tl_new:N \l__typeset_number_tl
+\cs_set_protected:Npn \__siunitx_print_number:n #1
+  {
+    \bool_set_false:N \l__siunitx_print_unit_bool
+    \bool_if:NTF \l_siunitx_number_parse_bool
+      { \use:c { siunitx_print_ \l_siunitx_number_mode_str :n } {#1} }
+      {
+        \tl_set:Nn \l__typeset_number_tl {#1}
+        % (siunitx passes the number already wrapped: \ensuremath{1,500})
+        \regex_replace_all:nnN { , } { \cB\{ , \cE\} } \l__typeset_number_tl
+        \ensuremath { \symup { \l__typeset_number_tl } }
+      }
+  }
+\ExplSyntaxOff
+% XeTeX: tag shaped text with its source characters, so text extraction and
+% copy-paste give the characters as written (Indic conjuncts, ligatures).
+\XeTeXgenerateactualtext=1
+
+% Bold math under unicode-math (Latin Modern Math has no bold math version,
+% so amsmath's \boldsymbol was not bold and \mathbf of Greek had no glyph):
+% \boldsymbol and \bm are bold italic like KaTeX's \boldsymbol (digits, which
+% have no bold italic form, bold upright); \mathbf is bold upright, Greek
+% included. physics' \vb / \vb* use these, so follow. Operators (+, =) have
+% no bold glyph in the math font and stay regular.
+\ExplSyntaxOn
+\tl_new:N \l__typeset_bold_tl
+\cs_new_protected:Npn \TypesetBoldSymbol #1
+  {
+    \tl_set:Nn \l__typeset_bold_tl {#1}
+    \regex_replace_all:nnN { [0-9] } { \c{symbfup} \cB\{ \0 \cE\} } \l__typeset_bold_tl
+    \symbfit { \l__typeset_bold_tl }
+  }
+\ExplSyntaxOff
+\AtBeginDocument{%
+  \renewcommand{\boldsymbol}[1]{\TypesetBoldSymbol{#1}}%
+  \renewcommand{\mathbf}[1]{\symbfup{#1}}%
+  \providecommand{\bm}{}\renewcommand{\bm}[1]{\TypesetBoldSymbol{#1}}%
+}
+
+% Indic scripts (Hindi/Marathi: Devanagari; Telugu; Tamil; Kannada; Malayalam): DejaVu
+% has none of them, so runs of each script switch to its Noto font.
+\newfontfamily\devanagarifont{Noto Serif Devanagari}[Script=Devanagari,Scale=1]
+\newfontfamily\telugufont{Noto Serif Telugu}[Script=Telugu,Scale=1]
+\newfontfamily\tamilfont{Noto Serif Tamil}[Script=Tamil,Scale=1]
+\newfontfamily\kannadafont{Noto Serif Kannada}[Script=Kannada,Scale=1]
+\newfontfamily\malayalamfont{Noto Serif Malayalam}[Script=Malayalam,Scale=1]
+\XeTeXinterchartokenstate=1
+\newXeTeXintercharclass\IndicDeva
+\newXeTeXintercharclass\IndicTelu
+\newXeTeXintercharclass\IndicTaml
+\newXeTeXintercharclass\IndicKnda
+\newXeTeXintercharclass\IndicMlym
+\newcount\IndicChar
+\def\IndicSetClass#1#2#3{% first, last code point, class
+  \IndicChar=#1\relax
+  \loop
+    \XeTeXcharclass\IndicChar=#3\relax
+    \ifnum\IndicChar<#2\relax
+    \advance\IndicChar by 1\relax
+  \repeat}
+\IndicSetClass{"0900}{"097F}{\IndicDeva}
+\IndicSetClass{"A8E0}{"A8FF}{\IndicDeva}
+\IndicSetClass{"1CD0}{"1CFF}{\IndicDeva}
+\IndicSetClass{"0C00}{"0C7F}{\IndicTelu}
+\IndicSetClass{"0B80}{"0BFF}{\IndicTaml}
+\IndicSetClass{"0C80}{"0CFF}{\IndicKnda}
+\IndicSetClass{"0D00}{"0D7F}{\IndicMlym}
+% ZWJ / ZWNJ shape conjuncts inside a word: never end a script run.
+\XeTeXcharclass"200C=4096
+\XeTeXcharclass"200D=4096
+% Entering a run opens a group with the script's font; leaving closes it.
+\def\IndicTransitions#1#2{%
+  \XeTeXinterchartoks 0 #1 = {\begingroup#2}%
+  \XeTeXinterchartoks 4095 #1 = {\begingroup#2}%
+  \XeTeXinterchartoks #1 0 = {\endgroup}%
+  \XeTeXinterchartoks #1 4095 = {\endgroup}}
+\IndicTransitions\IndicDeva\devanagarifont
+\IndicTransitions\IndicTelu\telugufont
+\IndicTransitions\IndicTaml\tamilfont
+\IndicTransitions\IndicKnda\kannadafont
+\IndicTransitions\IndicMlym\malayalamfont
+\def\IndicSwitch#1#2#3{\XeTeXinterchartoks #1 #2 = {\endgroup\begingroup#3}}
+\IndicSwitch\IndicDeva\IndicTelu\telugufont
+\IndicSwitch\IndicDeva\IndicTaml\tamilfont
+\IndicSwitch\IndicDeva\IndicKnda\kannadafont
+\IndicSwitch\IndicDeva\IndicMlym\malayalamfont
+\IndicSwitch\IndicTelu\IndicDeva\devanagarifont
+\IndicSwitch\IndicTelu\IndicTaml\tamilfont
+\IndicSwitch\IndicTelu\IndicKnda\kannadafont
+\IndicSwitch\IndicTelu\IndicMlym\malayalamfont
+\IndicSwitch\IndicTaml\IndicDeva\devanagarifont
+\IndicSwitch\IndicTaml\IndicTelu\telugufont
+\IndicSwitch\IndicTaml\IndicKnda\kannadafont
+\IndicSwitch\IndicTaml\IndicMlym\malayalamfont
+\IndicSwitch\IndicKnda\IndicDeva\devanagarifont
+\IndicSwitch\IndicKnda\IndicTelu\telugufont
+\IndicSwitch\IndicKnda\IndicTaml\tamilfont
+\IndicSwitch\IndicKnda\IndicMlym\malayalamfont
+\IndicSwitch\IndicMlym\IndicDeva\devanagarifont
+\IndicSwitch\IndicMlym\IndicTelu\telugufont
+\IndicSwitch\IndicMlym\IndicTaml\tamilfont
+\IndicSwitch\IndicMlym\IndicKnda\kannadafont

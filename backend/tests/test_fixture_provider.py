@@ -8,7 +8,7 @@ from app.config import Settings
 from app.models.enums import ARTIFACT_TYPES, ArtifactType
 from app.pipeline.factory import get_content_provider
 from app.pipeline.fixture import FixtureProvider
-from app.pipeline.provider import ContentProvider, StudioStatus
+from app.pipeline.provider import ContentProvider, SourceState, StudioStatus
 
 
 @pytest.fixture
@@ -80,3 +80,32 @@ def test_factory_selects_notebooklm_mcp_provider() -> None:
 
     provider = get_content_provider(Settings(content_provider="notebooklm"))
     assert isinstance(provider, NotebookLmMcpProvider)
+
+
+def test_fixture_file_sources_are_ready(provider: FixtureProvider) -> None:
+    nb = provider.create_notebook("Mixed")
+    link = provider.add_source(nb, "https://youtu.be/abc")
+    f = provider.add_file_source(nb, "/data/media/u/a.pdf", "My File.pdf")
+    assert f.source_id == "fixture-file-my-file-pdf"
+    assert provider.calls == [
+        ("add_file_source", nb.notebook_id, "/data/media/u/a.pdf", "My File.pdf")
+    ]
+    assert provider.source_statuses(nb) == {
+        link.source_id: SourceState.ready,
+        f.source_id: SourceState.ready,
+    }
+    assert provider.source_statuses(provider.create_notebook("Other")) == {}
+
+
+def test_fresh_provider_reports_ids_issued_by_another_instance_as_ready() -> None:
+    issuer = FixtureProvider()
+    nb = issuer.create_notebook("Resumed")
+    ids = [
+        issuer.add_source(nb, "https://youtu.be/abc").source_id,
+        issuer.add_file_source(nb, "/tmp/book.pdf", "book.pdf (part 1 of 2)").source_id,
+    ]
+    fresh = FixtureProvider()
+    states = fresh.source_statuses(nb)
+    # the same lookup the source step uses
+    assert [states.get(sid, SourceState.pending) for sid in ids] == [SourceState.ready] * 2
+    assert states.get("not-a-fixture-id", SourceState.pending) is SourceState.pending

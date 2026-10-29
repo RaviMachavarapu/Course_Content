@@ -6,7 +6,9 @@ guards. Admin guards land in T009; RBAC/CSRF in T010.
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections.abc import Callable
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
@@ -50,7 +52,16 @@ def get_rate_limiter(redis_client: RedisDep) -> RateLimiter:
     return RateLimiter(redis_client)
 
 
+#: seconds since the epoch; tests override `get_clock` with a fake clock
+Clock = Callable[[], float]
+
+
+def get_clock() -> Clock:
+    return time.time
+
+
 SessionStoreDep = Annotated[SessionStore, Depends(get_session_store)]
+ClockDep = Annotated[Clock, Depends(get_clock)]
 RateLimiterDep = Annotated[RateLimiter, Depends(get_rate_limiter)]
 
 
@@ -94,6 +105,8 @@ CurrentAdmin = Annotated[User, Depends(current_admin)]
 CurrentAnyUser = Annotated[User, Depends(current_any_user)]
 
 __all__ = [
+    "Clock",
+    "ClockDep",
     "CurrentAdmin",
     "CurrentAnyUser",
     "CurrentStudent",
@@ -105,6 +118,7 @@ __all__ = [
     "current_admin",
     "current_any_user",
     "current_student",
+    "get_clock",
     "get_redis",
     "get_settings",
 ]

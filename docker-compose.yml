@@ -7,22 +7,31 @@ x-backend-env: &backend-env
   CELERY_BROKER_URL: redis://redis:6379/1
   CELERY_RESULT_BACKEND: redis://redis:6379/2
   MEDIA_ROOT: /data/media
-  SESSION_SECRET: dev-only-not-secret
   CORS_ORIGINS: http://localhost:5173
   CONTENT_PROVIDER: fixture
   SMTP_URL: smtp://mailhog:1025
   LOG_LEVEL: info
-  # dev/e2e only — the Playwright suite logs in many times per run
+  # dev/e2e only — the Playwright suite logs in, registers and requests resets
+  # many times per run
   LOGIN_RATE_LIMIT: 100/5m
+  REGISTER_RATE_LIMIT: 300/1h
+  PASSWORD_RESET_RATE_LIMIT: 100/1h
+  # dev only (the config guard refuses this value outside APP_ENV=dev)
+  DEVICE_COOKIE_SECRET: dev-only-device-cookie-secret-change-me
+
+# Published ports are bound to 127.0.0.1: the dev stack runs with default
+# credentials (and, with the override, the owner's Google session), so nothing
+# is reachable from the LAN.
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: shikshak
       POSTGRES_PASSWORD: shikshak
       POSTGRES_DB: shikshak
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shikshak"]
@@ -31,8 +40,9 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
+    image: redis:7.4.11-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -41,12 +51,18 @@ services:
 
   api:
     build: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Client IPs (login rate limit): trust X-Forwarded-For only from the web
+    # container's fixed address on the `edge` network; nginx overwrites it.
+    command: >-
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      --proxy-headers --forwarded-allow-ips=10.213.53.2
+    restart: unless-stopped
     environment: *backend-env
     volumes:
       - ./backend:/app
       - media:/data/media
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
+    networks: [default, typeset, edge, mcp]
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:8000/healthz"]
       interval: 10s
@@ -60,12 +76,66 @@ services:
   worker:
     build: ./backend
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q celery,text,audio
+    # Warm shutdown: a running generation (audio up to 20 min plus downloads) can
+    # finish instead of being SIGKILLed after 10 s. One that still doesn't is
+    # failed by the reaper (beat) within ~15 min, retryable, and never replayed.
+    stop_grace_period: 30m
+    restart: unless-stopped
     environment: *backend-env
+    networks: [default, mcp]
     volumes:
       - ./backend:/app
       - media:/data/media
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping 2>&1 | grep -q pong"]
+      # -d: ping this worker only (a broadcast is answered by any worker)
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME 2>&1 | grep -q pong"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+  # Typeset PDFs on their own queue, one at a time: a slow or down typeset
+  # service never takes a generation slot from `worker`.
+  worker-pdf:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker -Q pdf --concurrency=1 --loglevel=info
+    restart: unless-stopped
+    environment: *backend-env
+    networks: [default, typeset]
+    volumes:
+      - ./backend:/app
+      - media:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME 2>&1 | grep -q pong"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+  # Prepare students' fresh quiz question sets (NotebookLM chat) on their own
+  # queue, one at a time: chat queries never take a generation slot. Also runs
+  # beat's short periodic tasks (`maintenance`: healthcheck, reaper, GC), which
+  # would otherwise wait behind hours-long generations on `worker`.
+  worker-quiz:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker -Q quiz,maintenance --concurrency=1 --loglevel=info
+    # A running chat preparation can finish on a warm shutdown; with acks_late a
+    # SIGKILL would orphan its 'preparing' set.
+    stop_grace_period: 6m
+    restart: unless-stopped
+    environment: *backend-env
+    networks: [default, mcp]
+    volumes:
+      - ./backend:/app
+      - media:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME 2>&1 | grep -q pong"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -76,23 +146,32 @@ services:
 
   beat:
     build: ./backend
-    command: celery -A app.tasks.celery_app beat --loglevel=info
+    # Schedule state outside the ./backend bind mount (never in the repo).
+    command: celery -A app.tasks.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    restart: unless-stopped
     environment: *backend-env
+    networks: [default, mcp]
     volumes:
       - ./backend:/app
       - media:/data/media
     healthcheck:
-      test: ["CMD-SHELL", "test -f celerybeat-schedule || test -f celerybeat-schedule.db"]
-      interval: 15s
+      # beat rewrites its schedule file at least every few minutes (an every-5-
+      # minute task is due); a stale file means a wedged beat.
+      test: ["CMD-SHELL", "find /tmp -maxdepth 1 -name 'celerybeat-schedule*' -mmin -15 | grep -q ."]
+      interval: 60s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 3
+      start_period: 30s
     depends_on:
       redis: { condition: service_healthy }
 
   web:
     build: ./frontend
-    ports: ["5173:80"]
+    restart: unless-stopped
+    ports: ["127.0.0.1:5173:80"]
+    networks:
+      edge:
+        ipv4_address: 10.213.53.2  # the only proxy the api trusts
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:80/"]
       interval: 10s
@@ -101,11 +180,39 @@ services:
       start_period: 10s
     depends_on: [api]
 
+  # Markdown + LaTeX formulas -> PDF (Quarto + xelatex). Internal only: the
+  # backend calls http://typeset:8080/pdf. Optional — nothing depends on it;
+  # if it is down, artifacts stay ready and their PDFs are built later.
+  # It compiles LLM-written LaTeX: never give it secrets (no env secrets, no
+  # volumes, no credentials). Its own internal network, shared only with its
+  # callers (api, worker-pdf): it can't reach postgres, redis, mcp or the
+  # internet.
+  typeset:
+    build: ./typeset
+    networks: [typeset]
+    restart: unless-stopped
+    init: true  # reap TeX processes killed on timeout
+    # Sandbox for compiling untrusted LaTeX: read-only image, work dirs and
+    # caches in a size-capped tmpfs, no capabilities, bounded memory/processes.
+    read_only: true
+    tmpfs: ["/tmp:size=1g"]
+    mem_limit: 3g
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # Abandoned upstream; amd64-only image (runs emulated on arm64 — the platform
   # warning is benign). Kept because the spec names the service `mailhog`.
   mailhog:
     image: mailhog/mailhog:v1.0.1
-    ports: ["1025:1025", "8025:8025"]
+    restart: unless-stopped
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
     healthcheck:
       test: ["CMD", "wget", "-qO", "-", "http://localhost:8025/api/v2/messages"]
       interval: 15s
@@ -117,14 +224,35 @@ services:
   mcp:
     build: ./mcp
     profiles: ["mcp"]
+    restart: unless-stopped
+    # Own network, shared only with its callers: postgres, redis, mailhog and
+    # web cannot reach the signed-in browser (VNC) or the shim.
+    networks: [mcp]
     volumes:
       - ./mcp/auth:/root/.notebooklm-mcp
+      - media:/data/media:ro
     ports:
-      - "7332:7332"
+      # localhost only: the shim and noVNC carry the Google session.
+      - "127.0.0.1:7332:7332"
       # noVNC — open http://localhost:6080/vnc.html to watch/click through
       # the interactive Google login (see mcp/README.md).
-      - "6080:6080"
+      - "127.0.0.1:6080:6080"
 
 volumes:
   pgdata:
   media:
+
+networks:
+  default:
+  # typeset and its callers only (see the typeset service)
+  typeset:
+    internal: true
+  # web (nginx) -> api only. Fixed addresses so the api can trust exactly one
+  # proxy; dynamic addresses come from the upper half, away from web's.
+  edge:
+    ipam:
+      config:
+        - subnet: 10.213.53.0/28
+          ip_range: 10.213.53.8/29
+  # mcp and its callers (api, worker, worker-quiz, beat); needs the internet
+  mcp:

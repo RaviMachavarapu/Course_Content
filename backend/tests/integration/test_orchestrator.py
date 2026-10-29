@@ -78,9 +78,19 @@ def test_start_module_creates_six_artifacts_notebook_and_jobs(
     jobs = orchestrator.start_module_generation(db_session, provider, module.id, WORKING_TYPES)
 
     assert len(module.artifacts) == 6  # BR1
-    assert module.notebooklm_notebook_id
     assert len(jobs) == len(WORKING_TYPES)
     assert {j.type for j in jobs} == set(WORKING_TYPES)
+    # no provider calls when starting: the first job's source step builds the notebook
+    assert module.notebooklm_notebook_id is None
+    assert module.sources_ready_at is None
+
+    orchestrator.run_artifact_generation(
+        db_session, provider, jobs[0].artifact_id, job_id=jobs[0].job_id
+    )
+    db_session.refresh(module)
+    assert module.notebooklm_notebook_id
+    assert module.notebooklm_link_source_id
+    assert module.sources_ready_at is not None
 
 
 def test_full_run_produces_ready_artifacts_with_media(
@@ -97,8 +107,9 @@ def test_full_run_produces_ready_artifacts_with_media(
 
     report_v = db_session.get(ArtifactVersion, by_type[ArtifactType.report].current_version_id)
     assert report_v.content_json["title"]
-    assert {m.kind.value for m in report_v.media_files} == {"report_pdf"}
-    assert report_v.media_files[0].size_bytes > 1000
+    # its PDF is typeset afterwards by the build_artifact_pdf task, not here
+    assert report_v.media_files == []
+    assert report_v.content_html and "<h2" in report_v.content_html
 
     audio_v = db_session.get(
         ArtifactVersion, by_type[ArtifactType.audio_overview].current_version_id

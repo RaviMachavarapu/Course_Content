@@ -11,19 +11,48 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields?: unknown;
+  /** Seconds until the server accepts another attempt (429 `retry_after`). */
+  readonly retryAfter?: number;
 
-  constructor(status: number, code: string, message: string, fields?: unknown) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields?: unknown,
+    retryAfter?: number,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.retryAfter = retryAfter;
   }
 }
 
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function readCookie(name: string): string | undefined {
+export const SESSION_EXPIRED_MESSAGE = "Your session has expired — please sign in again.";
+
+type CsrfFailureHandler = (path: string) => void;
+let csrfFailureHandler: CsrfFailureHandler | null = null;
+
+/**
+ * Register what happens when the server rejects a mutation with
+ * `403 csrf_failed` (the `sdp_csrf` cookie is gone or stale). The server has
+ * no endpoint that re-issues the token, only login does, so the app sends the
+ * user to sign in again rather than failing silently.
+ */
+export function setCsrfFailureHandler(handler: CsrfFailureHandler | null): void {
+  csrfFailureHandler = handler;
+}
+
+/** Shared by `apiFetch` and raw-fetch callers (chunked upload). */
+export function reportCsrfFailure(path: string): void {
+  csrfFailureHandler?.(path);
+}
+
+export function readCookie(name: string): string | undefined {
   return document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`))
@@ -36,16 +65,27 @@ export interface ApiOptions {
   signal?: AbortSignal;
 }
 
-export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
-  const method = (opts.method ?? "GET").toUpperCase();
-  const headers: Record<string, string> = { Accept: "application/json" };
+type ErrorBody = { code?: string; message?: string; fields?: unknown; retry_after?: unknown };
 
+/** `retry_after` from the error body, else the `Retry-After` header (seconds). */
+function retryAfterOf(res: Response, err: ErrorBody | undefined): number | undefined {
+  const raw = err?.retry_after ?? res.headers?.get?.("Retry-After");
+  const seconds = typeof raw === "number" ? raw : Number(raw);
+  return raw != null && Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined;
+}
+
+interface Sent {
+  res: Response;
+  data: unknown;
+}
+
+async function send(path: string, method: string, opts: ApiOptions): Promise<Sent> {
+  const headers: Record<string, string> = { Accept: "application/json" };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (!SAFE.has(method)) {
     const csrf = readCookie("sdp_csrf");
     if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf);
   }
-
   const res = await fetch(path, {
     method,
     headers,
@@ -53,23 +93,103 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
     signal: opts.signal,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
+  const data: unknown = res.status === 204 ? null : await res.json().catch(() => null);
+  return { res, data };
+}
+
+function errorOf(data: unknown): ErrorBody | undefined {
+  return data && typeof data === "object" && "error" in data
+    ? (data as { error: ErrorBody }).error
+    : undefined;
+}
+
+export function isCsrfFailure(status: number, data: unknown): boolean {
+  return status === 403 && errorOf(data)?.code === "csrf_failed";
+}
+
+/**
+ * Ask the server for a fresh `sdp_csrf` cookie: GET `/auth/me` of the area the
+ * failed request belongs to re-issues it. True when still signed in there.
+ */
+export async function refreshCsrfToken(failedPath: string, signal?: AbortSignal): Promise<boolean> {
+  const area = failedPath.startsWith("/api/admin") ? "admin" : "student";
+  try {
+    const res = await fetch(`/api/${area}/auth/me`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      credentials: "include",
+      signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
+  const method = (opts.method ?? "GET").toUpperCase();
+
+  let { res, data } = await send(path, method, opts);
+
+  // An expired/missing CSRF token: the server rejected the request before
+  // running it, so refreshing the token and sending it again once is safe.
+  // Any other failure is never retried.
+  if (!SAFE.has(method) && isCsrfFailure(res.status, data)) {
+    if (await refreshCsrfToken(path, opts.signal)) ({ res, data } = await send(path, method, opts));
+  }
 
   if (res.status === 204) return undefined as T;
 
-  const data: unknown = await res.json().catch(() => null);
-
   if (!res.ok) {
-    const err =
-      data && typeof data === "object" && "error" in data
-        ? (data as { error: { code?: string; message?: string; fields?: unknown } }).error
-        : undefined;
+    const err = errorOf(data);
+    if (isCsrfFailure(res.status, data)) {
+      reportCsrfFailure(path);
+      throw new ApiError(403, "csrf_failed", SESSION_EXPIRED_MESSAGE, err?.fields);
+    }
     throw new ApiError(
       res.status,
       err?.code ?? "error",
       err?.message ?? res.statusText,
       err?.fields,
+      retryAfterOf(res, err),
     );
   }
 
   return data as T;
+}
+
+/** A user-facing message for a failed request: the server's message plus the
+ * first field-level validation detail when there is one (e.g. "note: String
+ * should have at most 4000 characters"). */
+export function errorMessage(err: unknown, fallback = "The request failed. Try again."): string {
+  if (!(err instanceof ApiError)) return fallback;
+  const first = Array.isArray(err.fields)
+    ? (err.fields[0] as { loc?: unknown[]; msg?: string } | undefined)
+    : undefined;
+  if (!first?.msg) return err.message;
+  const loc = Array.isArray(first.loc) ? first.loc.filter((p) => p !== "body").join(".") : "";
+  return loc ? `${loc}: ${first.msg}` : first.msg;
+}
+
+/** `65` → `"1:05"`. */
+export function formatCountdown(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Seconds to wait when `err` is a 429 that says how long (login pages count down). */
+export function retryAfterSeconds(err: unknown): number | undefined {
+  return err instanceof ApiError && err.status === 429 ? err.retryAfter : undefined;
+}
+
+export const RATE_LIMITED_MESSAGE = "Too many attempts — please try again later.";
+export const RESET_DISABLED_MESSAGE =
+  "Password reset is turned off on this site. Contact your administrator to regain access.";
+
+/** Message for a failed sign-in / register / password-reset request. */
+export function authErrorMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  if (err.status === 429) return RATE_LIMITED_MESSAGE;
+  if (err.code === "password_reset_disabled") return RESET_DISABLED_MESSAGE;
+  return err.message;
 }

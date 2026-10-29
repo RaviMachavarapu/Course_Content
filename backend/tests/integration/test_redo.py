@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 from fastapi import status
@@ -264,6 +265,7 @@ def test_redo_endpoint_sets_and_clears_the_custom_prompt(
     by_type = {a["type"]: a for a in staging["artifacts"]}
     assert by_type["slide_deck"]["custom_prompt"] == "A deck for beginners"
 
+    orchestrator.run_artifact_generation(db_session, PROVIDER, deck.id)  # the redo finishes
     resp = client.post(
         f"/api/admin/artifacts/{deck.id}/redo", json={"custom_prompt": ""}, headers=headers
     )
@@ -294,3 +296,71 @@ def test_rerun_all_keeps_each_artifacts_options(db_session: Session) -> None:
 
     orchestrator.start_module_generation(db_session, PROVIDER, module.id, [ArtifactType.quiz])
     assert quiz.generation_options == {"quantity": "more", "difficulty": "hard", "language": "hi"}
+
+
+# -- one generation per artifact at a time (review 2026-10-28) ---------------------------
+def test_redo_while_processing_is_409_and_queues_nothing(
+    client: TestClient, db_session: Session
+) -> None:
+    from sqlalchemy import func, select
+
+    from app.models.generation_job import GenerationJob
+
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    headers = _admin_headers(client, db_session)
+    url = f"/api/admin/artifacts/{report.id}/redo"
+    assert client.post(url, json={}, headers=headers).status_code == status.HTTP_202_ACCEPTED
+
+    def jobs() -> int:
+        return (
+            db_session.scalar(select(func.count()).where(GenerationJob.artifact_id == report.id))
+            or 0
+        )
+
+    before = jobs()
+    resp = client.post(url, json={"note": "again"}, headers=headers)
+    assert resp.status_code == status.HTTP_409_CONFLICT
+    assert resp.json()["error"]["code"] == "artifact_busy"
+    assert "still generating" in resp.json()["error"]["message"]
+    assert jobs() == before
+
+
+def test_rerun_all_while_generating_is_409(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.api.admin.courses._dispatch_all", lambda *a, **k: None)
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    headers = _admin_headers(client, db_session)
+    url = f"/api/admin/courses/modules/{module.id}/regenerate"
+    assert client.post(url, headers=headers).status_code == status.HTTP_200_OK
+    resp = client.post(url, headers=headers)
+    assert resp.status_code == status.HTTP_409_CONFLICT
+    assert resp.json()["error"]["code"] == "module_busy"
+
+
+def test_retry_after_a_timeout_resumes_the_notebooklm_artifact(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda *a: sent.append(a))
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    report.status = ArtifactStatus.error
+    report.notebooklm_studio_id = "nb-artifact-1"
+    report.studio_request = {"focus_prompt": "p", "redo_note": None}
+    db_session.flush()
+    headers = _admin_headers(client, db_session)
+
+    resp = client.post(f"/api/admin/artifacts/{report.id}/retry", headers=headers)
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    assert sent[-1][-1] is True  # resume
+    db_session.expire_all()
+    assert db_session.get(Artifact, report.id).notebooklm_studio_id == "nb-artifact-1"
+
+    # a Redo always generates a new one
+    orchestrator.run_artifact_generation(db_session, PROVIDER, report.id, resume=True)
+    db_session.expire_all()
+    resp = client.post(f"/api/admin/artifacts/{report.id}/redo", json={}, headers=headers)
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    assert sent[-1][-1] is False

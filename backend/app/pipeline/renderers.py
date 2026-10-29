@@ -1,9 +1,11 @@
 """Per-artifact-type render step of the pipeline.
 
 Given a parsed `content_json` (and the provider job, for binaries), produce the
-media files to store. Flashcards and quiz are interactive JSON with no media
-(D5); every other type has a real renderer (slides T018, infographic T019,
-report T020, audio wired against the provider).
+media files to store. Flashcards, quiz and report are content_json with no
+media (D5; the report's HTML is `report_html.build_report_html`); slides
+(T018), infographic (T019) and audio have real renderers. Every type's
+downloadable PDF except audio is typeset after generation
+(app/pipeline/artifact_pdf.py).
 """
 
 from __future__ import annotations
@@ -16,9 +18,7 @@ from app.models.enums import ArtifactType, MediaFileKind
 from app.pipeline.provider import ContentProvider, StudioJobRef
 from app.render import RenderError
 from app.render.infographic import render_infographic
-from app.render.report_pdf import render_report
 from app.render.slides_pptx import render_slides
-from app.schemas.content import ReportContent
 
 
 @dataclass(frozen=True)
@@ -27,25 +27,9 @@ class MediaBlob:
     data: bytes
     mime: str
     page_index: int | None = None
-    #: sanitised HTML to persist on the ArtifactVersion (report only, for now)
-    content_html: str | None = None
 
 
 Renderer = Callable[[dict[str, Any], ContentProvider, StudioJobRef], list[MediaBlob]]
-
-
-def _render_report(
-    content_json: dict[str, Any], _p: ContentProvider, _j: StudioJobRef
-) -> list[MediaBlob]:
-    rendered = render_report(ReportContent.model_validate(content_json))
-    return [
-        MediaBlob(
-            kind=MediaFileKind.report_pdf,
-            data=rendered.pdf,
-            mime="application/pdf",
-            content_html=rendered.html,
-        )
-    ]
 
 
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -93,7 +77,7 @@ RENDERERS: dict[ArtifactType, Renderer] = {
     ArtifactType.slide_deck: _render_slides,
     ArtifactType.flashcards: _no_media,
     ArtifactType.quiz: _no_media,
-    ArtifactType.report: _render_report,
+    ArtifactType.report: _no_media,
     ArtifactType.infographic: _render_infographic,
     ArtifactType.audio_overview: _render_audio,
 }

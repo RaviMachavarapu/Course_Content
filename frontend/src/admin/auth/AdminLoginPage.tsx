@@ -1,22 +1,28 @@
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Button, Icon, Input } from "@/components";
-import { ApiError } from "@/lib/api";
+import { Button, Icon, Input, RateLimitAlert } from "@/components";
+import { authErrorMessage, retryAfterSeconds } from "@/lib/api";
+import { useCountdown } from "@/lib/useCountdown";
 import { emailError } from "@/student/auth/validation";
+import { type LoginRedirectState, safeFrom } from "@/app/csrfRecovery";
 import { useAdminLogin } from "./useAdminAuth";
 
 export function AdminLoginPage(): JSX.Element {
   const navigate = useNavigate();
-  const location = useLocation() as { state?: { from?: string } };
+  const location = useLocation() as { state?: LoginRedirectState | null };
+  const notice = location.state?.notice;
   const login = useAdminLogin();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const countdown = useCountdown();
+  const waiting = countdown.remaining > 0;
 
   function onSubmit(e: FormEvent): void {
     e.preventDefault();
+    if (waiting) return;
     setFormError(null);
     const next = {
       email: emailError(email) ?? undefined,
@@ -28,9 +34,13 @@ export function AdminLoginPage(): JSX.Element {
     login.mutate(
       { email, password },
       {
-        onSuccess: () => navigate(location.state?.from ?? "/admin/ingestion", { replace: true }),
-        onError: (err) =>
-          setFormError(err instanceof ApiError ? err.message : "Could not sign in. Try again."),
+        onSuccess: () =>
+          navigate(safeFrom(location.state?.from, "/admin/ingestion", "admin"), { replace: true }),
+        onError: (err) => {
+          const wait = retryAfterSeconds(err);
+          if (wait) countdown.start(wait);
+          else setFormError(authErrorMessage(err, "Could not sign in. Try again."));
+        },
       },
     );
   }
@@ -51,6 +61,15 @@ export function AdminLoginPage(): JSX.Element {
         <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-level-1">
           <h1 className="font-headline-md text-headline-md">Admin sign in</h1>
           <form className="mt-5 flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+            {notice && !formError && !waiting && (
+              <p
+                role="status"
+                className="rounded-lg bg-surface-container-high px-3 py-2 font-label-md text-label-md text-on-surface"
+              >
+                {notice}
+              </p>
+            )}
+            <RateLimitAlert seconds={countdown.remaining} forgotPath="/admin/forgot-password" />
             {formError && (
               <p
                 role="alert"
@@ -88,6 +107,7 @@ export function AdminLoginPage(): JSX.Element {
               type="submit"
               variant="primary"
               loading={login.isPending}
+              disabled={waiting}
               fullWidth
               data-testid="btn-al1"
             >

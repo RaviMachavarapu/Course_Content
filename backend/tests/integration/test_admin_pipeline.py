@@ -99,3 +99,31 @@ def test_mcp_status_is_healthy_under_fixture(client: TestClient, db_session: Ses
 
 def test_mcp_status_requires_admin(client: TestClient) -> None:
     assert client.get("/api/admin/mcp/status").status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_pipeline_search_matches_pdf_name(client: TestClient, db_session: Session) -> None:
+    from app.models.module_source_file import ModuleSourceFile
+
+    h = _admin(client, db_session)
+    with_pdf = _make_module(client, h, "alpha")
+    _make_module(client, h, "beta")
+    row = db_session.get(Module, uuid.UUID(with_pdf))
+    assert row is not None
+    row.source_url = None
+    row.source_files.append(
+        ModuleSourceFile(
+            order_index=0,
+            file_name="Thermodynamics.pdf",
+            size_bytes=10,
+            checksum_sha256="a" * 64,
+            storage_key="module-sources/t.pdf",
+            page_count=1,
+        )
+    )
+    db_session.flush()
+
+    body = client.get("/api/admin/pipeline", params={"q": "thermo"}).json()
+    assert [r["module_title"] for r in body["rows"]] == ["alpha"]
+    assert body["total"] == 1
+    assert body["rows"][0]["source_url"] is None
+    assert body["rows"][0]["source_files"][0]["file_name"] == "Thermodynamics.pdf"

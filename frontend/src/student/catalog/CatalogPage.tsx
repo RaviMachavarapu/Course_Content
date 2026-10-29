@@ -32,7 +32,10 @@ function ProfileMenu(): JSX.Element {
             <button
               onClick={() =>
                 logout.mutate(undefined, {
-                  onSettled: () => navigate("/login", { replace: true }),
+                  // only on success: a failed logout leaves the session live,
+                  // and the hook tells the user so
+                  onSuccess: () => navigate("/login", { replace: true }),
+                  onError: () => setOpen(false),
                 })
               }
               className="flex w-full items-center gap-2 px-3 py-2 text-left font-label-md text-label-md hover:bg-surface-container-high focus-visible:outline-none focus-visible:shadow-focus"
@@ -56,9 +59,7 @@ export function CatalogPage(): JSX.Element {
     const q = query.trim().toLowerCase();
     return (data?.courses ?? []).filter((c) => {
       const matchesQuery =
-        !q ||
-        c.title.toLowerCase().includes(q) ||
-        c.description.toLowerCase().includes(q);
+        !q || c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q);
       const matchesCategory = category === "All" || c.category === category;
       return matchesQuery && matchesCategory;
     });
@@ -127,7 +128,9 @@ export function CatalogPage(): JSX.Element {
           </div>
         )}
 
-        {isError && <ErrorState title="Could not load the catalog" onRetry={() => void refetch()} />}
+        {isError && (
+          <ErrorState title="Could not load the catalog" onRetry={() => void refetch()} />
+        )}
 
         {isPending && (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

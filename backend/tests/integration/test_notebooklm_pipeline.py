@@ -7,6 +7,7 @@ downloads, and records what the pipeline asked for.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import struct
 import uuid
@@ -124,6 +125,8 @@ def _artifact(db: Session, kind: ArtifactType, options: dict[str, Any] | None = 
         source_url="https://youtu.be/x",
         source_type=ModuleSourceType.youtube,
         notebooklm_notebook_id="nb-1",
+        # sources already in the notebook (as the migration marks existing ones)
+        sources_ready_at=dt.datetime.now(dt.UTC),
     )
     db.add(module)
     db.flush()
@@ -176,7 +179,7 @@ def test_audio_is_stored_as_m4a_with_its_real_duration(db_session: Session) -> N
     assert _media_kinds(db_session, version) == [(MediaFileKind.audio_m4a, None)]
 
 
-def test_report_text_comes_from_notebooklm_and_the_pdf_from_us(db_session: Session) -> None:
+def test_report_text_comes_from_notebooklm_and_the_html_from_us(db_session: Session) -> None:
     provider = FakeNotebookLm(_row("report_interactive.json"))
     artifact = _artifact(db_session, ArtifactType.report)
 
@@ -185,7 +188,8 @@ def test_report_text_comes_from_notebooklm_and_the_pdf_from_us(db_session: Sessi
     assert version is not None
     assert version.content_json["title"].startswith("Introduction to Artificial Intelligence")
     assert provider.downloads == []
-    assert _media_kinds(db_session, version) == [(MediaFileKind.report_pdf, None)]
+    # no media: the PDF is typeset afterwards by the build_artifact_pdf task
+    assert _media_kinds(db_session, version) == []
     assert version.content_html and "<h2" in version.content_html
 
 

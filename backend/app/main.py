@@ -22,8 +22,10 @@ from app.api.admin import mcp as admin_mcp
 from app.api.admin import pipeline as admin_pipeline
 from app.api.admin import prompts as admin_prompts
 from app.api.admin import publish as admin_publish
+from app.api.admin import quiz as admin_quiz
 from app.api.admin import settings as admin_settings
 from app.api.admin import staging as admin_staging
+from app.api.admin import uploads as admin_uploads
 from app.api.student import artifacts as student_artifacts
 from app.api.student import auth as student_auth
 from app.api.student import courses as student_courses
@@ -97,8 +99,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Shikshak Dp — AI Course Content Suite",
         version="0.1.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        # the API schema is a map of every route: not published in prod
+        docs_url=None if settings.is_prod else "/api/docs",
+        redoc_url=None,
+        openapi_url=None if settings.is_prod else "/api/openapi.json",
         lifespan=_lifespan,
     )
     app.state.settings = settings
@@ -127,11 +131,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_auth.router)
     app.include_router(admin_prompts.router)
     app.include_router(admin_staging.router)
+    app.include_router(admin_uploads.router)
     app.include_router(admin_jobs.router)
     app.include_router(admin_courses.router)
     app.include_router(admin_pipeline.router)
     app.include_router(admin_mcp.router)
     app.include_router(admin_artifacts.router)
+    app.include_router(admin_quiz.router)
     app.include_router(admin_publish.router)
     app.include_router(admin_settings.router)
     app.include_router(media.router)

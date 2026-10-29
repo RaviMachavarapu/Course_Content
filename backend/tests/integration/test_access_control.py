@@ -36,6 +36,7 @@ from app.models.module import Module
 from app.pipeline import orchestrator
 from app.pipeline.fixture import FixtureProvider
 from app.render import RenderError
+from app.storage.service import Storage
 
 PROVIDER = FixtureProvider()
 
@@ -200,3 +201,48 @@ def test_failed_regeneration_never_touches_the_published_version(
     assert report.published_version_id == published_id
     published_version = next(v for v in report.versions if v.id == published_id)
     assert published_version.content_json is not None
+
+
+def test_student_cannot_fetch_module_pdf(
+    client: TestClient, db_session: Session, media_storage: Storage
+) -> None:
+    import io
+
+    from pypdf import PdfWriter
+
+    h = _admin_headers(client, db_session)
+    cid = client.post("/api/admin/courses", json={"title": "pdfc"}, headers=h).json()["course"][
+        "id"
+    ]
+    w = PdfWriter()
+    w.add_blank_page(width=100, height=100)
+    buf = io.BytesIO()
+    w.write(buf)
+    data = buf.getvalue()
+    uid = client.post(
+        "/api/admin/uploads", json={"file_name": "s.pdf", "size_bytes": len(data)}, headers=h
+    ).json()["upload_id"]
+    client.put(
+        f"/api/admin/uploads/{uid}?offset=0",
+        content=data,
+        headers={**h, "Content-Type": "application/octet-stream"},
+    )
+    mod = client.post(
+        f"/api/admin/courses/{cid}/modules",
+        json={"title": "m", "types": ["report"], "upload_ids": [uid]},
+        headers=h,
+    ).json()["module"]
+    m = db_session.get(Module, uuid.UUID(mod["id"]))
+    assert m is not None
+    key = m.source_files[0].storage_key
+
+    # no MediaFile row exists for a module PDF, so /api/media never serves it
+    assert media_storage.exists(key)
+    client.cookies.clear()
+    # anonymous: the media route requires a session (401), as for any media key
+    assert client.get(f"/api/media/{key}").status_code == status.HTTP_401_UNAUTHORIZED
+    client.post(
+        "/api/student/auth/register",
+        json={"email": "pdf-s@example.com", "password": "n2-student-pw-1", "display_name": "S"},
+    )
+    assert client.get(f"/api/media/{key}").status_code == status.HTTP_404_NOT_FOUND

@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Input } from "@/components";
+import { authErrorMessage } from "@/lib/api";
 import { AuthShell } from "./AuthShell";
 import { emailError } from "./validation";
 import { studentAuthApi } from "./api";
@@ -23,7 +24,10 @@ export function ForgotPasswordPage(): JSX.Element {
 
   if (request.isSuccess) {
     return (
-      <AuthShell title="Check your email" subtitle="If that email has an account, we sent a reset link. It expires in 30 minutes.">
+      <AuthShell
+        title="Check your email"
+        subtitle="If that email has an account, we sent a reset link. It expires in 30 minutes."
+      >
         <Link
           to="/login"
           className="font-label-md text-label-md text-tertiary underline underline-offset-4"
@@ -45,6 +49,14 @@ export function ForgotPasswordPage(): JSX.Element {
       }
     >
       <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+        {request.isError && (
+          <p
+            role="alert"
+            className="rounded-lg bg-error-container/50 px-3 py-2 font-label-md text-label-md text-on-error-container"
+          >
+            {authErrorMessage(request.error, "Could not send the reset link. Try again.")}
+          </p>
+        )}
         <Input
           label="Email"
           type="email"

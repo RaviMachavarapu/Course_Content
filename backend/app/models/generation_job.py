@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -14,6 +14,15 @@ from app.models.enums import GenerationJobKind, GenerationJobState
 
 class GenerationJob(Base):
     __tablename__ = "generation_job"
+    __table_args__ = (
+        # One artifact is never generated twice at once: at most one active job each.
+        Index(
+            "uq_generation_job_active_artifact",
+            "artifact_id",
+            unique=True,
+            postgresql_where=text("state IN ('queued', 'running')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     kind: Mapped[GenerationJobKind] = mapped_column(generation_job_kind_enum, nullable=False)
@@ -36,3 +45,6 @@ class GenerationJob(Base):
     )
     started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Last sign of life: set when claimed/requeued and touched every minute by the
+    #: worker running it; the reaper fails jobs whose heartbeat stopped.
+    heartbeat_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -12,8 +12,9 @@ from app.models.artifact import Artifact
 from app.models.course import Course
 from app.models.enums import ArtifactType, ModuleSourceType
 from app.models.module import Module
-from app.pipeline import orchestrator
+from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.fixture import FixtureProvider
+from app.render.typeset_client import TypesetResult
 
 PROVIDER = FixtureProvider()
 
@@ -52,6 +53,11 @@ def test_inspect_returns_current_version_content_media_and_metadata(
     client: TestClient, db_session: Session
 ) -> None:
     artifact = _generated_report(db_session)
+    artifact_pdf.build_version_pdfs(
+        db_session,
+        artifact.current_version_id,
+        render=lambda *_: TypesetResult(pdf=b"%PDF-1.7", fallback="0"),
+    )
     _admin(client, db_session)
 
     body = client.get(f"/api/admin/artifacts/{artifact.id}").json()

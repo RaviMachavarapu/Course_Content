@@ -1,17 +1,21 @@
 """Student catalog API (spec.md §3.8).
 
-    GET /api/student/courses  -> published courses, with the caller's progress
+GET /api/student/courses  -> published courses, with the caller's progress
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+import uuid
 
-from app.api.deps import CurrentStudent, DbDep
+from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from app.api.deps import CurrentStudent, DbDep, current_student
+from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.artifact import Artifact
+from app.models.artifact_version import ArtifactVersion
 from app.models.course import Course
 from app.models.enums import ARTIFACT_TYPES, ArtifactType
 from app.models.module import Module
@@ -23,26 +27,54 @@ from app.schemas.student import (
     WorkspaceCourseOut,
     WorkspaceModuleOut,
 )
-from app.storage.service import get_storage
+from app.services.visibility import live_artifacts
+from app.storage.keys import InvalidKeyError
+from app.storage.service import Storage, get_storage
 
 _ARTIFACT_ORDER = {t: i for i, t in enumerate(ARTIFACT_TYPES)}
 
-router = APIRouter(prefix="/api/student", tags=["student-courses"])
+router = APIRouter(
+    prefix="/api/student",
+    tags=["student-courses"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 
-def _published_artifacts(module: Module) -> list[Artifact]:
-    return [a for a in module.artifacts if a.published_version_id is not None]
-
-
-def _audio_seconds(artifact: Artifact) -> int | None:
-    version = next((v for v in artifact.versions if v.id == artifact.published_version_id), None)
-    if version is None or not version.content_json:
+def _cover_url(storage: Storage, key: str | None) -> str | None:
+    """A bad stored key (saved before keys were validated) must not 500 the
+    whole catalog: show no cover instead."""
+    if not key:
         return None
-    raw = version.content_json.get("duration_seconds")
     try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError):
+        return storage.url_for(key)
+    except InvalidKeyError:
         return None
+
+
+def published_audio_seconds(db: Session, artifacts: list[Artifact]) -> dict[uuid.UUID, int]:
+    """Audio duration per artifact id, read from each one's *published* version
+    only (one query, just the one JSON field — never every historical version's
+    full content_json)."""
+    by_version = {
+        a.published_version_id: a.id
+        for a in artifacts
+        if a.type is ArtifactType.audio_overview and a.published_version_id is not None
+    }
+    if not by_version:
+        return {}
+    rows = db.execute(
+        select(
+            ArtifactVersion.id, ArtifactVersion.content_json["duration_seconds"].as_string()
+        ).where(ArtifactVersion.id.in_(list(by_version)))
+    ).all()
+    out: dict[uuid.UUID, int] = {}
+    for version_id, raw in rows:
+        try:
+            out[by_version[version_id]] = int(float(raw))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 @router.get("/courses", response_model=CatalogResponse)
@@ -50,11 +82,7 @@ def list_catalog(db: DbDep, student: CurrentStudent) -> CatalogResponse:
     courses = (
         db.scalars(
             select(Course)
-            .options(
-                selectinload(Course.modules)
-                .selectinload(Module.artifacts)
-                .selectinload(Artifact.versions)
-            )
+            .options(selectinload(Course.modules).selectinload(Module.artifacts))
             .order_by(Course.published_at.desc().nullslast(), Course.title.asc())
         )
         .unique()
@@ -70,13 +98,17 @@ def list_catalog(db: DbDep, student: CurrentStudent) -> CatalogResponse:
         )
     )
 
+    durations = published_audio_seconds(
+        db, [a for c in courses for m in c.modules for a in live_artifacts(m)]
+    )
+
     out: list[CatalogCourseOut] = []
     categories: set[str] = set()
     storage = get_storage()
 
     for course in courses:
         modules = sorted(course.modules, key=lambda m: m.order_index)
-        live_modules = [(m, _published_artifacts(m)) for m in modules]
+        live_modules = [(m, live_artifacts(m)) for m in modules]
         live_modules = [(m, arts) for m, arts in live_modules if arts]
         if not live_modules:
             continue  # a course with zero published modules never appears
@@ -99,7 +131,7 @@ def list_catalog(db: DbDep, student: CurrentStudent) -> CatalogResponse:
                 else:
                     module_incomplete = True
                 if artifact.type is ArtifactType.audio_overview:
-                    secs = _audio_seconds(artifact)
+                    secs = durations.get(artifact.id)
                     if secs is not None:
                         audio_seconds += secs
                         has_audio_duration = True
@@ -118,9 +150,7 @@ def list_catalog(db: DbDep, student: CurrentStudent) -> CatalogResponse:
                 title=course.title,
                 description=course.description,
                 category=course.category,
-                cover_image_url=(
-                    storage.url_for(course.cover_image_key) if course.cover_image_key else None
-                ),
+                cover_image_url=_cover_url(storage, course.cover_image_key),
                 module_count=len(live_modules),
                 artifact_counts=counts,
                 total_audio_seconds=audio_seconds if has_audio_duration else None,
@@ -140,11 +170,7 @@ def course_workspace(slug: str, db: DbDep, student: CurrentStudent) -> Workspace
     course = db.scalar(
         select(Course)
         .where(Course.slug == slug)
-        .options(
-            selectinload(Course.modules)
-            .selectinload(Module.artifacts)
-            .selectinload(Artifact.versions)
-        )
+        .options(selectinload(Course.modules).selectinload(Module.artifacts))
     )
     if course is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Course not found")
@@ -161,7 +187,7 @@ def course_workspace(slug: str, db: DbDep, student: CurrentStudent) -> Workspace
     modules_out: list[WorkspaceModuleOut] = []
     total = done = 0
     ordered = sorted(course.modules, key=lambda m: m.order_index)
-    live = [(m, _published_artifacts(m)) for m in ordered]
+    live = [(m, live_artifacts(m)) for m in ordered]
     live = [(m, arts) for m, arts in live if arts]
     if not live:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Course not found")

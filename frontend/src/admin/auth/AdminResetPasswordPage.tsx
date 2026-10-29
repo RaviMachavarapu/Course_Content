@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Icon, Input } from "@/components";
-import { ApiError } from "@/lib/api";
+import { ApiError, authErrorMessage } from "@/lib/api";
 import { confirmError, passwordError } from "@/student/auth/validation";
 import { adminAuthApi } from "./api";
 
@@ -36,9 +36,7 @@ export function AdminResetPasswordPage(): JSX.Element {
         if (err instanceof ApiError && err.code === "weak_password") {
           setErrors((p) => ({ ...p, password: err.message }));
         } else {
-          setFormError(
-            err instanceof ApiError ? err.message : "Could not reset your password. Try again.",
-          );
+          setFormError(authErrorMessage(err, "Could not reset your password. Try again."));
         }
       },
     });

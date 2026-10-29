@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt, StringConstraints
 
 from app.models.enums import ArtifactType
 
@@ -58,24 +58,65 @@ class ArtifactMediaOut(BaseModel):
     page_index: int | None = None
 
 
-class QuizSubmitRequest(BaseModel):
-    answers: dict[int, int]
+class QuizCheckRequest(BaseModel):
+    index: int = Field(ge=0)
+    # MCQ: the chosen option's position as shown in this attempt (0-3); fill-blank: the text
+    response: StrictInt | Annotated[str, StringConstraints(strict=True, max_length=500)]
 
 
-class QuizResultRow(BaseModel):
-    question_index: int
-    selected_index: int
-    correct_index: int
-    is_correct: bool
+class QuizCheckOut(BaseModel):
+    """Revealed only after the student locks an answer for this question."""
+
+    index: int
+    response: int | str
+    correct: bool
+    correct_answer: str
+    correct_index: int | None = None  # MCQ only: position as shown in this attempt
     explanation: str = ""
 
 
-class QuizResultOut(BaseModel):
+class QuizQuestionOut(BaseModel):
+    """A question as served before it is checked: never the answer or explanation.
+    `result` is present only once this question has been checked in this attempt."""
+
+    index: int
+    type: Literal["mcq", "fill_blank"]
+    question: str
+    options: list[str] | None = None  # MCQ only
+    result: QuizCheckOut | None = None
+
+
+class QuizStartOut(BaseModel):
+    status: Literal["started", "resumed"]
+    attempt_id: uuid.UUID
+    attempt_number: int
+    source: Literal["studio", "chat"]
+    total_count: int
+    checked_count: int
+    correct_count: int
+    started_at: dt.datetime
+    questions: list[QuizQuestionOut]
+
+
+class QuizReviewRow(BaseModel):
+    index: int
+    type: Literal["mcq", "fill_blank"]
+    question: str
+    options: list[str] | None = None
+    response: int | str
+    correct: bool
+    correct_answer: str
+    correct_index: int | None = None
+    explanation: str = ""
+
+
+class QuizCompleteOut(BaseModel):
     attempt_id: uuid.UUID
     score_percent: float
     correct_count: int
     total_count: int
-    results: list[QuizResultRow]
+    completed_at: dt.datetime
+    review: list[QuizReviewRow]
     best_score_percent: float
     latest_score_percent: float
 
@@ -102,11 +143,15 @@ class FlashcardRatingsResponse(BaseModel):
     ratings: dict[int, str]
 
 
+PG_INT_MAX = 2_147_483_647
+
+
 class ArtifactProgressRequest(BaseModel):
     completed: bool | None = None
     complete_module: bool = False
-    slide_last_index: int | None = Field(default=None, ge=0)
-    audio_position_seconds: int | None = Field(default=None, ge=0)
+    # the columns are INTEGER: a bigger value is a 422, not a DB overflow (500)
+    slide_last_index: int | None = Field(default=None, ge=0, le=PG_INT_MAX)
+    audio_position_seconds: int | None = Field(default=None, ge=0, le=PG_INT_MAX)
 
 
 class ArtifactProgressResponse(BaseModel):

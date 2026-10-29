@@ -18,6 +18,57 @@ function version(media: InspectVersion["media"]): InspectVersion {
   };
 }
 
+describe("ContentView math", () => {
+  const S = "Rate of $S_N2$";
+  const v = (content_json: Record<string, unknown>, content_html: string | null = null) => ({
+    ...version([]),
+    content_json,
+    content_html,
+  });
+  it("draws formulas for flashcards, quiz, infographic and report", () => {
+    const cases: [Parameters<typeof ContentView>[0]["type"], InspectVersion][] = [
+      ["flashcards", v({ cards: [{ front: S, back: S, category: S }] })],
+      [
+        "quiz",
+        v({ questions: [{ question: S, options: [S, "b"], correct_index: 0, explanation: S }] }),
+      ],
+      ["infographic", v({ caption: S, description: "d" })],
+      ["infographic", v({ caption: "c", description: S })],
+      ["slide_deck", v({ slides: [{ title: S, bullets: [S], notes: S }] })],
+      ["audio_overview", v({ transcript: [{ t: 0, text: S }] })],
+      ["report", v({}, '<p><span class="math-inline">S_N2</span></p>')],
+    ];
+    for (const [type, ver] of cases) {
+      const { container, unmount } = render(<ContentView type={type} version={ver} />);
+      expect(container.querySelector(".katex"), type).not.toBeNull();
+      unmount();
+    }
+  });
+});
+
+describe("ContentView report", () => {
+  it("renders the report from content_json with formulas drawn in title, takeaways and headings", () => {
+    const ver = {
+      ...version([]),
+      content_json: {
+        title: "About $S_N2$",
+        key_takeaways: ["$S_N2$ is one step"],
+        sections: [
+          { heading: "$S_N2$ Reactions", html: '<p>Rate <span class="math-inline">k_1</span></p>' },
+        ],
+      },
+      content_html: "<h1>About $S_N2$</h1><ul><li>$S_N2$ is one step</li></ul>",
+    };
+    const { container } = render(<ContentView type="report" version={ver} />);
+    expect(container.textContent).not.toContain("$");
+    expect(container.querySelectorAll("h1 .katex").length).toBe(1);
+    expect(container.querySelectorAll("li .katex").length).toBe(1);
+    expect(container.querySelectorAll("h2 .katex").length).toBe(1);
+    expect(container.querySelectorAll(".math-inline .katex").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Key takeaways")).toBeInTheDocument();
+  });
+});
+
 describe("ContentView infographic", () => {
   it("shows the generated image, with the text description tucked away", () => {
     render(
@@ -39,5 +90,20 @@ describe("ContentView infographic", () => {
     render(<ContentView type="infographic" version={version([])} />);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("OVERVIEW text")).toBeVisible();
+  });
+});
+
+describe("ContentView malformed content", () => {
+  const v = (content_json: Record<string, unknown>) => ({ ...version([]), content_json });
+  it.each([
+    ["quiz", { questions: [{ question: "Q", correct_index: 0, explanation: "" }] }],
+    ["quiz", { questions: "oops" }],
+    ["slide_deck", { slides: [{ title: "T" }] }],
+    ["slide_deck", { slides: {} }],
+    ["flashcards", { cards: "x" }],
+    ["audio_overview", { transcript: "x" }],
+    ["report", { sections: [], key_takeaways: "one string" }],
+  ] as const)("%s %j renders without crashing", (type, content) => {
+    expect(() => render(<ContentView type={type} version={v(content)} />)).not.toThrow();
   });
 });

@@ -2,9 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useUIStore } from "@/lib/store";
 import { StagingPage } from "./StagingPage";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  useUIStore.setState({ toasts: [] });
+});
 
 const TYPES = ["slide_deck", "flashcards", "quiz", "report", "infographic", "audio_overview"];
 
@@ -49,6 +53,13 @@ function artifact(type: string, over: Record<string, unknown> = {}) {
   };
 }
 
+const PDF_BY_TYPE: Record<string, [string, string]> = {
+  flashcards: ["flashcards_pdf", "btn-sr16"],
+  quiz: ["quiz_pdf", "btn-sr17"],
+  infographic: ["infographic_pdf", "btn-sr18"],
+  slide_deck: ["slides_handout_pdf", "btn-sr19"],
+};
+
 function stagingBody(over: Record<string, unknown>[] = []) {
   const map = new Map(over.map((a) => [a.type, a]));
   return {
@@ -58,6 +69,8 @@ function stagingBody(over: Record<string, unknown>[] = []) {
       status: "pending_review",
       course_id: "c1",
       course_status: "pending_review",
+      source_url: "https://example.com/nn",
+      source_files: [{ file_name: "book.pdf", size_bytes: 10, part_count: 3 }],
     },
     artifacts: TYPES.map((t) => map.get(t) ?? artifact(t)),
   };
@@ -109,6 +122,54 @@ describe("StagingPage", () => {
     expect(screen.getByTestId("btn-sr9")).toHaveAttribute("href", "/api/media/x.mp3");
     expect(screen.getByTestId("btn-sr10")).toHaveAttribute("href", "/api/media/x.pptx");
     expect(screen.getByTestId("btn-sr11")).toHaveAttribute("href", "/api/media/x.png");
+  });
+
+  it("offers each type's Quarto PDF when present and hides it when absent", async () => {
+    const withPdf = Object.entries(PDF_BY_TYPE).map(([type, [kind]]) => {
+      const a = artifact(type);
+      a.current_version.media = [
+        ...a.current_version.media,
+        { kind, url: `/api/media/${kind}.pdf`, size_bytes: 9, page_index: null },
+      ];
+      return a;
+    });
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody(withPdf) }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    for (const [kind, testid] of Object.values(PDF_BY_TYPE)) {
+      expect(screen.getByTestId(testid)).toHaveAttribute("href", `/api/media/${kind}.pdf`);
+    }
+  });
+
+  it("shows both quiz PDFs: with answers and questions only", async () => {
+    const quiz = artifact("quiz");
+    quiz.current_version.media = [
+      ...quiz.current_version.media,
+      { kind: "quiz_pdf", url: "/api/media/answers.pdf", size_bytes: 9, page_index: null },
+      { kind: "quiz_questions_pdf", url: "/api/media/q.pdf", size_bytes: 9, page_index: null },
+    ];
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody([quiz]) }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    expect(screen.getByTestId("btn-sr17")).toHaveAttribute("href", "/api/media/answers.pdf");
+    expect(screen.getByTestId("btn-sr20")).toHaveAttribute("href", "/api/media/q.pdf");
+    expect(screen.getByTestId("btn-sr20")).toHaveTextContent("questions .pdf");
+  });
+
+  it("shows no Quarto PDF buttons when none exist", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    for (const [, testid] of Object.values(PDF_BY_TYPE)) {
+      expect(screen.queryByTestId(testid)).toBeNull();
+    }
+  });
+
+  it("shows the module's link and PDFs under the title", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    expect(await screen.findByText("https://example.com/nn")).toBeInTheDocument();
+    expect(screen.getByText("book.pdf (split into 3 parts)")).toBeInTheDocument();
   });
 
   it("opens the redo modal and posts the note", async () => {
@@ -302,5 +363,68 @@ describe("StagingPage", () => {
     await userEvent.click(screen.getByTestId("btn-sr8"));
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "POST")).toBe(false);
+  });
+
+  it("a failed publish says why and keeps the dialog open", async () => {
+    installFetch([
+      { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/publish",
+        status: 409,
+        body: { error: { code: "conflict", message: "Nothing ready to publish" } },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByTestId("btn-sr2"));
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByTestId("btn-publish-confirm"));
+    await waitFor(() =>
+      expect(useUIStore.getState().toasts).toContainEqual(
+        expect.objectContaining({ tone: "error", description: "Nothing ready to publish" }),
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("a failed redo shows the server's field error", async () => {
+    installFetch([
+      { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/redo",
+        status: 422,
+        body: {
+          error: {
+            code: "validation_error",
+            message: "Request body failed validation",
+            fields: [{ loc: ["body", "note"], msg: "String should have at most 4000 characters" }],
+          },
+        },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    await userEvent.click(screen.getByTestId("btn-sr7"));
+    await waitFor(() =>
+      expect(useUIStore.getState().toasts[0]?.description).toMatch(
+        /note: String should have at most 4000/,
+      ),
+    );
+  });
+
+  it("reopening the redo modal starts from a clean note", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    await userEvent.type(await screen.findByRole("textbox"), "discard me");
+    await userEvent.click(screen.getByTestId("btn-sr8"));
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    const box = await screen.findByRole("textbox");
+    expect(box).toHaveValue("");
+    expect(box).toHaveAttribute("maxLength", "4000");
   });
 });

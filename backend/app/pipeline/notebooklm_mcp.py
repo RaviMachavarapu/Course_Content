@@ -30,12 +30,13 @@ import redis
 from app.config import Settings
 from app.models.enums import ArtifactType
 from app.pipeline.provider import (
-    GenerationTimeout,
     NotebookRef,
+    ProviderAuthError,
     ProviderError,
     ProviderHealth,
     RawArtifact,
     SourceRef,
+    SourceState,
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
@@ -64,13 +65,28 @@ _STATUS_COMPLETED = 3
 _STATUS_FAILED = 4
 _STATUS_OUTLINE_REVIEW = 6
 _DOWNLOAD_TIMEOUT_SEC = 300.0
+#: The shim allows a connector tool call 300 s (mcp/shim/tools.js TOOL_TIMEOUT_MS).
+#: Wait a little longer, so the session lock is only released once the shim has
+#: really finished with its stdio call (a chat answer for ~10 questions takes ~40 s).
+_SHIM_CALL_TIMEOUT_SEC = 330.0
+_QUERY_TIMEOUT_SEC = _SHIM_CALL_TIMEOUT_SEC
+#: shim statuses worth retrying: its own transport/connect failures (502) and
+#: whatever a proxy or timeout in between answers
+_TRANSIENT_STATUSES = {408, 502, 503, 504}
 
 
 class NotebookLmMcpProvider:
     def __init__(self, settings: Settings) -> None:
         self._base_url = settings.mcp_endpoint.rstrip("/")
-        self._http = httpx.Client(base_url=self._base_url, timeout=60.0)
+        self._http = httpx.Client(
+            base_url=self._base_url, timeout=httpx.Timeout(_SHIM_CALL_TIMEOUT_SEC, connect=10.0)
+        )
         self._redis: RedisClient = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+    def close(self) -> None:
+        """Release the HTTP connections and the Redis pool."""
+        self._http.close()
+        self._redis.close()
 
     # -- ContentProvider ---------------------------------------------------
 
@@ -81,6 +97,52 @@ class NotebookLmMcpProvider:
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef:
         data = self._call("notebook_add_url", {"notebook_id": nb.notebook_id, "url": url})
         return SourceRef(source_id=str(data["source_id"]))
+
+    def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        # No client timeout: the upload is bounded by Google, not by us. Not under the
+        # session lock (same reasoning as `download`): the shim registers and sends the
+        # file over plain HTTPS in one request without the connector's stdio session, and
+        # an upload of up to 190 MB would otherwise block every other job's calls and
+        # could outlive the lock's TTL.
+        resp = self._send(
+            lambda: self._http.post(
+                "/source/upload",
+                json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
+                timeout=None,
+            )
+        )
+        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+            # NotebookLM rejected the file: permanent, not worth retrying.
+            raise ProviderError(self._error_message(resp))
+        self._raise_for_source_auth(resp)
+        self._raise_for_status(resp)
+        source_id = resp.json().get("source_id")
+        if not source_id:
+            raise ProviderError(f"/source/upload returned no source_id: {resp.text}")
+        return SourceRef(source_id=str(source_id))
+
+    def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        resp = self._locked(
+            lambda: self._http.get("/source/status", params={"notebook_id": nb.notebook_id})
+        )
+        self._raise_for_source_auth(resp)
+        self._raise_for_status(resp)
+        body = resp.json()
+        items = body.get("sources") if isinstance(body, dict) else None
+        if not isinstance(items, list):
+            raise ProviderError(f"/source/status returned an unexpected result: {body!r}")
+        out: dict[str, SourceState] = {}
+        for item in items:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise ProviderError(f"source without an id from the connector: {item!r}")
+            value = item.get("status")
+            try:
+                out[str(item["id"])] = SourceState(value)
+            except ValueError:
+                raise ProviderError(
+                    f"unexpected source status from the connector: {value!r}"
+                ) from None
+        return out
 
     def generate(
         self,
@@ -129,8 +191,10 @@ class NotebookLmMcpProvider:
         # Not under the session lock: a plain HTTPS fetch that doesn't touch the
         # connector's stdio session, and a large deck held the lock long enough
         # to time out other jobs' polls (seen live 2026-10-22).
-        resp = self._http.get(
-            "/studio/download", params={"url": url}, timeout=_DOWNLOAD_TIMEOUT_SEC
+        resp = self._send(
+            lambda: self._http.get(
+                "/studio/download", params={"url": url}, timeout=_DOWNLOAD_TIMEOUT_SEC
+            )
         )
         self._raise_for_status(resp)
         return resp.content, resp.headers.get("content-type", "application/octet-stream")
@@ -148,12 +212,25 @@ class NotebookLmMcpProvider:
         )
         self._raise_for_status(resp)
 
+    def query(self, nb: NotebookRef, text: str) -> str:
+        data = self._call(
+            "notebook_query",
+            {"notebook_id": nb.notebook_id, "query": text},
+            timeout=_QUERY_TIMEOUT_SEC,
+        )
+        answer = data.get("answer")
+        if not isinstance(answer, str):
+            raise ProviderError(f"notebook_query returned no answer: {data!r}")
+        return answer
+
     def health(self) -> ProviderHealth:
         try:
             resp = self._http.get("/health", timeout=10.0)
             resp.raise_for_status()
             data = resp.json()
-        except httpx.HTTPError as exc:
+            if not isinstance(data, dict):
+                raise ValueError(f"unexpected /health reply: {data!r}")
+        except (httpx.HTTPError, ValueError) as exc:
             return ProviderHealth(
                 healthy=False,
                 account_email=None,
@@ -171,7 +248,7 @@ class NotebookLmMcpProvider:
         )
 
     def refresh_auth(self) -> None:
-        resp = self._http.post("/refresh-auth")
+        resp = self._send(lambda: self._http.post("/refresh-auth"))
         self._raise_for_status(resp)
 
     # -- internals ----------------------------------------------------------
@@ -191,8 +268,14 @@ class NotebookLmMcpProvider:
             raise ProviderError(f"{path} returned a non-object result: {body!r}")
         return body
 
-    def _call(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
-        resp = self._locked(lambda: self._http.post("/call", json={"tool": tool, "args": args}))
+    def _call(
+        self, tool: str, args: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        resp = self._locked(
+            lambda: self._http.post("/call", json={"tool": tool, "args": args}, **kwargs)
+        )
+        self._raise_for_source_auth(resp)
         self._raise_for_status(resp)
         body = resp.json()
         data = body.get("data")
@@ -213,14 +296,42 @@ class NotebookLmMcpProvider:
                 f"could not acquire {_LOCK_KEY} within {_LOCK_BLOCKING_TIMEOUT_SEC}s"
             )
         try:
-            return request()
+            return self._send(request)
         finally:
             lock.release()
 
+    @staticmethod
+    def _send(request: Callable[[], httpx.Response]) -> httpx.Response:
+        """A shim timeout, refused connection or dropped socket (e.g. the mcp
+        container restarting) is transient: retried, or waited out while polling."""
+        try:
+            return request()
+        except httpx.TransportError as exc:
+            raise TransientProviderError(
+                f"MCP shim unreachable ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def _raise_for_source_auth(self, resp: httpx.Response) -> None:
+        if resp.status_code == httpx.codes.UNAUTHORIZED:
+            raise ProviderAuthError(self._error_message(resp))
+
+    @staticmethod
+    def _error_message(resp: httpx.Response) -> str:
+        try:
+            body = resp.json()
+        except ValueError:
+            return resp.text
+        return str(body.get("error", resp.text)) if isinstance(body, dict) else resp.text
+
     def _raise_for_status(self, resp: httpx.Response) -> None:
-        if resp.status_code == 502:
-            raise TransientProviderError(resp.json().get("error", resp.text))
-        if resp.status_code == httpx.codes.REQUEST_TIMEOUT or resp.status_code >= 500:
-            raise GenerationTimeout(resp.text)
+        """502/503/504/408 are transient; 401 needs signing in again; 422 is
+        NotebookLM or the connector rejecting the request for good; anything else
+        ≥ 400 is a provider error."""
+        if resp.status_code in _TRANSIENT_STATUSES:
+            raise TransientProviderError(self._error_message(resp))
+        if resp.status_code == httpx.codes.UNAUTHORIZED:
+            raise ProviderAuthError(self._error_message(resp))
+        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+            raise ProviderError(self._error_message(resp))
         if resp.status_code >= 400:
             raise ProviderError(f"MCP shim error {resp.status_code}: {resp.text}")

@@ -50,11 +50,18 @@ export interface ArtifactSummary {
   status: string;
 }
 
+export interface SourceFile {
+  file_name: string;
+  size_bytes: number;
+  part_count: number;
+}
+
 export interface ModuleSummary {
   id: string;
   order_index: number;
   title: string;
-  source_url: string;
+  source_url: string | null;
+  source_files: SourceFile[];
   source_type: string;
   status: string;
   artifacts: ArtifactSummary[];
@@ -65,7 +72,8 @@ export interface PipelineRow {
   course_id: string;
   course_title: string;
   module_title: string;
-  source_url: string;
+  source_url: string | null;
+  source_files: SourceFile[];
   created_at: string;
   global_status: string;
   dots: { type: ArtifactType; status: string }[];
@@ -104,7 +112,8 @@ export const adminApi = {
   createModule: (
     courseId: string,
     body: {
-      source_url: string;
+      source_url?: string;
+      upload_ids?: string[];
       title: string;
       types: ArtifactType[];
       options?: Record<string, OptionValues>;

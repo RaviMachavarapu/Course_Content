@@ -15,6 +15,7 @@ function mod(id: string, title: string, order: number, over: Record<string, unkn
     order_index: order,
     title,
     source_url: `https://example.com/${id}`,
+    source_files: [],
     source_type: "web",
     status: "ready",
     artifacts: TYPES.map((t) => ({ id: `${id}-${t}`, type: t, status: "ready" })),

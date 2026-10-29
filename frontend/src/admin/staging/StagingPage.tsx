@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { errorMessage } from "@/lib/api";
 import { useToast } from "@/lib/store";
 import { ARTIFACT_TYPES } from "../api";
 import { StatusChip } from "../AdminStatus";
+import { SourceSummary } from "../SourceSummary";
 import { ArtifactCard } from "./ArtifactCard";
+import { FreshRetakesToggle } from "./FreshRetakesToggle";
 import { PublishModal } from "./PublishModal";
 import { usePublish } from "./publish";
 import { useOutlineAction, useRedo, useRetry, useStaging } from "./useStaging";
@@ -18,6 +21,8 @@ export function StagingPage(): JSX.Element {
   const publish = usePublish(moduleId);
   const { toast } = useToast();
   const [publishScope, setPublishScope] = useState<"module" | "course" | null>(null);
+  const failed = (title: string, err: unknown) =>
+    toast({ title, description: errorMessage(err), tone: "error" });
 
   if (isError) {
     return (
@@ -42,11 +47,27 @@ export function StagingPage(): JSX.Element {
           Back to Ingestion
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="font-headline-lg text-headline-lg">
-              {data?.module.title ?? <Skeleton className="h-7 w-48" />}
-            </h1>
-            {data && <StatusChip status={data.module.status} />}
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="font-headline-lg text-headline-lg">
+                {data?.module.title ?? <Skeleton className="h-7 w-48" />}
+              </h1>
+              {data && <StatusChip status={data.module.status} />}
+            </div>
+            {data && (
+              <div className="mt-1" data-testid="staging-sources">
+                <SourceSummary
+                  sourceUrl={data.module.source_url}
+                  files={data.module.source_files}
+                  detailed
+                />
+              </div>
+            )}
+            {byType.has("quiz") && (
+              <div className="mt-2">
+                <FreshRetakesToggle moduleId={moduleId} />
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <Button
@@ -80,10 +101,22 @@ export function StagingPage(): JSX.Element {
                   artifact={artifact}
                   busy={redo.isPending || retry.isPending || outline.isPending}
                   onRedo={(note, options, customPrompt) =>
-                    redo.mutate({ artifactId: artifact.id, note, options, customPrompt })
+                    redo.mutate(
+                      { artifactId: artifact.id, note, options, customPrompt },
+                      { onError: (err) => failed("Couldn’t start the redo", err) },
+                    )
                   }
-                  onRetry={() => retry.mutate(artifact.id)}
-                  onOutline={(feedback) => outline.mutate({ artifactId: artifact.id, feedback })}
+                  onRetry={() =>
+                    retry.mutate(artifact.id, {
+                      onError: (err) => failed("Couldn’t retry", err),
+                    })
+                  }
+                  onOutline={(feedback) =>
+                    outline.mutate(
+                      { artifactId: artifact.id, feedback },
+                      { onError: (err) => failed("Couldn’t send the outline action", err) },
+                    )
+                  }
                 />
               );
             })}
@@ -108,9 +141,11 @@ export function StagingPage(): JSX.Element {
                 tone: "success",
               });
             };
+            // the dialog stays open on failure so the admin can retry or cancel
+            const onError = (err: unknown) => failed("Publish failed", err);
             if (scope === "course")
-              publish.course.mutate(data.module.course_id, { onSuccess: onDone });
-            else publish.module.mutate(undefined, { onSuccess: onDone });
+              publish.course.mutate(data.module.course_id, { onSuccess: onDone, onError });
+            else publish.module.mutate(undefined, { onSuccess: onDone, onError });
           }}
         />
       )}

@@ -14,8 +14,9 @@ from app.models.course import Course
 from app.models.enums import ArtifactType, GenerationJobState, ModuleSourceType
 from app.models.generation_job import GenerationJob
 from app.models.module import Module
-from app.pipeline import orchestrator
+from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.fixture import FixtureProvider
+from app.render.typeset_client import TypesetResult
 
 PROVIDER = FixtureProvider()
 GEN_TYPES = [
@@ -96,6 +97,12 @@ def test_staging_shape_covers_all_states(client: TestClient, db_session: Session
         assert j is not None
         j.state = state
     db_session.flush()
+    # the report's PDF is typeset after generation (fake service here)
+    artifact_pdf.build_version_pdfs(
+        db_session,
+        by_type[ArtifactType.report].current_version_id,
+        render=lambda *_: TypesetResult(pdf=b"%PDF-1.7", fallback="0"),
+    )
 
     resp = client.get(f"/api/admin/modules/{module.id}/staging")
     assert resp.status_code == 200
@@ -114,3 +121,28 @@ def test_staging_shape_covers_all_states(client: TestClient, db_session: Session
     assert report_cv["revision"] == 1
     assert any(m["kind"] == "report_pdf" and m["url"].endswith(".pdf") for m in report_cv["media"])
     assert got["slide_deck"]["current_version"] is None
+
+
+def test_staging_includes_source_files(client: TestClient, db_session: Session) -> None:
+    from app.models.module_source_file import ModuleSourceFile
+
+    _admin(client, db_session)
+    module = _generated_module(db_session)
+    module.source_files.append(
+        ModuleSourceFile(
+            order_index=0,
+            file_name="book.pdf",
+            size_bytes=123,
+            checksum_sha256="a" * 64,
+            storage_key="module-sources/book.pdf",
+            page_count=9,
+            parts=[{"first_page": 1}, {"first_page": 5}, {"first_page": 8}],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/admin/modules/{module.id}/staging").json()
+    assert body["module"]["source_url"] == "https://youtu.be/x"
+    assert body["module"]["source_files"] == [
+        {"file_name": "book.pdf", "size_bytes": 123, "part_count": 3}
+    ]

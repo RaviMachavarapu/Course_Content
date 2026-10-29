@@ -1,15 +1,16 @@
 # syntax=docker/dockerfile:1
 
 # ---- build ----
-FROM node:20-slim AS build
+FROM node:20.20.2-slim AS build
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+COPY package.json package-lock.json ./
+# Lockfile only: drift between package.json and package-lock.json fails the build.
+RUN npm ci
 COPY . .
 RUN npm run build
 
 # ---- serve ----
-FROM nginx:1.27-alpine AS serve
+FROM nginx:1.27.5-alpine AS serve
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

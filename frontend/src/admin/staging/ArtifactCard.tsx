@@ -24,6 +24,12 @@ const DOWNLOAD: Partial<Record<string, { label: string; testid: string }>> = {
   infographic_png: { label: ".png", testid: "btn-sr11" },
   report_pdf: { label: ".pdf", testid: "btn-sr12" },
   deck_pdf: { label: ".pdf", testid: "btn-sr12" },
+  flashcards_pdf: { label: "flashcards .pdf", testid: "btn-sr16" },
+  quiz_pdf: { label: "quiz .pdf", testid: "btn-sr17" },
+  // the students' copy: questions and options, no answer key
+  quiz_questions_pdf: { label: "questions .pdf", testid: "btn-sr20" },
+  infographic_pdf: { label: "infographic .pdf", testid: "btn-sr18" },
+  slides_handout_pdf: { label: "handout .pdf", testid: "btn-sr19" },
 };
 
 const n = (v: unknown): string => (typeof v === "number" ? String(v) : "—");

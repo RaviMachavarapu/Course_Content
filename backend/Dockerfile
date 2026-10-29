@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim AS base
+FROM python:3.12.16-slim-trixie AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 # System libraries:
-#  - libpango / libcairo / libgdk-pixbuf / fonts  -> WeasyPrint (report PDF, T020)
+#  - libpango / libcairo / libgdk-pixbuf / fonts  -> text and image rendering
+#    (were WeasyPrint's; report PDFs are now typeset by the `typeset` service)
 #  - build-essential / libpq-dev                   -> psycopg build fallback
 #  - libreoffice-impress + poppler-utils          -> slides: pptx -> pdf -> png (T018)
 #  - graphviz                                     -> infographic: dot -> svg/png (T019, D15)
@@ -28,7 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY . .
-RUN pip install --upgrade pip && pip install -e ".[dev]"
+# constraints.txt pins every resolved version (see its header to regenerate).
+RUN pip install --upgrade pip && pip install -c constraints.txt -e ".[dev]"
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# No --reload here: docker-compose.yml adds it for dev. Behind a proxy, also
+# pass --forwarded-allow-ips=<proxy address> (see the api service).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

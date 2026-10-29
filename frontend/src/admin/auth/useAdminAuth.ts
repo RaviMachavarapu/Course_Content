@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { dropUserData, reportLogoutFailure } from "@/lib/sessionCache";
 import type { User } from "@/student/auth/api";
 import { adminAuthApi } from "./api";
 
@@ -26,7 +27,11 @@ export function useAdminLogin() {
   return useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       adminAuthApi.login(email, password),
-    onSuccess: (user) => qc.setQueryData(ADMIN_SESSION_KEY, user),
+    onSuccess: (user) => {
+      // a different user may have used this tab: start from an empty cache
+      qc.clear();
+      qc.setQueryData(ADMIN_SESSION_KEY, user);
+    },
   });
 }
 
@@ -35,8 +40,14 @@ export function useAdminLogout() {
   return useMutation({
     mutationFn: () => adminAuthApi.logout(),
     onSuccess: () => {
+      qc.clear();
       qc.setQueryData(ADMIN_SESSION_KEY, null);
-      void qc.invalidateQueries({ queryKey: ADMIN_SESSION_KEY });
+    },
+    onError: (err) => {
+      // Still signed in on the server: keep the session, but don't keep the
+      // cached data around either, and say so instead of navigating away.
+      dropUserData(qc);
+      reportLogoutFailure(err);
     },
   });
 }

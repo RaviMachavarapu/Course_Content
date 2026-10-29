@@ -38,7 +38,9 @@ describe("ResetPasswordPage", () => {
   it("surfaces an invalid/expired token error from the server", async () => {
     mockFetch({
       status: 422,
-      body: { error: { code: "invalid_token", message: "This reset link is invalid or has expired." } },
+      body: {
+        error: { code: "invalid_token", message: "This reset link is invalid or has expired." },
+      },
     });
     renderPage("/reset-password?token=abc123");
     await userEvent.type(screen.getByLabelText("New password"), "brand-new-pw-2");
@@ -54,5 +56,14 @@ describe("ResetPasswordPage", () => {
     await userEvent.type(screen.getByLabelText("Confirm password"), "brand-new-pw-2");
     await userEvent.click(screen.getByTestId("btn-reset-confirm"));
     await waitFor(() => expect(screen.getByText("LOGIN PAGE")).toBeInTheDocument());
+  });
+
+  it("says when password reset is turned off", async () => {
+    mockFetch({ status: 404, body: { error: { code: "password_reset_disabled", message: "x" } } });
+    renderPage("/reset-password?token=abc123");
+    await userEvent.type(screen.getByLabelText("New password"), "brand-new-pw-2");
+    await userEvent.type(screen.getByLabelText("Confirm password"), "brand-new-pw-2");
+    await userEvent.click(screen.getByTestId("btn-reset-confirm"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Password reset is turned off");
   });
 });

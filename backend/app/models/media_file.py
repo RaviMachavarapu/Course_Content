@@ -24,7 +24,8 @@ class MediaFile(Base):
         ForeignKey("artifact_version.id", ondelete="CASCADE"), nullable=False, index=True
     )
     kind: Mapped[MediaFileKind] = mapped_column(media_file_kind_enum, nullable=False)
-    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    #: unique: looked up on every media request (and keys carry the revision)
+    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)

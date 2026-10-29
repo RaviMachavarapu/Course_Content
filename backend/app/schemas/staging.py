@@ -13,6 +13,7 @@ from app.models.enums import (
     GenerationJobState,
     ModuleStatus,
 )
+from app.schemas.courses import SourceFileOut
 
 
 class RedoRequest(BaseModel):
@@ -71,6 +72,8 @@ class StagingModuleOut(BaseModel):
     status: ModuleStatus
     course_id: uuid.UUID
     course_status: CourseStatus
+    source_url: str | None
+    source_files: list[SourceFileOut]
 
 
 class StagingResponse(BaseModel):

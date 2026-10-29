@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Card, EmptyState, ErrorState, Select, Skeleton } from "@/components";
 import { StatusChip, StatusDot } from "../AdminStatus";
+import { SourceSummary } from "../SourceSummary";
 import { usePipeline } from "../useAdminApi";
 
 const STATUS_OPTIONS = [
@@ -100,6 +101,7 @@ export function PipelinePage(): JSX.Element {
                           {row.course_title}
                         </div>
                         <div className="font-label-md text-label-md">{row.module_title}</div>
+                        <SourceSummary sourceUrl={row.source_url} files={row.source_files} />
                       </td>
                       <td className="px-4 py-3 text-label-sm text-on-surface-variant">
                         {new Date(row.created_at).toLocaleDateString()}

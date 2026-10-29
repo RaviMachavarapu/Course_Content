@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+import datetime as dt
+import uuid
 
-from app.api.deps import CurrentStudent, DbDep
-from app.api.student.courses import _published_artifacts
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from app.api.deps import CurrentStudent, DbDep, current_student
+from app.api.student.courses import published_audio_seconds
+from app.auth.csrf import csrf_protect
 from app.models.artifact import Artifact
 from app.models.course import Course
 from app.models.enums import ArtifactType
@@ -22,17 +26,24 @@ from app.schemas.me import (
     MyProgressCourse,
     MyProgressResponse,
 )
+from app.services.progress import course_percent
+from app.services.visibility import is_live, live_artifacts, live_clause
 
-router = APIRouter(prefix="/api/student/me", tags=["student-me"])
+router = APIRouter(
+    prefix="/api/student/me",
+    tags=["student-me"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 _QUIZ_ACE_THRESHOLD = 80.0
 
 
 @router.get("/progress", response_model=MyProgressResponse)
 def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
-    rows = db.execute(
-        select(CourseProgress, Course)
-        .join(Course, Course.id == CourseProgress.course_id)
+    courses = db.scalars(
+        select(Course)
+        .join(CourseProgress, CourseProgress.course_id == Course.id)
         .where(CourseProgress.user_id == student.id)
         .order_by(CourseProgress.updated_at.desc())
     ).all()
@@ -42,20 +53,22 @@ def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
     )
 
     out: list[MyProgressCourse] = []
-    for progress, course in rows:
+    for course in courses:
         modules = db.scalars(
             select(Module)
             .where(Module.course_id == course.id)
             .options(selectinload(Module.artifacts))
         ).all()
-        live_modules = [m for m in modules if _published_artifacts(m)]
+        live_modules = [m for m in modules if live_artifacts(m)]
         started = sum(1 for m in live_modules if m.id in started_module_ids)
         out.append(
             MyProgressCourse(
                 id=course.id,
                 slug=course.slug,
                 title=course.title,
-                percent_complete=int(progress.percent_complete),
+                # live, as the catalog does (the cached column goes stale when
+                # a module is published or a deck republished)
+                percent_complete=course_percent(db, user_id=student.id, course_id=course.id),
                 modules_started=started,
                 modules_total=len(live_modules),
             )
@@ -65,38 +78,32 @@ def my_progress(db: DbDep, student: CurrentStudent) -> MyProgressResponse:
 
 @router.get("/listening", response_model=MyListeningResponse)
 def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
-    audio_artifacts = db.scalars(
-        select(Artifact)
-        .where(
-            Artifact.type == ArtifactType.audio_overview,
-            Artifact.published_version_id.is_not(None),
+    # only the audio artifacts this student has opened, with their course's
+    # module tree loaded up front (no per-row lazy loads)
+    opened = db.execute(
+        select(Artifact, ArtifactProgress)
+        .join(
+            ArtifactProgress,
+            (ArtifactProgress.artifact_id == Artifact.id)
+            & (ArtifactProgress.user_id == student.id),
         )
+        .where(Artifact.type == ArtifactType.audio_overview, live_clause())
         .options(
-            selectinload(Artifact.versions),
-            selectinload(Artifact.module).selectinload(Module.course),
+            selectinload(Artifact.module)
+            .selectinload(Module.course)
+            .selectinload(Course.modules)
+            .selectinload(Module.artifacts)
         )
     ).all()
-
-    progress_by_artifact = {
-        p.artifact_id: p
-        for p in db.scalars(select(ArtifactProgress).where(ArtifactProgress.user_id == student.id))
-    }
+    durations = published_audio_seconds(db, [artifact for artifact, _ in opened])
 
     rows: list[ListeningRow] = []
-    for artifact in audio_artifacts:
-        prog = progress_by_artifact.get(artifact.id)
-        if prog is None:
-            continue  # only rows the student has actually opened
-        version = next(
-            (v for v in artifact.versions if v.id == artifact.published_version_id), None
-        )
-        duration = int((version.content_json or {}).get("duration_seconds", 0)) if version else 0
+    for artifact, prog in opened:
+        duration = durations.get(artifact.id, 0)
         position = prog.audio_position_seconds or 0
         module = artifact.module
         ordered = sorted(module.course.modules, key=lambda m: m.order_index)
-        live_ids = [
-            m.id for m in ordered if any(a.published_version_id is not None for a in m.artifacts)
-        ]
+        live_ids = [m.id for m in ordered if any(is_live(a) for a in m.artifacts)]
         module_index = live_ids.index(module.id) if module.id in live_ids else 0
 
         rows.append(
@@ -117,14 +124,44 @@ def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
     return MyListeningResponse(rows=rows)
 
 
+def _course_complete_at(db: Session, user_id: uuid.UUID) -> dt.datetime | None:
+    """When the student first had every published artifact of some course
+    completed: the latest completion in that course (not a cached column whose
+    timestamp moves on every progress write). Derived live, so it agrees with
+    the catalog's percentage."""
+    rows = db.execute(
+        select(Module.course_id, Artifact.id)
+        .join(Artifact, Artifact.module_id == Module.id)
+        .where(
+            live_clause(),
+            Module.course_id.in_(
+                select(CourseProgress.course_id).where(CourseProgress.user_id == user_id)
+            ),
+        )
+    ).all()
+    completed: dict[uuid.UUID, dt.datetime] = {
+        artifact_id: at
+        for artifact_id, at in db.execute(
+            select(ArtifactProgress.artifact_id, ArtifactProgress.completed_at).where(
+                ArtifactProgress.user_id == user_id,
+                ArtifactProgress.completed_at.is_not(None),
+            )
+        )
+        if at is not None
+    }
+    by_course: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for course_id, artifact_id in rows:
+        by_course.setdefault(course_id, []).append(artifact_id)
+    earned: list[dt.datetime] = []
+    for artifact_ids in by_course.values():
+        if all(a in completed for a in artifact_ids):
+            earned.append(max(completed[a] for a in artifact_ids))
+    return min(earned, default=None)
+
+
 @router.get("/achievements", response_model=AchievementsResponse)
 def my_achievements(db: DbDep, student: CurrentStudent) -> AchievementsResponse:
-    course_complete_at = db.scalar(
-        select(CourseProgress.updated_at)
-        .where(CourseProgress.user_id == student.id, CourseProgress.percent_complete >= 100)
-        .order_by(CourseProgress.updated_at.asc())
-        .limit(1)
-    )
+    course_complete_at = _course_complete_at(db, student.id)
     quiz_ace_at = db.scalar(
         select(QuizAttempt.submitted_at)
         .where(

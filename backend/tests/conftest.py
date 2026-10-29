@@ -8,11 +8,14 @@ tests are fully isolated and the dev database is never touched.
 
 from __future__ import annotations
 
+import functools
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 import redis
 import sqlalchemy as sa
@@ -119,9 +122,62 @@ def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
         "app.api.media",
         "app.api.admin.artifacts",
         "app.api.admin.jobs",
+        "app.api.admin.uploads",
+        "app.api.admin.courses",
+        "app.pipeline.module_sources",
+        "app.render.typeset_docs",
+        "app.pipeline.artifact_pdf",
     ):
         monkeypatch.setattr(f"{module}.get_storage", lambda: store, raising=False)
     return store
+
+
+@pytest.fixture
+def source_step_sessions(
+    db_connection: Connection,
+) -> Callable[[], AbstractContextManager[Session]]:
+    """A `session_scope` stand-in for the module source step: each session is
+    bound to the test connection, so its commits are SAVEPOINTs inside the
+    test's outer transaction (and visible to `db_session`)."""
+    factory = sessionmaker(
+        bind=db_connection,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        session = factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    return scope
+
+
+@pytest.fixture(autouse=True)
+def _bind_source_step(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orchestrator's source step opens its own sessions (`session_scope`, the
+    app database) and a Redis lock (db 0). In a DB test, bind both to the test
+    connection and the test Redis db instead."""
+    if "db_session" not in request.fixturenames:
+        return
+    from app.pipeline import module_sources, orchestrator
+
+    monkeypatch.setattr(
+        orchestrator,
+        "ensure_module_sources",
+        functools.partial(
+            module_sources.ensure_module_sources,
+            session_factory=request.getfixturevalue("source_step_sessions"),
+            redis_client=request.getfixturevalue("redis_client"),
+        ),
+    )
 
 
 @pytest.fixture
@@ -153,5 +209,21 @@ def client(db_session: Session, redis_client: redis.Redis[str]) -> Iterator[Test
     app.dependency_overrides[app_get_db] = _override_get_db
     app.dependency_overrides[app_get_redis] = lambda: redis_client
     with TestClient(app) as test_client:
+        _send_csrf_like_the_spa(test_client)
         yield test_client
     app.dependency_overrides.clear()
+
+
+def _send_csrf_like_the_spa(test_client: TestClient) -> None:
+    """Mirror frontend/src/lib/api.ts: on a non-GET request, copy the `sdp_csrf`
+    cookie into `X-CSRF-Token` unless the test set that header itself (an
+    explicit empty value is how a test sends "no token")."""
+
+    def add_token(request: httpx.Request) -> None:
+        if request.method in {"GET", "HEAD", "OPTIONS"} or "x-csrf-token" in request.headers:
+            return
+        token = test_client.cookies.get("sdp_csrf")
+        if token:
+            request.headers["X-CSRF-Token"] = token
+
+    test_client.event_hooks["request"].append(add_token)

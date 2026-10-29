@@ -1,5 +1,8 @@
+import { asArray } from "@/lib/asArray";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
+import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface SlideNote {
@@ -8,7 +11,13 @@ interface SlideNote {
   tags?: string[];
 }
 
-export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: string }): JSX.Element {
+export function SlidesViewer({
+  artifactId,
+  slug,
+}: {
+  artifactId: string;
+  slug: string;
+}): JSX.Element {
   const { data, isPending, isError, refetch } = useStudentArtifact(artifactId);
   const progress = useArtifactProgress(artifactId, slug);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -20,7 +29,7 @@ export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: s
         .sort((a, b) => (a.page_index ?? 0) - (b.page_index ?? 0)),
     [data?.media],
   );
-  const slideNotes = (data?.content_json?.slides ?? []) as SlideNote[];
+  const slideNotes = asArray<SlideNote>(data?.content_json?.slides);
   const pptxUrl = data?.media.find((m) => m.kind === "pptx")?.url;
   const total = pages.length;
 
@@ -34,15 +43,20 @@ export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: s
     }
   }, [data, total]);
 
-  // persist position + mark complete when the last slide is reached
+  // persist position + mark complete when the last slide is reached. Keyed on
+  // "loaded", not `data`: each save updates the cached artifact, and a `data`
+  // dependency would save again after every save.
+  const loaded = Boolean(data);
   useEffect(() => {
-    if (!data || total === 0) return;
+    if (!loaded || total === 0) return;
     const body =
-      index >= total - 1 ? { completed: true, slide_last_index: index } : { slide_last_index: index };
+      index >= total - 1
+        ? { completed: true, slide_last_index: index }
+        : { slide_last_index: index };
     const t = setTimeout(() => progress.mutate(body), 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, total, data]);
+  }, [index, total, loaded]);
 
   if (isPending) return <Skeleton className="h-[28rem]" />;
   if (isError || !data || total === 0)
@@ -130,6 +144,12 @@ export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: s
                 Download .pptx
               </a>
             )}
+            <PdfDownloadLink
+              media={data.media}
+              kind="slides_handout_pdf"
+              testid="btn-sd5"
+              label="Handout PDF"
+            />
           </div>
         </div>
       </div>
@@ -139,11 +159,11 @@ export function SlidesViewer({ artifactId, slug }: { artifactId: string; slug: s
           Instructor Notes
         </h3>
         <p className="mt-2 whitespace-pre-line text-body-md text-on-surface">
-          {note?.notes?.trim() ? note.notes : "No notes for this slide."}
+          {note?.notes?.trim() ? <MathText text={note.notes} /> : "No notes for this slide."}
         </p>
-        {note?.tags && note.tags.length > 0 && (
+        {asArray(note?.tags).length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1">
-            {note.tags.map((tag) => (
+            {asArray<string>(note?.tags).map((tag) => (
               <span
                 key={tag}
                 className="rounded-full bg-tertiary-container/40 px-2 py-0.5 font-label-sm text-label-sm text-tertiary"

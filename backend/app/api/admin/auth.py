@@ -11,9 +11,10 @@ are created only via the `seed-admin` CLI or admin-only user management.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
 from app.api.deps import (
+    ClockDep,
     CurrentAdmin,
     DbDep,
     RateLimiterDep,
@@ -22,9 +23,10 @@ from app.api.deps import (
     SettingsDep,
 )
 from app.auth.cookies import clear_session_cookie
-from app.auth.csrf import clear_csrf_cookie, csrf_protect
+from app.auth.csrf import clear_csrf_cookie_after_logout, csrf_protect, ensure_csrf_cookie
 from app.auth.login import login_flow
 from app.auth.password_reset import confirm_password_reset, request_password_reset
+from app.auth.ratelimit import client_ip
 from app.auth.sessions import COOKIE_NAMES
 from app.models.user import User, UserRole
 from app.schemas.auth import LoginRequest, PasswordResetConfirmRequest, PasswordResetRequest
@@ -44,8 +46,9 @@ def login(
     response: Response,
     db: DbDep,
     store: SessionStoreDep,
-    limiter: RateLimiterDep,
+    redis_client: RedisDep,
     settings: SettingsDep,
+    clock: ClockDep,
 ) -> UserEnvelope:
     user = login_flow(
         scope="admin",
@@ -56,8 +59,9 @@ def login(
         response=response,
         db=db,
         store=store,
-        limiter=limiter,
+        redis_client=redis_client,
         settings=settings,
+        clock=clock,
     )
     return _envelope(user)
 
@@ -71,25 +75,37 @@ def logout(request: Request, store: SessionStoreDep, settings: SettingsDep) -> R
     store.destroy("admin", request.cookies.get(COOKIE_NAMES["admin"]))
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, "admin", settings)
-    clear_csrf_cookie(response, settings)
+    clear_csrf_cookie_after_logout(request, response, settings, logging_out="admin")
     return response
 
 
 @router.get("/me", response_model=UserEnvelope)
-def me(admin: CurrentAdmin) -> UserEnvelope:
+def me(
+    admin: CurrentAdmin, request: Request, response: Response, settings: SettingsDep
+) -> UserEnvelope:
+    ensure_csrf_cookie(request, response, settings)
     return _envelope(admin)
 
 
 @router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
 def password_reset_request(
-    body: PasswordResetRequest, db: DbDep, redis_client: RedisDep, settings: SettingsDep
+    body: PasswordResetRequest,
+    request: Request,
+    background: BackgroundTasks,
+    db: DbDep,
+    redis_client: RedisDep,
+    limiter: RateLimiterDep,
+    settings: SettingsDep,
 ) -> Response:
     request_password_reset(
         db,
         redis_client,
         settings,
+        limiter,
+        background,
         scope="admin",
         email=body.email,
+        client_ip=client_ip(request),
         reset_path="/admin/reset-password",
     )
     return Response(status_code=status.HTTP_202_ACCEPTED)
@@ -97,9 +113,19 @@ def password_reset_request(
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
 def password_reset_confirm(
-    body: PasswordResetConfirmRequest, db: DbDep, redis_client: RedisDep
+    body: PasswordResetConfirmRequest,
+    db: DbDep,
+    redis_client: RedisDep,
+    settings: SettingsDep,
+    store: SessionStoreDep,
 ) -> Response:
     confirm_password_reset(
-        db, redis_client, scope="admin", token=body.token, new_password=body.password
+        db,
+        redis_client,
+        settings,
+        store,
+        scope="admin",
+        token=body.token,
+        new_password=body.password,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

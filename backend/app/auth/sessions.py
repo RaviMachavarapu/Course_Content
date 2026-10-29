@@ -4,6 +4,11 @@ The cookie carries only a random token; all state lives in Redis under
 ``sess:<scope>:<token>`` and expires with a sliding TTL. Admin and student
 sessions use different scopes, cookie names, and TTLs so the two logins never
 cross over.
+
+Revocation: `revoke_user` stamps ``sess_epoch:<user_id>`` with the current time;
+`read` rejects (and deletes) any session of that user created at or before the
+stamp. That covers every session — including ones created before this existed —
+without keeping a per-user index of tokens.
 """
 
 from __future__ import annotations
@@ -35,6 +40,10 @@ def _key(scope: SessionScope, token: str) -> str:
     return f"sess:{scope}:{token}"
 
 
+def _epoch_key(user_id: str) -> str:
+    return f"sess_epoch:{user_id}"
+
+
 class SessionStore:
     def __init__(self, client: redis.Redis[str], settings: Settings) -> None:
         self._r = client
@@ -61,12 +70,24 @@ class SessionStore:
         raw = self._r.get(_key(scope, token))
         if raw is None:
             return None
-        # sliding expiry
-        self._r.expire(_key(scope, token), self.ttl_seconds(scope))
         data = json.loads(raw)
-        return SessionData(
+        session = SessionData(
             user_id=data["user_id"], scope=data["scope"], created_at=data["created_at"]
         )
+        epoch = self._r.get(_epoch_key(session.user_id))
+        if epoch is not None and dt.datetime.fromisoformat(
+            session.created_at
+        ) <= dt.datetime.fromisoformat(epoch):
+            self._r.delete(_key(scope, token))
+            return None
+        # sliding expiry
+        self._r.expire(_key(scope, token), self.ttl_seconds(scope))
+        return session
+
+    def revoke_user(self, user_id: str) -> None:
+        """Invalidate every existing session of this user, in both scopes."""
+        longest = max(self.ttl_seconds("admin"), self.ttl_seconds("student"))
+        self._r.setex(_epoch_key(user_id), longest, dt.datetime.now(tz=dt.UTC).isoformat())
 
     def destroy(self, scope: SessionScope, token: str | None) -> None:
         if token:

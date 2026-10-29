@@ -31,8 +31,10 @@ function installFetch(artifact: unknown = ARTIFACT) {
     let body: unknown = { error: { code: "x", message: "x" } };
     let status = 404;
     if (url.includes("/progress") && method === "PUT") {
+      // like the server: a visit PUT ({}) doesn't complete; {completed:true} does
+      const sent = JSON.parse((init?.body as string) ?? "{}") as { completed?: boolean };
       body = {
-        completed: true,
+        completed: sent.completed === true,
         slide_last_index: null,
         audio_position_seconds: null,
         course_percent_complete: 100,
@@ -61,6 +63,15 @@ function renderViewer() {
     </QueryClientProvider>,
   );
 }
+
+describe("InfographicViewer math", () => {
+  it("draws a formula in the caption", async () => {
+    installFetch({ ...ARTIFACT, content_json: { caption: "Rate of $S_N2$" } });
+    const { container } = renderViewer();
+    await screen.findByTestId("infographic-image");
+    expect(container.querySelector(".katex")).not.toBeNull();
+  });
+});
 
 describe("InfographicViewer", () => {
   it("renders the diagram, caption, module title, and marks viewed on open", async () => {
@@ -122,5 +133,25 @@ describe("InfographicViewer", () => {
       );
       expect(completedPut).toBeDefined();
     });
+  });
+});
+
+describe("InfographicViewer PDF link", () => {
+  it("links the infographic PDF when present", async () => {
+    installFetch({
+      ...ARTIFACT,
+      media: [
+        ...ARTIFACT.media,
+        { kind: "infographic_pdf", url: "/api/media/i.pdf", page_index: null },
+      ],
+    });
+    renderViewer();
+    expect(await screen.findByTestId("btn-if6")).toHaveAttribute("href", "/api/media/i.pdf");
+  });
+  it("hides the link when absent", async () => {
+    installFetch();
+    renderViewer();
+    await screen.findByTestId("btn-if5");
+    expect(screen.queryByTestId("btn-if6")).toBeNull();
   });
 });

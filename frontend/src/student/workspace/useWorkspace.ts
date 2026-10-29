@@ -46,25 +46,26 @@ export function useQuizAttempts(id: string, enabled = true) {
   });
 }
 
-export function useQuizSubmit(id: string, slug: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (answers: Record<number, number>) => workspaceApi.submitQuiz(id, answers),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["student", "quiz-attempts", id] });
-      void qc.invalidateQueries({ queryKey: ["student", "workspace", slug] });
-      void qc.invalidateQueries({ queryKey: ["student", "catalog"] });
-      void qc.invalidateQueries({ queryKey: ["student", "artifact", id] });
-    },
-  });
-}
-
 /** Persist per-artifact progress; refresh the shell + catalog on completion. */
 export function useArtifactProgress(id: string, slug: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ArtifactProgressInput) => workspaceApi.putProgress(id, body),
     onSuccess: (result, body) => {
+      // Keep the cached artifact in step with what the server saved, so coming
+      // back to this deck/episode resumes from the latest position (not the one
+      // from the first load) and doesn't then overwrite it.
+      qc.setQueryData<StudentArtifact>(["student", "artifact", id], (prev) =>
+        prev
+          ? {
+              ...prev,
+              completed: result.completed,
+              slide_last_index: result.slide_last_index,
+              audio_position_seconds: result.audio_position_seconds,
+            }
+          : prev,
+      );
+      void qc.invalidateQueries({ queryKey: ["student", "me"] });
       if (body.completed || body.complete_module) {
         void qc.invalidateQueries({ queryKey: ["student", "workspace", slug] });
         void qc.invalidateQueries({ queryKey: ["student", "catalog"] });

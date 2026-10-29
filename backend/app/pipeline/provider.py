@@ -41,8 +41,18 @@ class StudioStatus(str, enum.Enum):
     awaiting_review = "awaiting_review"
 
 
+class SourceState(str, enum.Enum):
+    pending = "pending"
+    ready = "ready"
+    failed = "failed"
+
+
 class ProviderError(Exception):
     """A content provider failed a call."""
+
+
+class ProviderAuthError(ProviderError):
+    """The NotebookLM Google session needs signing in again."""
 
 
 class TransientProviderError(ProviderError):
@@ -80,6 +90,14 @@ class ContentProvider(Protocol):
 
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef: ...
 
+    def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        """Upload a local file (absolute path, same in the mcp container) as a source."""
+        ...
+
+    def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        """Processing state of every source in the notebook, by source id."""
+        ...
+
     def generate(
         self,
         nb: NotebookRef,
@@ -100,6 +118,10 @@ class ContentProvider(Protocol):
 
     def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
         """Revise a drafted slide outline (feedback) or build the deck (None)."""
+        ...
+
+    def query(self, nb: NotebookRef, text: str) -> str:
+        """Ask the notebook's chat a question; the answer text (may wrap JSON in prose)."""
         ...
 
     def health(self) -> ProviderHealth: ...

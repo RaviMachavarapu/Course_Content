@@ -15,7 +15,11 @@ const V2 = {
   generation_job_id: "job-2",
   notebooklm_artifact_id: "nlm-2",
   created_at: "2026-01-02T00:00:00Z",
-  content_json: { title: "R", read_minutes: 5, sections: [] },
+  content_json: {
+    title: "The Report",
+    read_minutes: 5,
+    sections: [{ heading: "Intro", html: "<p>body</p>" }],
+  },
   content_html: "<h1>The Report</h1><p>body</p>",
   media: [{ kind: "report_pdf", url: "/api/media/r.pdf", size_bytes: 1, page_index: null }],
 };
@@ -93,5 +97,19 @@ describe("InspectPage", () => {
     await userEvent.selectOptions(screen.getByTestId("btn-ai1"), "v1");
     // metadata "Revision" row updates to 1
     await screen.findByText("1");
+  });
+});
+
+describe("InspectPage PDF link", () => {
+  it("links the type's PDF when the version has it", async () => {
+    installFetch(() => BODY);
+    renderPage();
+    expect(await screen.findByTestId("btn-ai3")).toHaveAttribute("href", "/api/media/r.pdf");
+  });
+  it("hides the link when the version has no PDF", async () => {
+    installFetch(() => ({ ...BODY, viewing: { ...V2, media: [] } }));
+    renderPage();
+    await screen.findByRole("heading", { name: "The Report" });
+    expect(screen.queryByTestId("btn-ai3")).toBeNull();
   });
 });

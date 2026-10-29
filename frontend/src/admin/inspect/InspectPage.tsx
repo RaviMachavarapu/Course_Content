@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Card, CardBody, ErrorState, Icon, Skeleton } from "@/components";
-import { ARTIFACT_LABELS } from "../api";
+import { ARTIFACT_LABELS, type ArtifactType } from "../api";
 import { StatusChip } from "../AdminStatus";
 import { useInspect } from "../staging/useStaging";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { ContentView } from "./ContentView";
+import { QuizSetsPanel } from "./QuizSetsPanel";
 
 function MetaRow({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
   return (
@@ -14,6 +16,14 @@ function MetaRow({ label, value }: { label: string; value: React.ReactNode }): J
     </div>
   );
 }
+
+const PDF_KIND: Partial<Record<ArtifactType, string>> = {
+  report: "report_pdf",
+  flashcards: "flashcards_pdf",
+  quiz: "quiz_pdf",
+  infographic: "infographic_pdf",
+  slide_deck: "slides_handout_pdf",
+};
 
 export function InspectPage(): JSX.Element {
   const { artifactId = "" } = useParams();
@@ -58,7 +68,16 @@ export function InspectPage(): JSX.Element {
             {isPending || !v ? (
               <Skeleton lines={8} />
             ) : (
-              <ContentView type={data.artifact.type} version={v} />
+              <>
+                <div className="mb-3 flex justify-end">
+                  <PdfDownloadLink
+                    media={v.media}
+                    kind={PDF_KIND[data.artifact.type] ?? ""}
+                    testid="btn-ai3"
+                  />
+                </div>
+                <ContentView type={data.artifact.type} version={v} />
+              </>
             )}
           </CardBody>
         </Card>
@@ -105,6 +124,8 @@ export function InspectPage(): JSX.Element {
               </CardBody>
             </Card>
           )}
+
+          {data?.artifact.type === "quiz" && <QuizSetsPanel artifactId={artifactId} />}
 
           {v && v.focus_prompt_used && (
             <Card>

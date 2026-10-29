@@ -18,7 +18,7 @@
  * NOT YET LIVE-VERIFIED: the exact shape `callTool()` returns for each of
  * these specific tools (structuredContent vs. a text-JSON content block) is
  * inferred from the general MCP tool-result spec, not confirmed against a
- * real authenticated session. `unwrapToolResult` below defensively handles
+ * real authenticated session. `unwrapToolResult` (tools.js) defensively handles
  * both shapes; if the real server returns something else, that function is
  * the one place to fix.
  */
@@ -26,63 +26,35 @@
 import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StudioError, createArtifact, download, outlineAction } from "./studio.js";
+import { createArtifact, download, outlineAction, resetSession } from "./studio.js";
+import { PathNotAllowed, readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
+import { createSession } from "./session.js";
+import { ToolError, failStatus } from "./tools.js";
 
 const PORT = process.env.PORT || 7332;
 const MCP_PACKAGE = process.env.NOTEBOOKLM_MCP_PACKAGE || "notebooklm-mcp-server@4.0.2";
 
-let client = null;
-let connecting = null;
 let lastError = null;
 let lastOkAt = null;
 
-function unwrapToolResult(result) {
-  if (result && result.structuredContent !== undefined) return result.structuredContent;
-  if (result && Array.isArray(result.content)) {
-    const textBlock = result.content.find((c) => c.type === "text");
-    if (textBlock) {
-      try {
-        return JSON.parse(textBlock.text);
-      } catch {
-        return { text: textBlock.text };
-      }
-    }
-  }
-  return result;
-}
-
-async function getClient() {
-  if (client) return client;
-  if (connecting) return connecting;
-
-  connecting = (async () => {
-    const transport = new StdioClientTransport({
-      command: "npx",
-      args: ["-y", MCP_PACKAGE, "server"],
-      env: process.env,
-    });
-    const c = new Client({ name: "shikshak-dp-mcp-shim", version: "1.0.0" }, { capabilities: {} });
-    await c.connect(transport);
-    client = c;
-    lastError = null;
-    return c;
-  })();
-
-  try {
-    return await connecting;
-  } finally {
-    connecting = null;
-  }
-}
+// One stdio session with the connector child: calls are serialised, and a child
+// that exits is replaced on the next call (session.js).
+const session = createSession(async () => {
+  const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["-y", MCP_PACKAGE, "server"],
+    env: process.env,
+  });
+  const c = new Client({ name: "shikshak-dp-mcp-shim", version: "1.0.0" }, { capabilities: {} });
+  await c.connect(transport);
+  lastError = null;
+  return c;
+});
 
 async function callTool(name, args) {
-  const c = await getClient();
-  const result = await c.callTool({ name, arguments: args ?? {} });
-  if (result?.isError) {
-    throw new Error(`tool ${name} failed: ${JSON.stringify(result.content ?? result)}`);
-  }
+  const data = await session.call(name, args);
   lastOkAt = new Date().toISOString();
-  return unwrapToolResult(result);
+  return data;
 }
 
 const app = express();
@@ -96,14 +68,24 @@ app.post("/call", async (req, res) => {
     const data = await callTool(tool, args);
     res.json({ data });
   } catch (err) {
+    // 422: the connector rejected it (e.g. a private video); 401: sign in again;
+    // 502: the child or transport failed (worth a retry)
     lastError = String(err?.message ?? err);
-    res.status(502).json({ error: lastError });
+    res.status(failStatus(err)).json({ error: lastError });
   }
 });
 
 // Health/auth status: a cheap, always-available tool call proves the
-// session is authenticated (no dedicated "whoami" tool is documented).
+// session is authenticated (no dedicated "whoami" tool is documented). It goes
+// through the same serialised session as every other call, so it never
+// interleaves with one; while another call is running (up to 300 s) it doesn't
+// queue behind it but answers from the last successful call.
+const HEALTH_RECENT_MS = 15 * 60 * 1000;
 app.get("/health", async (_req, res) => {
+  if (session.busy()) {
+    const recent = lastOkAt !== null && Date.now() - Date.parse(lastOkAt) < HEALTH_RECENT_MS;
+    return res.json({ healthy: recent, last_ok_at: lastOkAt, detail: "busy with another call" });
+  }
   try {
     await callTool("notebook_list", {});
     res.json({ healthy: true, last_ok_at: lastOkAt, detail: "notebook_list ok" });
@@ -124,11 +106,11 @@ app.get("/health", async (_req, res) => {
 // one, without requiring a full container restart.
 app.post("/refresh-auth", async (_req, res) => {
   try {
-    if (client) {
-      await client.close().catch(() => {});
-      client = null;
-    }
-    await getClient();
+    // Studio/upload requests' rotated cookies and page token belong to the old
+    // session: drop them too, or they'd be mixed into the new one's requests.
+    resetSession();
+    await session.reset();
+    await session.connect();
     res.status(204).end();
   } catch (err) {
     lastError = String(err?.message ?? err);
@@ -176,26 +158,22 @@ app.get("/media", async (req, res) => {
 
 // 401 = the Google session needs attention; 422 = NotebookLM rejected the
 // request itself (retrying won't help); 502 = anything else (worth a retry).
-function studioFail(res, err) {
+// `pollable`: a connector tool error while polling a Studio artifact may just mean
+// "not there yet", so it stays 502 (the backend keeps polling until its deadline).
+function studioFail(res, err, { pollable = false } = {}) {
   lastError = String(err?.message ?? err);
-  const status = err instanceof StudioError ? (err.auth ? 401 : 422) : 502;
+  let status = failStatus(err);
+  if (pollable && err instanceof ToolError && status === 422) status = 502;
   res.status(status).json({ error: lastError });
 }
 
 // studio_poll's status strings → NotebookLM's codes (connector's mapping).
 const STATUS_CODES = { pending: 1, in_progress: 2, completed: 3, failed: 4 };
 
-async function sourceIds(notebookId) {
-  const nb = await callTool("notebook_get", { notebook_id: notebookId });
-  const ids = (nb.sources ?? []).map((s) => s.id).filter(Boolean);
-  if (!ids.length) throw new StudioError(`notebook ${notebookId} has no sources`);
-  return ids;
-}
-
 app.post("/studio/create", async (req, res) => {
   const { notebook_id: notebookId, kind, focus_prompt: focus, options } = req.body ?? {};
   try {
-    const ids = await sourceIds(notebookId);
+    const ids = await readySourceIds(notebookId);
     const artifactId = await createArtifact(notebookId, ids, kind, focus ?? "", options ?? {});
     lastOkAt = new Date().toISOString();
     res.json({ artifact_id: artifactId });
@@ -231,7 +209,7 @@ app.get("/studio/artifact", async (req, res) => {
     }
     res.json({ status, raw: row, html: data?.html ?? null });
   } catch (err) {
-    studioFail(res, err);
+    studioFail(res, err, { pollable: true });
   }
 });
 
@@ -246,6 +224,43 @@ app.get("/studio/download", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Add a file from the shared media volume as a source: {notebook_id, path, name}.
+app.post("/source/upload", async (req, res) => {
+  const { notebook_id: notebookId, path: filePath, name } = req.body ?? {};
+  if (!notebookId || !filePath || !name) {
+    return res.status(400).json({ error: "missing notebook_id, path or name" });
+  }
+  try {
+    const sourceId = await uploadSource(notebookId, filePath, name);
+    lastOkAt = new Date().toISOString();
+    res.json({ source_id: sourceId });
+  } catch (err) {
+    if (err instanceof PathNotAllowed) return res.status(400).json({ error: err.message });
+    studioFail(res, err);
+  }
+});
+
+// Per-source readiness: {sources: [{id, title, status: pending | ready | failed}]}.
+app.get("/source/status", async (req, res) => {
+  try {
+    const sources = await sourceStatuses(String(req.query.notebook_id ?? ""));
+    lastOkAt = new Date().toISOString();
+    res.json({ sources });
+  } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+const server = app.listen(PORT, () => {
   console.log(`notebooklm-mcp shim listening on :${PORT} (package ${MCP_PACKAGE})`);
 });
+
+// Stop cleanly: no new requests, close the connector child (no orphaned npx/Chromium).
+async function shutdown(signal) {
+  console.log(`${signal}: closing`);
+  server.close();
+  await Promise.race([session.close(), new Promise((r) => setTimeout(r, 5000))]);
+  process.exit(0);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

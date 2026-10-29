@@ -4,27 +4,46 @@ import datetime as dt
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from app.models.enums import ArtifactStatus, ArtifactType, CourseStatus, ModuleStatus
+from app.storage.keys import InvalidKeyError, validate_key
+
+
+def _valid_cover_key(key: str | None) -> str | None:
+    """A malformed key would 500 the student catalog (`url_for` validates)."""
+    if key is None:
+        return None
+    try:
+        return validate_key(key)
+    except InvalidKeyError as exc:
+        raise ValueError("cover_image_key is not a valid storage key") from exc
+
+
+#: a storage key (course.cover_image_key is VARCHAR(512))
+CoverImageKey = Annotated[str | None, Field(max_length=512), AfterValidator(_valid_cover_key)]
 
 
 class CourseCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: str = Field(default="", max_length=10_000)
     category: str = Field(default="", max_length=120)
-    cover_image_key: str | None = None
+    cover_image_key: CoverImageKey = None
 
 
 class CoursePatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     description: str | None = Field(default=None, max_length=10_000)
     category: str | None = Field(default=None, max_length=120)
-    cover_image_key: str | None = None
+    #: an explicit null clears the cover; leaving the field out keeps it
+    cover_image_key: CoverImageKey = None
 
 
 class ModuleCreateRequest(BaseModel):
-    source_url: str = Field(min_length=1, max_length=2048)
+    #: A link, PDFs (`upload_ids`), or both. "At least one" is enforced in the
+    #: endpoint so the error carries the `no_source` code, not `validation_error`.
+    source_url: str | None = Field(default=None, max_length=2048)
+    upload_ids: list[uuid.UUID] = Field(default_factory=list)
     title: str = Field(min_length=1, max_length=300)
     types: list[ArtifactType] = Field(min_length=1)
     #: Per-type generation options (language, quantity/difficulty, audio
@@ -66,11 +85,18 @@ class ArtifactSummary(BaseModel):
     status: ArtifactStatus
 
 
+class SourceFileOut(BaseModel):
+    file_name: str
+    size_bytes: int
+    part_count: int
+
+
 class ModuleSummary(BaseModel):
     id: uuid.UUID
     order_index: int
     title: str
-    source_url: str
+    source_url: str | None
+    source_files: list[SourceFileOut]
     source_type: str
     status: ModuleStatus
     artifacts: list[ArtifactSummary]

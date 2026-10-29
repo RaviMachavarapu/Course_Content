@@ -68,7 +68,10 @@ def test_csrf_required_on_state_change(client: TestClient, db_session: Session) 
     csrf = _seed_admin_and_login(client, db_session)
 
     # missing header
-    assert client.post("/api/admin/auth/logout").status_code == status.HTTP_403_FORBIDDEN
+    assert (
+        client.post("/api/admin/auth/logout", headers={"X-CSRF-Token": ""}).status_code
+        == status.HTTP_403_FORBIDDEN
+    )
     # wrong header
     bad = client.post("/api/admin/auth/logout", headers={"X-CSRF-Token": "not-the-token"})
     assert bad.status_code == status.HTTP_403_FORBIDDEN
@@ -100,6 +103,13 @@ def test_security_headers_present(client: TestClient) -> None:
 def test_hsts_emitted_in_prod(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.config import Settings
 
-    monkeypatch.setattr("app.config.get_settings", lambda: Settings(app_env="prod"))
-    with TestClient(create_app(Settings(app_env="prod"))) as prod_client:
+    prod = Settings(
+        app_env="prod",
+        database_url="postgresql+psycopg://app:real-pw@db:5432/shikshak",
+        public_base_url="https://learn.example.org",
+        smtp_url="smtps://mailer:pw@smtp.example.org",
+        device_cookie_secret="a-long-random-production-secret-value",
+    )
+    monkeypatch.setattr("app.config.get_settings", lambda: prod)
+    with TestClient(create_app(prod)) as prod_client:
         assert "strict-transport-security" in prod_client.get("/healthz").headers
