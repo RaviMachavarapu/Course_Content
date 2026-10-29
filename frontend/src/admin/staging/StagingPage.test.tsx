@@ -362,13 +362,21 @@ describe("StagingPage", () => {
     const cancel = screen.getByTestId("btn-sr21");
     expect(cancel).toHaveTextContent(/cancel/i);
 
-    await userEvent.click(cancel);
-    await waitFor(() => {
-      const post = fetchMock.mock.calls.find(
+    const posts = () =>
+      fetchMock.mock.calls.filter(
         (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-quiz/cancel"),
       );
-      expect(post).toBeDefined();
-    });
+    // owner decision 11: a confirm first; dismissing it sends nothing
+    await userEvent.click(cancel);
+    expect(
+      await screen.findByText("Cancel this generation? Any progress is discarded."),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("btn-sr21-dismiss"));
+    expect(posts()).toHaveLength(0);
+
+    await userEvent.click(screen.getByTestId("btn-sr21"));
+    await userEvent.click(await screen.findByTestId("btn-sr21-confirm"));
+    await waitFor(() => expect(posts()).toHaveLength(1));
   });
 
   it("wires BTN-SR2 (Publish Complete Course) to the course-scoped confirm modal", async () => {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Button, Card, CardBody, Chip, Icon } from "@/components";
+import { Button, Card, CardBody, Chip, Icon, Modal } from "@/components";
 import { ARTIFACT_LABELS, type ArtifactType } from "../api";
 import { STATUS_LABELS, toChipStatus } from "../statusMap";
 import type { StagingArtifact } from "./api";
@@ -75,6 +75,7 @@ export function ArtifactCard({
   onCancel,
 }: Props): JSX.Element {
   const [modalOpen, setModalOpen] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const label = ARTIFACT_LABELS[artifact.type];
   const isGenerating = ["queued", "processing", "running"].includes(artifact.status);
   const isError = artifact.status === "error";
@@ -138,7 +139,7 @@ export function ArtifactCard({
               variant="secondary"
               iconLeft="cancel"
               disabled={busy}
-              onClick={onCancel}
+              onClick={() => setConfirmCancel(true)}
               title="Stop waiting for this generation. Retry picks it up again."
               data-testid="btn-sr21"
             >
@@ -181,6 +182,37 @@ export function ArtifactCard({
           })}
         </div>
       </CardBody>
+
+      {onCancel && (
+        <Modal
+          open={confirmCancel && isGenerating}
+          onClose={() => setConfirmCancel(false)}
+          title={`Cancel ${label} generation`}
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmCancel(false)}
+                data-testid="btn-sr21-dismiss"
+              >
+                Keep generating
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setConfirmCancel(false);
+                  onCancel();
+                }}
+                data-testid="btn-sr21-confirm"
+              >
+                Cancel generation
+              </Button>
+            </>
+          }
+        >
+          <p className="text-body-md">Cancel this generation? Any progress is discarded.</p>
+        </Modal>
+      )}
 
       <RedoModal
         open={modalOpen}
