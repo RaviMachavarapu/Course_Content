@@ -17,12 +17,18 @@
 - ``rebuild-pdfs`` — typeset the PDF of every current and published version of
   the report, flashcards, quiz, infographic and slide-deck artifacts (replacing
   each version's previous PDF); ``--dry-run`` writes nothing.
+- ``strip-notebook-logo`` — crop NotebookLM's "Gemini Notebook" mark off every stored
+  slide and infographic image (new files, old ones removed after the commit; images
+  already cropped are skipped), rebuild NotebookLM's deck PDF and PPTX from the cropped
+  pictures, and queue the version's handout/infographic PDF rebuild; ``--dry-run``
+  writes nothing.
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import sys
 import uuid
 from collections.abc import Sequence
@@ -36,13 +42,15 @@ from app.db.session import session_scope
 from app.models.artifact import Artifact
 from app.models.artifact_version import ArtifactVersion
 from app.models.course import Course
-from app.models.enums import ArtifactType
+from app.models.enums import ArtifactType, MediaFileKind
+from app.models.media_file import MediaFile
 from app.models.module import Module
 from app.models.user import User, UserRole, normalize_email
 from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.factory import get_content_provider
 from app.pipeline.fixture import FixtureProvider
 from app.pipeline.provider import ContentProvider, ProviderError, StudioJobRef
+from app.render import notebook_logo
 from app.render.typeset_client import TypesetError, TypesetUnavailable
 from app.services.ingestion import detect_source_type
 from app.services.progress import record_artifact_progress
@@ -53,6 +61,8 @@ from app.services.prompts import (
 )
 from app.services.publish import publish_course, publish_module
 from app.services.slugs import unique_course_slug
+from app.storage.keys import media_key
+from app.storage.service import STORAGE_EXTS, get_storage
 
 MIN_ADMIN_PASSWORD_LEN = 12
 
@@ -540,6 +550,197 @@ def _cmd_rebuild_pdfs(args: argparse.Namespace) -> int:
     return 1 if counts.get("failed") else 0
 
 
+# -- strip-notebook-logo -------------------------------------------------------------
+
+_LOGO_TYPES = (ArtifactType.slide_deck, ArtifactType.infographic)
+_LOGO_IMAGE_KINDS = (MediaFileKind.slide_png, MediaFileKind.infographic_png)
+
+
+@dataclass
+class _LogoPlan:
+    """What cleaning one version changes: (old row, new bytes) per file, and a summary."""
+
+    replace: list[tuple[MediaFile, bytes]]
+    notes: list[str]
+
+
+def _plan_logo_strip(version: ArtifactVersion) -> _LogoPlan:
+    storage = get_storage()
+    files = list(version.media_files)
+    slides = sorted(
+        (m for m in files if m.kind is MediaFileKind.slide_png), key=lambda m: m.page_index or 0
+    )
+    images = slides + [m for m in files if m.kind is MediaFileKind.infographic_png]
+    replace: list[tuple[MediaFile, bytes]] = []
+    notes: list[str] = []
+    slide_data: list[bytes] = []
+    cropped = already = missing = 0
+    rows: list[int] = []
+    for m in images:
+        data = storage.open(m.storage_key)
+        result = notebook_logo.strip_logo(data, label=m.storage_key)
+        if result.cropped:
+            cropped += 1
+            rows.append(result.cropped)
+            replace.append((m, result.data))
+        elif result.already:
+            already += 1
+        else:
+            missing += 1
+        if m.kind is MediaFileKind.slide_png:
+            slide_data.append(result.data)
+    if images:
+        detail = f"{cropped}/{len(images)} image(s) cropped"
+        if rows:
+            span = str(rows[0]) if min(rows) == max(rows) else f"{min(rows)}-{max(rows)}"
+            detail += f" ({span} rows off the bottom)"
+        if already:
+            detail += f", {already} already clean"
+        if missing:
+            detail += f", {missing} without the mark (kept)"
+        notes.append(detail)
+    slides_cropped = any(m.kind is MediaFileKind.slide_png for m, _ in replace)
+    for m in files:
+        if m.kind is MediaFileKind.deck_pdf and slides_cropped:
+            pdf = storage.open(m.storage_key)
+            rebuilt = notebook_logo.rebuild_deck_pdf(pdf, slide_data, label=m.storage_key)
+            if rebuilt != pdf:
+                replace.append((m, rebuilt))
+                notes.append("deck PDF rebuilt from the cropped slides")
+            else:
+                notes.append("deck PDF kept (not one image per slide)")
+        elif m.kind is MediaFileKind.pptx:
+            pptx, pictures = notebook_logo.strip_pptx(
+                storage.open(m.storage_key), label=m.storage_key
+            )
+            if pictures:
+                replace.append((m, pptx))
+                notes.append(f"{pictures} PPTX picture(s) cropped")
+    return _LogoPlan(replace, notes)
+
+
+def _store_logo_plan(session: Session, version: ArtifactVersion, plan: _LogoPlan) -> list[str]:
+    """Write the new files and rows (flushed, not committed); returns the old keys to delete
+    after the commit. On an error the files written so far are removed."""
+    storage = get_storage()
+    module = version.artifact.module
+    written: list[str] = []
+    stale: list[str] = []
+    try:
+        for old, data in plan.replace:
+            mime = "image/png" if old.kind in _LOGO_IMAGE_KINDS else old.mime_type
+            key = media_key(
+                course_id=module.course_id,
+                module_id=module.id,
+                artifact_id=version.artifact_id,
+                revision=version.revision,
+                kind=old.kind,
+                ext=STORAGE_EXTS[old.kind],
+                page_index=old.page_index,
+                variant=hashlib.sha256(data).hexdigest()[:12],
+            )
+            stored = storage.put(key, data, mime)
+            written.append(key)
+            stale.append(old.storage_key)
+            session.delete(old)
+            session.flush()
+            session.add(
+                storage.build_media_file(
+                    stored,
+                    artifact_version_id=str(version.id),
+                    kind=old.kind,
+                    page_index=old.page_index,
+                )
+            )
+        session.flush()
+    except BaseException:
+        artifact_pdf.delete_files(written)
+        raise
+    return stale
+
+
+def _enqueue_pdf(version_id: uuid.UUID) -> str:
+    from app.tasks.pdf import build_artifact_pdf
+
+    try:
+        build_artifact_pdf.apply_async(args=[str(version_id)], queue="pdf")
+    except Exception as exc:  # broker down: the PDFs can be rebuilt with rebuild-pdfs
+        return f"PDF rebuild NOT queued ({exc!s:.100}); run rebuild-pdfs --version {version_id}"
+    return "PDF rebuild queued"
+
+
+def strip_notebook_logo(session: Session, *, dry_run: bool = False) -> list[tuple[str, str]]:
+    """Crop the "Gemini Notebook" mark off every stored slide-deck and infographic version
+    (all courses, all revisions). Each version is committed on its own: new files under new
+    keys with new rows, the replaced files deleted after the commit; NotebookLM's deck
+    PDF / PPTX rebuilt from the cropped pictures; the version's typeset PDF queued for a
+    rebuild (`build_artifact_pdf`). Idempotent: images cropped before are marked and skipped.
+
+    Returns ``(label, outcome)``: ``cleaned: ...``, ``would clean: ...`` (dry run),
+    ``unchanged: ...``, ``skipped (reason)`` or ``failed (reason)``."""
+    versions = session.scalars(
+        select(ArtifactVersion)
+        .join(Artifact, Artifact.id == ArtifactVersion.artifact_id)
+        .join(Module, Module.id == Artifact.module_id)
+        .where(Artifact.type.in_(_LOGO_TYPES))
+        .order_by(Module.course_id, Module.order_index, Artifact.type, ArtifactVersion.revision)
+    ).all()
+    results: list[tuple[str, str]] = []
+    for version in versions:
+        module = version.artifact.module
+        label = (
+            f"{module.course.title} / {module.title} / {version.artifact.type.value} "
+            f"r{version.revision} [{version.id}]"
+        )
+        if not any(m.kind in _LOGO_IMAGE_KINDS for m in version.media_files):
+            results.append((label, "skipped (no images)"))
+            continue
+        try:
+            plan = _plan_logo_strip(version)
+        except Exception as exc:
+            results.append((label, f"failed ({type(exc).__name__}: {exc!s:.200})"))
+            continue
+        summary = "; ".join(plan.notes)
+        if not plan.replace:
+            results.append((label, f"unchanged: {summary}"))
+            continue
+        if dry_run:
+            files = ", ".join(sorted({m.kind.value for m, _ in plan.replace}))
+            results.append(
+                (
+                    label,
+                    f"would clean: {summary}; replaces {len(plan.replace)} file(s) "
+                    f"({files}); queues the PDF rebuild",
+                )
+            )
+            continue
+        try:
+            stale = _store_logo_plan(session, version, plan)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            results.append((label, f"failed ({type(exc).__name__}: {exc!s:.200})"))
+            continue
+        artifact_pdf.delete_files(stale)
+        results.append((label, f"cleaned: {summary}; {_enqueue_pdf(version.id)}"))
+    return results
+
+
+def _cmd_strip_notebook_logo(args: argparse.Namespace) -> int:
+    with session_scope() as session:
+        results = strip_notebook_logo(session, dry_run=args.dry_run)
+    for label, outcome in results:
+        print(f"{label}: {outcome}")
+    counts: dict[str, int] = {}
+    for _, outcome in results:
+        word = outcome.split(":")[0].split(" (")[0]
+        counts[word] = counts.get(word, 0) + 1
+    summary = ", ".join(f"{n} {word}" for word, n in sorted(counts.items())) or "no versions"
+    prefix = "DRY RUN - nothing written. " if args.dry_run else ""
+    print(f"{prefix}strip-notebook-logo: {summary}")
+    return 1 if counts.get("failed") else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app.cli", description="Shikshak Dp admin CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -594,6 +795,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pdfs.add_argument("--version", help="only this artifact version id")
     pdfs.set_defaults(func=_cmd_rebuild_pdfs)
+
+    logo = sub.add_parser(
+        "strip-notebook-logo",
+        help='crop the "Gemini Notebook" mark off every stored slide and infographic image '
+        "(and rebuild the deck PDF/PPTX and typeset PDFs)",
+    )
+    logo.add_argument(
+        "--dry-run", action="store_true", help="list what would change without writing"
+    )
+    logo.set_defaults(func=_cmd_strip_notebook_logo)
 
     return parser
 
