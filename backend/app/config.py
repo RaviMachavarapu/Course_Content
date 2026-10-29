@@ -21,6 +21,9 @@ _DEV_PUBLIC_BASE_URL = "http://localhost:5173"
 _DEV_SMTP_URL = "smtp://mailhog:1025"
 _DEV_DEVICE_COOKIE_SECRET = "dev-only-device-cookie-secret-change-me"
 _MIN_DEVICE_COOKIE_SECRET_LEN = 32
+#: the dev compose stack's Redis password (docker-compose.yml)
+_DEV_REDIS_PASSWORD = "dev-only-redis-password-change-me"
+_DEV_REDIS = f"redis://:{_DEV_REDIS_PASSWORD}@redis:6379"
 
 
 class Settings(BaseSettings):
@@ -34,7 +37,7 @@ class Settings(BaseSettings):
     # ---- core ----
     app_env: Environment = "dev"
     database_url: str = "postgresql+psycopg://shikshak:shikshak@postgres:5432/shikshak"
-    redis_url: str = "redis://redis:6379/0"
+    redis_url: str = f"{_DEV_REDIS}/0"
     media_root: str = "/data/media"
     media_gc_keep_versions: int = 3
     public_base_url: str = _DEV_PUBLIC_BASE_URL
@@ -96,8 +99,8 @@ class Settings(BaseSettings):
     email_from: str = "no-reply@shikshak.local"
 
     # ---- celery ----
-    celery_broker_url: str = "redis://redis:6379/1"
-    celery_result_backend: str = "redis://redis:6379/2"
+    celery_broker_url: str = f"{_DEV_REDIS}/1"
+    celery_result_backend: str = f"{_DEV_REDIS}/2"
 
     # ---- observability ----
     sentry_dsn: str = ""
@@ -112,9 +115,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _no_dev_defaults_outside_dev(self) -> Settings:
-        """Staging/prod must not run on the dev database password, sign device
-        cookies with the dev secret, or send reset links to localhost; prod
-        must not "send" reset mail into mailhog."""
+        """Staging/prod must not run on the dev database password or the dev
+        (or no) Redis password, sign device cookies with the dev secret, or
+        send reset links to localhost; prod must not "send" reset mail into
+        mailhog."""
         if self.app_env == "dev":
             return self
         problems: list[str] = []
@@ -128,6 +132,16 @@ class Settings(BaseSettings):
             problems.append(
                 f"DEVICE_COOKIE_SECRET must be at least {_MIN_DEVICE_COOKIE_SECRET_LEN} characters"
             )
+        for name, url in (
+            ("REDIS_URL", self.redis_url),
+            ("CELERY_BROKER_URL", self.celery_broker_url),
+            ("CELERY_RESULT_BACKEND", self.celery_result_backend),
+        ):
+            password = _redis_password(url)
+            if not password:
+                problems.append(f"{name} has no Redis password")
+            elif password == _DEV_REDIS_PASSWORD:
+                problems.append(f"{name} uses the dev Redis password")
         if self.is_prod and self.password_reset_enabled and self.smtp_url == _DEV_SMTP_URL:
             problems.append("SMTP_URL is the dev mailhog (or set PASSWORD_RESET_ENABLED=false)")
         if problems:
@@ -142,6 +156,14 @@ class Settings(BaseSettings):
     def db_url_sync(self) -> str:
         """DSN without the SQLAlchemy driver marker, for tools that want libpq form."""
         return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+
+def _redis_password(url: str) -> str | None:
+    """The password in a redis:// or rediss:// URL (None when there is none)."""
+    from urllib.parse import unquote, urlsplit
+
+    password = urlsplit(url).password
+    return unquote(password) if password else None
 
 
 @lru_cache

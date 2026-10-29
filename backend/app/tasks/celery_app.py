@@ -6,7 +6,6 @@ generation pipeline. Task modules live under `app.tasks.*` and are autodiscovere
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import structlog
@@ -14,8 +13,11 @@ from celery import Celery
 from celery.schedules import crontab
 from celery.signals import task_failure, task_postrun, task_prerun, task_success, worker_ready
 
-_BROKER = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/1")
-_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://redis:6379/2")
+from app.config import get_settings
+
+# from Settings (env), so the staging/prod guard covers the broker URLs too
+_BROKER = get_settings().celery_broker_url
+_BACKEND = get_settings().celery_result_backend
 
 #: beat's periodic tasks, routed to the `maintenance` queue
 MAINTENANCE_TASKS = (
@@ -65,8 +67,6 @@ celery_app.conf.update(
 
 
 def _init_sentry() -> None:
-    from app.config import get_settings
-
     dsn = get_settings().sentry_dsn
     if not dsn:
         return

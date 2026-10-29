@@ -3,9 +3,12 @@ name: shikshak-dp
 x-backend-env: &backend-env
   APP_ENV: dev
   DATABASE_URL: postgresql+psycopg://shikshak:shikshak@postgres:5432/shikshak
-  REDIS_URL: redis://redis:6379/0
-  CELERY_BROKER_URL: redis://redis:6379/1
-  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  # Redis requires a password. Dev default below (obviously dev; the config
+  # guard refuses it outside APP_ENV=dev); set REDIS_PASSWORD in a root .env to
+  # change it. URL-safe characters only (it sits inside the URLs).
+  REDIS_URL: redis://:${REDIS_PASSWORD:-dev-only-redis-password-change-me}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev-only-redis-password-change-me}@redis:6379/1
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev-only-redis-password-change-me}@redis:6379/2
   MEDIA_ROOT: /data/media
   CORS_ORIGINS: http://localhost:5173
   CONTENT_PROVIDER: fixture
@@ -42,9 +45,17 @@ services:
   redis:
     image: redis:7.4.11-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-only-redis-password-change-me}
+    # The password comes from the environment ($$: expanded by the container's
+    # shell, not by compose); redis-server hides its argv. Through the image's
+    # entrypoint so it still drops to the `redis` user.
+    command: ["sh", "-c", 'exec docker-entrypoint.sh redis-server --requirepass "$$REDIS_PASSWORD"']
     ports: ["127.0.0.1:6379:6379"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # REDISCLI_AUTH: authenticate without the password on the command line;
+      # an unauthenticated ping answers NOAUTH (exit 0), so match PONG.
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
       interval: 5s
       timeout: 3s
       retries: 10

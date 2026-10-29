@@ -109,6 +109,9 @@ def test_hsts_emitted_in_prod(monkeypatch: pytest.MonkeyPatch) -> None:
         public_base_url="https://learn.example.org",
         smtp_url="smtps://mailer:pw@smtp.example.org",
         device_cookie_secret="a-long-random-production-secret-value",
+        redis_url="redis://:real-redis-pw@redis:6379/0",
+        celery_broker_url="redis://:real-redis-pw@redis:6379/1",
+        celery_result_backend="redis://:real-redis-pw@redis:6379/2",
     )
     monkeypatch.setattr("app.config.get_settings", lambda: prod)
     with TestClient(create_app(prod)) as prod_client:

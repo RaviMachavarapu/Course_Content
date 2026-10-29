@@ -16,7 +16,11 @@ _REAL = {
     "public_base_url": "https://learn.example.org",
     "smtp_url": "smtps://mailer:pw@smtp.example.org",
     "device_cookie_secret": "a-long-random-production-secret-value",
+    "redis_url": "redis://:r3al-redis-pw@redis.internal:6379/0",
+    "celery_broker_url": "redis://:r3al-redis-pw@redis.internal:6379/1",
+    "celery_result_backend": "redis://:r3al-redis-pw@redis.internal:6379/2",
 }
+_DEV_REDIS_PW = "dev-only-redis-password-change-me"
 
 
 def _settings(**kw: Any) -> Settings:
@@ -80,3 +84,32 @@ def test_api_docs_are_hidden_in_prod() -> None:
         assert c.get("/api/openapi.json").status_code == 404
     with TestClient(create_app(_settings(app_env="dev"))) as c:
         assert c.get("/api/openapi.json").status_code == 200
+
+
+@pytest.mark.parametrize("env", ["staging", "prod"])
+@pytest.mark.parametrize("field", ["redis_url", "celery_broker_url", "celery_result_backend"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"redis://:{_DEV_REDIS_PW}@redis:6379/3",
+        f"redis://default:{_DEV_REDIS_PW}@redis.internal:6379/0",
+        "redis://redis:6379/0",
+        "redis://:@redis:6379/0",
+    ],
+)
+def test_redis_needs_a_non_dev_password_outside_dev(env: str, field: str, url: str) -> None:
+    with pytest.raises(ValidationError, match=field.upper()):
+        _settings(app_env=env, **{**_REAL, field: url})
+
+
+def test_redis_urls_with_a_real_password_are_accepted() -> None:
+    assert _settings(
+        app_env="prod",
+        **{**_REAL, "redis_url": "rediss://app:p%40ss-w0rd@cache.example.org:6380/0"},
+    )
+
+
+def test_dev_defaults_carry_the_dev_redis_password() -> None:
+    dev = Settings.model_construct()  # class defaults, no environment
+    for url in (dev.redis_url, dev.celery_broker_url, dev.celery_result_backend):
+        assert f":{_DEV_REDIS_PW}@redis:6379/" in url
