@@ -33,6 +33,17 @@ behaves exactly as before.
   (a link-only module: the pool's quotes aren't in an uploaded PDF).
 - `[fixture:typeset-down]`: the typeset service counts as unavailable for this
   module's PDFs (retried with back-off, then "gave up"; the artifact stays ready).
+
+Counted faults, for recovery scenarios: `[fixture:<fault>=N]` hits only the first
+N attempts, then everything works. Attempts are counted in Redis (shared by every
+worker, kept a day) per notebook and artifact type for `fail-generate`,
+`transient-generate`, `studio-failed`, `stuck` and `malformed` (each `generate` is
+an attempt; a resumed job keeps its attempt, so `stuck=1` stays stuck on Retry
+but a Redo generates anew); per notebook for `chat-fail` (each chat call); per
+artifact version for `typeset-down` (each PDF task attempt). E.g.
+`[fixture:transient-generate=1]` recovers on Celery's first retry,
+`[fixture:typeset-down=1]` builds the PDF on the task's first retry (30 s).
+`source-fail` takes no count.
 """
 
 from __future__ import annotations
@@ -43,6 +54,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -152,24 +164,69 @@ class Faults:
     flags: frozenset[str] = frozenset()
     slow_sec: int = 0
     quiz: int = 0
+    #: (flag, N) for counted faults `[fixture:<flag>=N]`
+    counted: frozenset[tuple[str, int]] = frozenset()
 
     @property
     def any(self) -> bool:
         return bool(self.flags or self.slow_sec or self.quiz)
 
+    def limit(self, flag: str) -> int | None:
+        """N for `[fixture:<flag>=N]`; None when the fault always applies (or is absent)."""
+        return next((n for f, n in self.counted if f == flag), None)
+
+    def hits(self, flag: str, attempt: int | None) -> bool:
+        """Whether `flag` applies to this attempt (1-based; None = not counted)."""
+        if flag not in self.flags:
+            return False
+        n = self.limit(flag)
+        return n is None or (attempt is not None and attempt <= n)
+
 
 def _faults(pairs: list[tuple[str, str]]) -> Faults:
     flags: set[str] = set()
+    counted: set[tuple[str, int]] = set()
     slow = quiz = 0
     for name, value in pairs:
         name = name.lower()
         if name in _FLAGS:
             flags.add(name)
+            if value:
+                counted.add((name, int(value)))
         elif name == "slow" and value:
             slow = int(value)
         elif name == "quiz" and value:
             quiz = max(1, min(_MAX_QUIZ, int(value)))
-    return Faults(flags=frozenset(flags), slow_sec=slow, quiz=quiz)
+    return Faults(flags=frozenset(flags), slow_sec=slow, quiz=quiz, counted=frozenset(counted))
+
+
+#: flags whose count follows the generation (`generate` → job id → poll/fetch)
+_PER_GENERATION = ("fail-generate", "transient-generate", "studio-failed", "stuck", "malformed")
+_ATTEMPT_IN_JOB = re.compile(r"-a(\d+)(?:-t\d+)?$")
+_COUNT_TTL_SEC = 86400
+
+
+@lru_cache(maxsize=1)
+def _counter_client() -> Any:
+    import redis
+
+    from app.config import get_settings
+
+    return redis.Redis.from_url(get_settings().redis_url)
+
+
+def _count(key: str) -> int:
+    """This attempt's number (1, 2, …) for `key`, shared by every worker process."""
+    pipe = _counter_client().pipeline()
+    pipe.incr(key)
+    pipe.expire(key, _COUNT_TTL_SEC)
+    n, _ = pipe.execute()
+    return int(n)
+
+
+def _job_attempt(job_id: str) -> int | None:
+    m = _ATTEMPT_IN_JOB.search(job_id)
+    return int(m.group(1)) if m else None
 
 
 def faults_in_title(title: str) -> Faults:
@@ -184,14 +241,20 @@ def faults_of(notebook_id: str) -> Faults:
     return _faults(_SLUG_MARKER.findall(notebook_id.removeprefix("fixture-nb-")))
 
 
-def typeset_down(module_title: str) -> bool:
-    """The `[fixture:typeset-down]` hook for the PDF task: only with the fixture provider."""
+def typeset_down(module_title: str, version_id: str = "") -> bool:
+    """The `[fixture:typeset-down]` hook for the PDF task: only with the fixture
+    provider. Each call is one attempt of `version_id`'s PDF task."""
     from app.config import get_settings
 
-    return (
-        get_settings().content_provider == "fixture"
-        and "typeset-down" in faults_in_title(module_title).flags
-    )
+    if get_settings().content_provider != "fixture":
+        return False
+    faults = faults_in_title(module_title)
+    if "typeset-down" not in faults.flags:
+        return False
+    attempt = None
+    if faults.limit("typeset-down") is not None:
+        attempt = _count(f"fixture:typeset:{_slug(module_title)}:{version_id}")
+    return faults.hits("typeset-down", attempt)
 
 
 #: chat questions for `[fixture:quiz=N]`: numbers 10-69 (two digits each, so no two are
@@ -316,20 +379,26 @@ class FixtureProvider:
         options: dict[str, Any],
     ) -> StudioJobRef:
         faults = faults_of(nb.notebook_id)
-        if "fail-generate" in faults.flags:
+        attempt = None
+        if any(faults.limit(f) is not None for f in _PER_GENERATION):
+            attempt = _count(f"fixture:generate:{nb.notebook_id}:{kind.value}")
+        if faults.hits("fail-generate", attempt):
             raise ProviderError("fixture: NotebookLM rejected the generation")
-        if "transient-generate" in faults.flags:
+        if faults.hits("transient-generate", attempt):
             raise TransientProviderError("fixture: NotebookLM is unavailable")
         job_id = f"fixture-job-{nb.notebook_id}-{kind.value}"
+        if attempt is not None:
+            job_id += f"-a{attempt}"
         if faults.slow_sec:
             job_id += f"-t{int(time.time())}"  # when it "started", for `poll`
         return StudioJobRef(job_id=job_id, notebook_id=nb.notebook_id, kind=kind)
 
     def poll(self, job: StudioJobRef) -> StudioStatus:
         faults = faults_of(job.notebook_id)
-        if "studio-failed" in faults.flags:
+        attempt = _job_attempt(job.job_id)
+        if faults.hits("studio-failed", attempt):
             return StudioStatus.failed
-        if "stuck" in faults.flags:
+        if faults.hits("stuck", attempt):
             return StudioStatus.pending
         if faults.slow_sec:
             started = re.search(r"-t(\d+)$", job.job_id)
@@ -340,7 +409,7 @@ class FixtureProvider:
     def fetch_content(self, job: StudioJobRef) -> RawArtifact:
         faults = faults_of(job.notebook_id)
         extras: dict[str, Any] = {"artifact_id": job.job_id}
-        if "malformed" in faults.flags:
+        if faults.hits("malformed", _job_attempt(job.job_id)):
             return RawArtifact(html=_MALFORMED_HTML, extras=extras)
         if faults.quiz and job.kind is ArtifactType.quiz:
             return RawArtifact(html=_studio_quiz_html(faults.quiz), extras=extras)
@@ -366,7 +435,10 @@ class FixtureProvider:
     def query(self, nb: NotebookRef, text: str) -> str:
         self.calls.append(("query", nb.notebook_id, text))
         faults = faults_of(nb.notebook_id)
-        if "chat-fail" in faults.flags:
+        attempt = None
+        if faults.limit("chat-fail") is not None:
+            attempt = _count(f"fixture:chat:{nb.notebook_id}")
+        if faults.hits("chat-fail", attempt):
             raise ProviderError("fixture: chat rejected the question")
         if faults.quiz:
             return _chat_answer(text)

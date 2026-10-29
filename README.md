@@ -162,6 +162,7 @@ Details in `backend/app/pipeline/fixture.py`.
 | `[fixture:chat-fail]` | quiz chat rejected: a fresh retake isn't available |
 | `[fixture:quiz=N]` | Studio quiz of N questions (≤ 30); chat serves fresh retakes from a pool of 60 (link modules) |
 | `[fixture:typeset-down]` | PDFs: typeset unavailable, retried, then "gave up" (artifact stays ready) |
+| `[fixture:<fault>=N]` | counted: only the first N attempts fail, then it works (recovery scenarios). Not for `source-fail`. Details in `backend/app/pipeline/fixture.py` |
 
 Infrastructure faults (Redis, typeset, workers) are injected by stopping or
 restarting that service of the `shikshak-e2e` project.

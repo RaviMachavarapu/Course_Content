@@ -147,7 +147,7 @@ def prepare_pdfs(session: Session, version_id: uuid.UUID) -> list[PdfSource]:
         title=f"{module.title}: {label}" if label else None,
         load_media=course_media_loader(session, module.course_id),
     )
-    down = typeset_down(module.title)
+    down = typeset_down(module.title, str(version_id))
     return [
         PdfSource(version_id=version_id, kind=k, doc=d, typeset_down=down) for k, d in docs.items()
     ]

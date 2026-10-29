@@ -229,3 +229,97 @@ def test_typeset_down_only_with_the_fixture_provider(monkeypatch: pytest.MonkeyP
     assert not fx.typeset_down("Week 1")
     monkeypatch.setattr("app.config.get_settings", lambda: Settings(content_provider="notebooklm"))
     assert not fx.typeset_down("Week 1 [fixture:typeset-down]")
+
+
+# -- counted faults: `[fixture:<fault>=N]` hits only the first N attempts ---------------
+
+
+@pytest.fixture
+def counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """An in-memory stand-in for the Redis attempt counter workers share."""
+    counts: dict[str, int] = {}
+
+    def count(key: str) -> int:
+        counts[key] = counts.get(key, 0) + 1
+        return counts[key]
+
+    monkeypatch.setattr(fx, "_count", count)
+    return counts
+
+
+def test_counted_markers_parse_with_their_limit() -> None:
+    faults = fx.faults_of(_nb("M [fixture:fail-generate=2] [fixture:stuck]").notebook_id)
+    assert faults.flags == {"fail-generate", "stuck"}
+    assert faults.limit("fail-generate") == 2
+    assert faults.limit("stuck") is None
+
+
+def test_fail_generate_n_fails_the_first_n_generations_of_each_type(
+    counter: dict[str, int],
+) -> None:
+    nb = _nb("M [fixture:fail-generate=1]")
+    for kind in (ArtifactType.report, ArtifactType.quiz):
+        with pytest.raises(ProviderError):
+            FixtureProvider().generate(nb, kind, "", {})
+        job = FixtureProvider().generate(nb, kind, "", {})  # another worker, Retry
+        assert FixtureProvider().poll(job) is StudioStatus.ready
+
+
+def test_transient_generate_n_recovers_on_a_later_attempt(counter: dict[str, int]) -> None:
+    nb = _nb("M [fixture:transient-generate=2]")
+    for _ in range(2):
+        with pytest.raises(TransientProviderError):
+            FixtureProvider().generate(nb, ArtifactType.report, "", {})
+    FixtureProvider().generate(nb, ArtifactType.report, "", {})
+
+
+def test_stuck_and_studio_failed_n_follow_the_job(counter: dict[str, int]) -> None:
+    p = FixtureProvider()
+    nb = _nb("M [fixture:stuck=1]")
+    first = p.generate(nb, ArtifactType.report, "", {})
+    assert p.poll(first) is StudioStatus.pending
+    assert FixtureProvider().poll(first) is StudioStatus.pending  # resumed: still the stuck job
+    second = p.generate(nb, ArtifactType.report, "", {})  # Redo: a new generation
+    assert p.poll(second) is StudioStatus.ready
+
+    nb = _nb("M [fixture:studio-failed=1]")
+    assert p.poll(p.generate(nb, ArtifactType.quiz, "", {})) is StudioStatus.failed
+    assert p.poll(p.generate(nb, ArtifactType.quiz, "", {})) is StudioStatus.ready
+
+
+def test_malformed_n_parses_on_the_next_generation(counter: dict[str, int]) -> None:
+    from app.pipeline.parsers import parse_artifact
+    from app.pipeline.parsers.base import ArtifactParseError
+
+    p = FixtureProvider()
+    nb = _nb("M [fixture:malformed=1]")
+    raw = p.fetch_content(p.generate(nb, ArtifactType.report, "", {}))
+    with pytest.raises(ArtifactParseError):
+        parse_artifact(ArtifactType.report, raw.html, raw.extras)
+    raw = p.fetch_content(p.generate(nb, ArtifactType.report, "", {}))
+    assert parse_artifact(ArtifactType.report, raw.html, raw.extras)
+
+
+def test_chat_fail_n_answers_after_n_failures(counter: dict[str, int]) -> None:
+    nb = _nb("M [fixture:chat-fail=1]")
+    with pytest.raises(ProviderError):
+        FixtureProvider().query(nb, "Create 3 NEW quiz questions")
+    assert FixtureProvider().query(nb, "Create 3 NEW quiz questions") == fx.FIXTURE_CHAT_ANSWER
+
+
+def test_typeset_down_n_counts_attempts_per_version(
+    monkeypatch: pytest.MonkeyPatch, counter: dict[str, int]
+) -> None:
+    monkeypatch.setattr("app.config.get_settings", lambda: Settings(content_provider="fixture"))
+    title = "Week 1 [fixture:typeset-down=1]"
+    assert fx.typeset_down(title, "v1")
+    assert not fx.typeset_down(title, "v1")  # the retry
+    assert fx.typeset_down(title, "v2")  # another version: its own first attempt
+
+
+def test_uncounted_faults_never_touch_the_counter(counter: dict[str, int]) -> None:
+    p = FixtureProvider()
+    job = p.generate(_nb("M [fixture:stuck]"), ArtifactType.report, "", {})
+    assert p.poll(job) is StudioStatus.pending
+    p.generate(_nb("Plain"), ArtifactType.report, "", {})
+    assert counter == {}
