@@ -416,6 +416,7 @@ def test_ip_limit_counts_failures_only(
 def test_ip_limit_also_applies_to_device_cookie_attempts(
     app_client: TestClient, settings: Settings, fast_verify: list[str]
 ) -> None:
+    """Owner decision 8 (2026-10-29): no exemption for trusted devices."""
     _register(app_client, "owner@example.com")
     laptop = _trusted_device(app_client, "owner@example.com", ip="10.30.0.1")
     for _ in range(100):

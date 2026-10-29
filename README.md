@@ -227,6 +227,12 @@ them is a dev or missing value (`backend/app/config.py`).
    Keep it `chmod 700`, run the `mcp` profile only where needed, and sign in
    with `mcp/auth-login.mjs` (`mcp/README.md`). If the host is compromised,
    sign that Google account out of all sessions.
+11. **Upgrades: ship the two badge migrations together.** Run
+   `alembic upgrade head` once over both `c9a4e2b7d613` (flashcard ratings per
+   published version) and `e5c1a9d7b3f2` (Course Complete badge stays once
+   earned). Deployed separately, a deck republished in between drops a course
+   below 100 % and `e5c1a9d7b3f2`'s backfill only stamps courses complete at
+   upgrade time, so those students lose the badge for good.
 
 ## Development workflow
 
