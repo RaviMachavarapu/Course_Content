@@ -21,6 +21,7 @@ celerybeat-schedule*
 # Test output
 test-results/
 playwright-report/
+e2e-results/
 __pycache__/
 *.pyc
 .pytest_cache/

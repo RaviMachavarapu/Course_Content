@@ -1,0 +1,73 @@
+# Isolated end-to-end stack: the dev stack (docker-compose.yml) with the
+# FixtureProvider forced, its own project (volumes, networks, images) and no
+# host ports that clash with dev. Driven by scripts/e2e.sh:
+#
+#   docker compose -p shikshak-e2e -f docker-compose.yml -f docker-compose.e2e.yml ...
+#
+# Never combine with docker-compose.override.yml (live NotebookLM). Named
+# volumes and networks are prefixed by the project name (shikshak-e2e_pgdata,
+# shikshak-e2e_media, ...), so nothing here touches the dev data.
+#
+# The app's address is http://localhost:5174 (reset links, media URLs): on
+# the host that is the published web port; Playwright runs in a container on
+# the `edge` (web) and `default` (mailhog) networks and forwards its own
+# localhost:5174 to web:80 (a secure context, like a real localhost/https
+# user). Mailhog's UI: http://127.0.0.1:8026.
+
+x-e2e-env: &e2e-env
+  APP_ENV: dev
+  # Never live NotebookLM in tests: the fixture provider, and an mcp endpoint
+  # that cannot resolve in case anything reaches for it anyway.
+  CONTENT_PROVIDER: fixture
+  MCP_ENDPOINT: http://e2e-no-mcp.invalid:9
+  PUBLIC_BASE_URL: http://localhost:5174
+  CORS_ORIGINS: http://localhost:5174
+
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  api:
+    # Same as dev, but the trusted proxy is web's address on the e2e edge
+    # subnet (dev's 10.213.53.0/28 is taken by the dev stack).
+    command: >-
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      --proxy-headers --forwarded-allow-ips=10.213.54.2
+    environment: *e2e-env
+    ports: !reset []
+
+  worker:
+    environment: *e2e-env
+
+  worker-pdf:
+    environment: *e2e-env
+
+  worker-quiz:
+    environment: *e2e-env
+
+  beat:
+    environment: *e2e-env
+
+  web:
+    ports: !override ["127.0.0.1:5174:80"]
+    networks: !override
+      edge:
+        ipv4_address: 10.213.54.2
+
+  mailhog:
+    ports: !override ["127.0.0.1:8026:8025"]
+
+  mcp:
+    # Belt and braces: the mcp profile is never enabled for e2e, and without
+    # host ports even an accidental start can't clash with dev's.
+    ports: !reset []
+
+networks:
+  edge:
+    ipam: !override
+      config:
+        - subnet: 10.213.54.0/28
+          ip_range: 10.213.54.8/29

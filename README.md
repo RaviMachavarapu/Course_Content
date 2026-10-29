@@ -109,6 +109,42 @@ docker build --target build -t sdp-fe-build frontend
 docker run --rm sdp-fe-build npm test     # Vitest
 ```
 
+## Testing
+
+Unit and integration tests:
+
+```bash
+docker compose run --rm -T api pytest                       # backend (uses the shikshak_test DB)
+docker compose run --rm -T api ruff check . && docker compose run --rm -T api mypy app
+docker build --target build -t sdp-fe-build frontend
+docker run --rm sdp-fe-build npm test                       # frontend (Vitest)
+docker run --rm sdp-fe-build npx tsc -b                     # frontend types (incl. e2e specs)
+```
+
+End-to-end (Playwright, `frontend/src/e2e`) on a throwaway stack:
+
+```bash
+scripts/e2e.sh                         # whole suite, then tear down
+scripts/e2e.sh --project admin         # or student
+scripts/e2e.sh --grep "redo" --keep    # one test; leave the stack up to look around
+scripts/e2e.sh --repeat-each 3         # flakiness check
+scripts/e2e.sh -- --workers 1          # anything after -- goes to `playwright test`
+```
+
+It runs `docker-compose.yml` + `docker-compose.e2e.yml` as project
+`shikshak-e2e`: always `CONTENT_PROVIDER=fixture` (never NotebookLM, never the
+override or a root `.env`), its own volumes and networks, and no host ports
+shared with the dev stack (web on 127.0.0.1:5174, mailhog on 127.0.0.1:8026),
+so it runs next to a running dev stack without touching its data. The script
+builds and starts it, migrates, seeds the admin the specs sign in with
+(`admin@example.com` / `dev-admin-password-123`; students register
+themselves), runs the suite in `mcr.microsoft.com/playwright` at the version
+in `frontend/package-lock.json`, and runs `down -v` unless `--keep`. Results
+(git-ignored): `e2e-results/report/index.html` and, for failed tests, traces
+under `e2e-results/test-results` (`npx playwright show-trace <trace.zip>`).
+With `--keep`, tear down later with
+`docker compose -p shikshak-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v`.
+
 ## Production checklist
 
 `docker-compose.yml` is the dev stack. Its secrets and public address have
