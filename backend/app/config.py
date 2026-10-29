@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -75,26 +75,26 @@ class Settings(BaseSettings):
     # ---- auth ----
     #: idle timeout: a session ends after this long without a request (each
     #: authenticated request renews it, cheaply — see auth.sessions)
-    admin_session_ttl_hours: int = 8
-    student_session_ttl_days: int = 30
+    admin_session_ttl_hours: int = Field(default=8, ge=1)
+    student_session_ttl_days: int = Field(default=30, ge=1)
     #: absolute maximum: however active, a session ends this long after sign-in
-    admin_session_max_days: int = 7
-    student_session_max_days: int = 30
+    admin_session_max_days: int = Field(default=7, ge=1)
+    student_session_max_days: int = Field(default=30, ge=1)
     #: failed logins per client IP, sliding window (successes don't count);
     #: beyond it 429 until the oldest failure leaves the window
     login_rate_limit: str = "100/15m"
     #: per-email (and per-device) failures are counted over this sliding window
-    login_failure_window_sec: int = 900
+    login_failure_window_sec: int = Field(default=900, ge=1)
     #: failures per email with no delay; from the next failure on, the next
     #: attempt waits base, 2*base, 4*base … seconds (capped at max)
-    login_free_failures: int = 5
+    login_free_failures: int = Field(default=5, ge=0)
     #: the same, for attempts carrying a valid trusted-device cookie
-    login_device_free_failures: int = 10
-    login_delay_base_sec: int = 2
-    login_delay_max_sec: int = 60
+    login_device_free_failures: int = Field(default=10, ge=0)
+    login_delay_base_sec: int = Field(default=2, ge=1)
+    login_delay_max_sec: int = Field(default=60, ge=1)
     #: signs the trusted-device cookie (sdp_device_<scope>); required outside dev
     device_cookie_secret: str = _DEV_DEVICE_COOKIE_SECRET
-    device_cookie_max_age_days: int = 180
+    device_cookie_max_age_days: int = Field(default=180, ge=1)
     #: register attempts per client IP (each one costs an Argon2 hash)
     register_rate_limit: str = "100/1h"
     #: password-reset requests per client IP (429 beyond); per email the cap is
@@ -119,6 +119,18 @@ class Settings(BaseSettings):
         """Parse the env var as a comma-separated list (``a,b,c``)."""
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("login_rate_limit", "register_rate_limit", "password_reset_rate_limit")
+    @classmethod
+    def _rate_spec(cls, value: str) -> str:
+        """``N/<window>`` with N >= 1 and a non-empty window: a 0 limit
+        ("disable") made every login fail with a 500."""
+        from app.auth.ratelimit import parse_rate
+
+        limit, window = parse_rate(value)
+        if limit < 1 or window < 1:
+            raise ValueError(f"must be N/<window> with N >= 1 and a window > 0 (got {value!r})")
         return value
 
     @model_validator(mode="after")
@@ -169,6 +181,10 @@ class Settings(BaseSettings):
                 problems.append(
                     "SMTP_URL is the dev mailhog or empty (or set PASSWORD_RESET_ENABLED=false)"
                 )
+        if self.is_prod and _smtp_credentials_in_clear(self.smtp_url):
+            problems.append(
+                "SMTP_URL sends its credentials unencrypted (use smtps:// or ?starttls=true)"
+            )
 
         if problems:
             raise ValueError(f"APP_ENV={self.app_env}: " + "; ".join(problems))
@@ -182,6 +198,15 @@ class Settings(BaseSettings):
     def db_url_sync(self) -> str:
         """DSN without the SQLAlchemy driver marker, for tools that want libpq form."""
         return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+
+def _smtp_credentials_in_clear(url: str) -> bool:
+    """A plain ``smtp://`` URL with a user and without ``starttls=true``."""
+    parts = urlsplit(url)
+    if parts.scheme.lower() != "smtp" or not parts.username:
+        return False
+    starttls = parse_qs(parts.query).get("starttls", ["false"])[0].lower()
+    return starttls not in {"1", "true", "yes", "on"}
 
 
 def _url_password(url: str) -> str | None:

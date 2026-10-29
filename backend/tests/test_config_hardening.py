@@ -140,3 +140,62 @@ def test_every_problem_is_reported_at_once() -> None:
         "SMTP_URL",
     ):
         assert name in text
+
+
+# ------------------------------------------------- review 2026-10-29 (E2E round)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("login_rate_limit", "0/15m"),
+        ("login_rate_limit", "10/0m"),
+        ("login_rate_limit", "lots"),
+        ("register_rate_limit", "0/1h"),
+        ("password_reset_rate_limit", "0/1h"),
+        ("login_free_failures", -1),
+        ("login_device_free_failures", -1),
+        ("login_failure_window_sec", 0),
+        ("login_delay_base_sec", 0),
+        ("login_delay_max_sec", 0),
+        ("device_cookie_max_age_days", 0),
+        ("admin_session_ttl_hours", 0),
+        ("admin_session_max_days", 0),
+        ("student_session_ttl_days", 0),
+        ("student_session_max_days", 0),
+    ],
+)
+def test_bad_limit_settings_are_refused_at_startup(field: str, value: object) -> None:
+    """Scenario 11: e.g. LOGIN_RATE_LIMIT=0/15m ("disable") made every login a 500."""
+    with pytest.raises(ValidationError, match=field):
+        _settings(**{field: value})
+
+
+def test_zero_free_failures_is_allowed() -> None:
+    assert _settings(login_free_failures=0, login_device_free_failures=0).login_free_failures == 0
+
+
+@pytest.mark.parametrize(
+    "smtp_url",
+    [
+        "smtp://user:pw@relay.example.org:587",
+        "smtp://user:pw@relay.example.org:587?starttls=false",
+        "smtp://user@relay.example.org:25",
+    ],
+)
+def test_prod_refuses_smtp_credentials_without_tls(smtp_url: str) -> None:
+    """Scenario 31: the SMTP login would go out in plain text."""
+    with pytest.raises(ValidationError, match="SMTP_URL"):
+        _settings(app_env="prod", **{**_REAL, "smtp_url": smtp_url})
+
+
+@pytest.mark.parametrize(
+    "smtp_url",
+    [
+        "smtps://user:pw@relay.example.org",
+        "smtp://user:pw@relay.example.org:587?starttls=true",
+        "smtp://relay.internal:25",  # no credentials to protect
+    ],
+)
+def test_prod_accepts_tls_or_credential_free_smtp(smtp_url: str) -> None:
+    assert _settings(app_env="prod", **{**_REAL, "smtp_url": smtp_url}).smtp_url == smtp_url

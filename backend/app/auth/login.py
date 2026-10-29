@@ -101,7 +101,8 @@ redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now - window)
 local wait = 0
 if redis.call('ZCARD', KEYS[1]) >= ip_limit then
   local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
-  wait = tonumber(oldest[2]) + ip_window - now
+  -- an empty set can only reach here with a limit < 1 (settings refuse it)
+  wait = oldest[2] and (tonumber(oldest[2]) + ip_window - now) or ip_window
 end
 local count = redis.call('ZCARD', KEYS[2])
 if count > free then
