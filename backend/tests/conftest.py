@@ -182,15 +182,18 @@ def _bind_source_step(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
 
 @pytest.fixture
 def redis_client() -> Iterator[redis.Redis[str]]:
-    """A flushed, isolated Redis DB (index 15) for the duration of one test."""
+    """A flushed, isolated Redis DB (index 15, or TEST_REDIS_DB for a parallel
+    run against another test database) for the duration of one test."""
     url = os.environ.get("TEST_REDIS_URL") or get_settings().redis_url
+    db = int(os.environ.get("TEST_REDIS_DB", "15"))
     # A db in the URL path (redis://host:6379/0) overrides a `db=` kwarg to
     # from_url, which made this flush the app's real db0 (every session and
-    # rate limit) on each run. Take host/auth from the URL, force db 15.
+    # rate limit) on each run. Take host/auth from the URL, force the test db.
+    assert db >= 10, "test Redis DBs are 10-15; 0-2 belong to the running app"
     base = redis.Redis.from_url(url, decode_responses=True)
-    client: redis.Redis[str] = redis.Redis(**{**base.connection_pool.connection_kwargs, "db": 15})
+    client: redis.Redis[str] = redis.Redis(**{**base.connection_pool.connection_kwargs, "db": db})
     base.close()
-    assert client.connection_pool.connection_kwargs["db"] == 15
+    assert client.connection_pool.connection_kwargs["db"] == db
     client.flushdb()
     try:
         yield client
