@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 
 from app.api.deps import CurrentStudent, DbDep, current_student
-from app.api.student.artifacts import _visible_artifact
+from app.api.student.artifacts import _visible_artifact, ensure_current_version
 from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.enums import ArtifactType, FlashcardRatingValue
@@ -39,6 +39,7 @@ def rate_card(
     artifact = _visible_artifact(db, artifact_id)
     if artifact.type is not ArtifactType.flashcards:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
+    ensure_current_version(artifact, body.version_id)
 
     version = next((v for v in artifact.versions if v.id == artifact.published_version_id), None)
     cards = (version.content_json or {}).get("cards", []) if version else []

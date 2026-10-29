@@ -54,6 +54,18 @@ def _visible_artifact(db: DbDep, artifact_id: uuid.UUID) -> Artifact:
     return artifact
 
 
+def ensure_current_version(artifact: Artifact, version_id: uuid.UUID | None) -> None:
+    """A write from a page showing an older published version (another one was
+    published since it loaded) would land on content the student never saw:
+    409 ``stale_version``, and the page reloads. No version given: no check."""
+    if version_id is not None and version_id != artifact.published_version_id:
+        raise APIError(
+            status.HTTP_409_CONFLICT,
+            "stale_version",
+            "This content was updated. Reload to see the new version.",
+        )
+
+
 @router.get("/artifacts/{artifact_id}", response_model=StudentArtifactOut)
 def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> StudentArtifactOut:
     artifact = _visible_artifact(db, artifact_id)
@@ -110,6 +122,7 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
         module_index=module_index,
         course_slug=module.course.slug,
         revision=version.revision,
+        version_id=version.id,
         content_json=content_json,
         content_html=version.content_html,
         media=media,
@@ -128,6 +141,7 @@ def put_progress(
     student: CurrentStudent,
 ) -> ArtifactProgressResponse:
     artifact = _visible_artifact(db, artifact_id)
+    ensure_current_version(artifact, body.version_id)
     row, course_percent = record_artifact_progress(
         db,
         user_id=student.id,

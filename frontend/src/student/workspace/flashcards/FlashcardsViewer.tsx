@@ -34,15 +34,16 @@ export function FlashcardsViewer({
   slug: string;
 }): JSX.Element {
   const { data, isPending, isError, refetch } = useStudentArtifact(artifactId);
-  const rate = useFlashcardRating(artifactId);
+  const rate = useFlashcardRating(artifactId, slug);
   const progress = useArtifactProgress(artifactId, slug);
 
   const cards = asArray<Card>(data?.content_json?.cards);
   const ratings = data?.flashcard_ratings ?? {};
 
   // Hard-first order, decided once when the deck loads (spec §3.11). Keyed on
-  // the artifact id only: a rating or refetch replaces `data`, and re-sorting
-  // then would swap the card under the student.
+  // the artifact and the published version only: a rating or refetch replaces
+  // `data`, and re-sorting then would swap the card under the student; a newly
+  // published deck (stale_version reload) starts over.
   const order = useMemo(() => {
     if (!data) return [];
     return cards
@@ -53,12 +54,24 @@ export function FlashcardsViewer({
         return ra - rb || a - b;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.id, cards.length]);
+  }, [data?.id, data?.version_id, cards.length]);
 
   const [pos, setPos] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const seen = useRef<Set<number>>(new Set());
   const completionSent = useRef(false);
+  const versionId = data?.version_id;
+
+  // a new published deck: start from its first card, nothing seen yet
+  const shownVersion = useRef(versionId);
+  useEffect(() => {
+    if (shownVersion.current === versionId) return;
+    shownVersion.current = versionId;
+    seen.current = new Set();
+    completionSent.current = false;
+    setPos(0);
+    setFlipped(false);
+  }, [versionId]);
 
   const cardIndex = order[pos] ?? 0;
   const card = cards[cardIndex];
@@ -70,7 +83,7 @@ export function FlashcardsViewer({
       seen.current.add(cardIndex);
       if (seen.current.size >= total && data && !completionSent.current) {
         completionSent.current = true;
-        progress.mutate({ completed: true });
+        progress.mutate({ completed: true, version_id: data.version_id });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,9 +91,12 @@ export function FlashcardsViewer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName))
-        return;
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      if (t && ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
       if (e.key === " ") {
+        // Space on a focused button or link activates it (a rating, Next, the
+        // PDF link); the card itself is a button and flips on its own click
+        if (t && (["BUTTON", "A"].includes(t.tagName) || t.isContentEditable)) return;
         e.preventDefault();
         setFlipped((f) => !f);
       } else if (e.key === "ArrowRight") {
@@ -162,7 +178,7 @@ export function FlashcardsViewer({
             type="button"
             data-testid={r.ws}
             aria-pressed={currentRating === r.value}
-            onClick={() => rate.mutate({ cardIndex, value: r.value })}
+            onClick={() => rate.mutate({ cardIndex, value: r.value, versionId: data.version_id })}
             className={cn(
               "rounded-lg px-4 py-2 font-label-md text-label-md transition-opacity",
               "focus-visible:outline-none focus-visible:shadow-focus",

@@ -137,6 +137,8 @@ class QuizAttemptsResponse(BaseModel):
 
 class FlashcardRatingRequest(BaseModel):
     value: Literal["hard", "good", "easy"]
+    #: the deck version the student is looking at (`StudentArtifactOut.version_id`)
+    version_id: uuid.UUID | None = None
 
 
 class FlashcardRatingsResponse(BaseModel):
@@ -147,6 +149,8 @@ PG_INT_MAX = 2_147_483_647
 
 
 class ArtifactProgressRequest(BaseModel):
+    #: the version the student is looking at (`StudentArtifactOut.version_id`)
+    version_id: uuid.UUID | None = None
     completed: bool | None = None
     complete_module: bool = False
     # the columns are INTEGER: a bigger value is a 422, not a DB overflow (500)
@@ -168,6 +172,9 @@ class StudentArtifactOut(BaseModel):
     module_index: int
     course_slug: str
     revision: int
+    #: the published version shown; writes echo it back (409 stale_version
+    #: once another version has been published)
+    version_id: uuid.UUID
     content_json: dict[str, Any] | None = None
     content_html: str | None = None
     media: list[ArtifactMediaOut]

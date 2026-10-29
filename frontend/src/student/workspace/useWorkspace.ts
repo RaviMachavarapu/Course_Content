@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { useUIStore } from "@/lib/store";
 import {
   type ArtifactProgressInput,
   type FlashcardRating,
@@ -25,15 +26,44 @@ export function useStudentArtifact(id: string | undefined) {
   });
 }
 
-export function useFlashcardRating(id: string) {
+export function isStaleVersion(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409 && err.code === "stale_version";
+}
+
+/** Another version was published while this page showed the old one: say so
+ * and load the new one (the write was refused, nothing was saved). */
+function reloadStale(qc: QueryClient, id: string, slug?: string): void {
+  const type = qc.getQueryData<StudentArtifact>(["student", "artifact", id])?.type;
+  useUIStore.getState().pushToast({
+    tone: "info",
+    title:
+      type === "flashcards"
+        ? "This deck was updated — reloading"
+        : "This lesson was updated — reloading",
+  });
+  void qc.invalidateQueries({ queryKey: ["student", "artifact", id] });
+  if (slug) void qc.invalidateQueries({ queryKey: ["student", "workspace", slug] });
+}
+
+export function useFlashcardRating(id: string, slug?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ cardIndex, value }: { cardIndex: number; value: FlashcardRating }) =>
-      workspaceApi.rateCard(id, cardIndex, value),
+    mutationFn: ({
+      cardIndex,
+      value,
+      versionId,
+    }: {
+      cardIndex: number;
+      value: FlashcardRating;
+      versionId?: string;
+    }) => workspaceApi.rateCard(id, cardIndex, value, versionId),
     onSuccess: ({ ratings }) => {
       qc.setQueryData<StudentArtifact>(["student", "artifact", id], (prev) =>
         prev ? { ...prev, flashcard_ratings: ratings } : prev,
       );
+    },
+    onError: (err) => {
+      if (isStaleVersion(err)) reloadStale(qc, id, slug);
     },
   });
 }
@@ -72,6 +102,9 @@ export function useArtifactProgress(id: string, slug: string) {
         void qc.invalidateQueries({ queryKey: ["student", "artifact", id] });
       }
       return result;
+    },
+    onError: (err) => {
+      if (isStaleVersion(err)) reloadStale(qc, id, slug);
     },
   });
 }

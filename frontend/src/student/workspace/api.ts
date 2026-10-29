@@ -32,6 +32,8 @@ export interface StudentArtifact {
   module_index: number;
   course_slug: string;
   revision: number;
+  /** The published version shown; flashcard writes echo it (409 stale_version). */
+  version_id: string;
   content_json: Record<string, unknown> | null;
   content_html: string | null;
   media: { kind: string; url: string; page_index: number | null }[];
@@ -115,6 +117,8 @@ export interface QuizAttemptsResponse {
 }
 
 export interface ArtifactProgressInput {
+  /** The version the page shows: a newer published one makes this a 409. */
+  version_id?: string;
   completed?: boolean;
   complete_module?: boolean;
   slide_last_index?: number;
@@ -136,10 +140,10 @@ export const workspaceApi = {
       method: "PUT",
       body,
     }),
-  rateCard: (id: string, cardIndex: number, value: FlashcardRating) =>
+  rateCard: (id: string, cardIndex: number, value: FlashcardRating, versionId?: string) =>
     apiFetch<{ ratings: Record<string, FlashcardRating> }>(
       `/api/student/artifacts/${id}/flashcard-ratings/${cardIndex}`,
-      { method: "PUT", body: { value } },
+      { method: "PUT", body: { value, version_id: versionId } },
     ),
   startQuiz: (id: string) =>
     apiFetch<QuizAttemptStart | QuizPreparing>(`/api/student/artifacts/${id}/quiz-attempts`, {
