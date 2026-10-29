@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
 import { errorMessage } from "@/lib/api";
@@ -24,6 +24,17 @@ export function StagingPage(): JSX.Element {
   const [publishScope, setPublishScope] = useState<"module" | "course" | null>(null);
   const failed = (title: string, err: unknown) =>
     toast({ title, description: errorMessage(err), tone: "error" });
+  // One card action at a time. `busy` disables the buttons, but only after a
+  // re-render: both clicks of a fast double-click can arrive before it (a
+  // second Retry then gets a 409 toast). The ref is checked synchronously.
+  const acting = useRef(false);
+  const once = (start: (settled: () => void) => void) => {
+    if (acting.current) return;
+    acting.current = true;
+    start(() => {
+      acting.current = false;
+    });
+  };
 
   // a failed poll with data already shown keeps the page (and any open
   // dialog): only a failed first load replaces it
@@ -119,25 +130,41 @@ export function StagingPage(): JSX.Element {
                   artifact={artifact}
                   busy={redo.isPending || retry.isPending || outline.isPending || cancel.isPending}
                   onRedo={(note, options, customPrompt) =>
-                    redo.mutate(
-                      { artifactId: artifact.id, note, options, customPrompt },
-                      { onError: (err) => failed("Couldn’t start the redo", err) },
+                    once((settled) =>
+                      redo.mutate(
+                        { artifactId: artifact.id, note, options, customPrompt },
+                        {
+                          onError: (err) => failed("Couldn’t start the redo", err),
+                          onSettled: settled,
+                        },
+                      ),
                     )
                   }
                   onRetry={() =>
-                    retry.mutate(artifact.id, {
-                      onError: (err) => failed("Couldn’t retry", err),
-                    })
+                    once((settled) =>
+                      retry.mutate(artifact.id, {
+                        onError: (err) => failed("Couldn’t retry", err),
+                        onSettled: settled,
+                      }),
+                    )
                   }
                   onCancel={() =>
-                    cancel.mutate(artifact.id, {
-                      onError: (err) => failed("Couldn’t cancel", err),
-                    })
+                    once((settled) =>
+                      cancel.mutate(artifact.id, {
+                        onError: (err) => failed("Couldn’t cancel", err),
+                        onSettled: settled,
+                      }),
+                    )
                   }
                   onOutline={(feedback) =>
-                    outline.mutate(
-                      { artifactId: artifact.id, feedback },
-                      { onError: (err) => failed("Couldn’t send the outline action", err) },
+                    once((settled) =>
+                      outline.mutate(
+                        { artifactId: artifact.id, feedback },
+                        {
+                          onError: (err) => failed("Couldn’t send the outline action", err),
+                          onSettled: settled,
+                        },
+                      ),
                     )
                   }
                 />

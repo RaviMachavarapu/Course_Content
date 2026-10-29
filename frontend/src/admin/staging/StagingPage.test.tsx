@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useUIStore } from "@/lib/store";
 import { StagingPage } from "./StagingPage";
@@ -480,8 +480,12 @@ describe("StagingPage", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Neural Nets" });
     const retry = screen.getByTestId("btn-sr6");
-    await userEvent.click(retry);
-    await userEvent.click(retry);
+    // a real double-click can land both clicks before React re-renders the
+    // button disabled (seen in the browser E2E): two clicks in one tick
+    act(() => {
+      retry.click();
+      retry.click();
+    });
     await waitFor(() => expect(screen.getByTestId("btn-sr6")).toBeDisabled());
     const posts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST");
     expect(posts).toHaveLength(1);
