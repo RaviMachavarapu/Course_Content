@@ -46,7 +46,9 @@ test("attempt 1, then two retakes of fresh questions, each the size of the revie
   await finish(page);
 
   for (const attempt of [2, 3]) {
-    await page.getByTestId("btn-qz5").click(); // Retake
+    // Retake; the first one double-clicked: still one attempt, served normally
+    if (attempt === 2) await page.getByTestId("btn-qz5").dblclick();
+    else await page.getByTestId("btn-qz5").click();
     await expect(firstQuestion(page)).toBeVisible({ timeout: 90_000 });
     await expect(page.getByText("Question 1 of 6")).toBeVisible();
     await expect(page.getByText(/squared/).first()).toBeVisible(); // fresh chat questions
