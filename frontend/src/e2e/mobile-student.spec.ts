@@ -10,7 +10,11 @@ let courseTitle = "";
 
 test.beforeAll(async () => {
   test.setTimeout(180_000);
-  const c = await publishedCourse(["report", "flashcards", "quiz"], "Phone Unit");
+  // long unbreakable words in titles must wrap, not push the page sideways
+  const c = await publishedCourse(
+    ["report", "flashcards", "quiz"],
+    "Phone Unit Supercalifragilisticexpialidocious-unbreakable-title-token",
+  );
   courseTitle = c.courseTitle;
   await c.admin.dispose();
 });
