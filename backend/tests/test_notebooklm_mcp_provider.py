@@ -224,7 +224,7 @@ def test_non_object_data_is_a_provider_error() -> None:
 def test_lock_already_held_is_a_transient_provider_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.pipeline.notebooklm_mcp._LOCK_BLOCKING_TIMEOUT_SEC", 1)
+    monkeypatch.setattr("app.pipeline.notebooklm_mcp._LOCK_WAIT_SEC", 1)
     provider = _provider(lambda _r: _ok({"notebook_id": "nb-1", "title": "x"}))
     blocking_lock = provider._redis.lock("mcp:session", timeout=5)
     assert blocking_lock.acquire(blocking=True)
@@ -361,7 +361,8 @@ def test_add_file_source_posts_path_and_name() -> None:
         "path": "/data/media/uploads/a.pdf",
         "name": "a.pdf",
     }
-    assert seen[0].extensions["timeout"]["read"] is None
+    # long but finite: a half-open connection to the shim can't hang the job forever
+    assert seen[0].extensions["timeout"]["read"] == pytest.approx(30 * 60)
 
 
 def test_add_file_source_does_not_hold_the_session_lock(
@@ -466,3 +467,116 @@ def test_query_timeout_is_transient() -> None:
 
     with pytest.raises(TransientProviderError):
         _provider(handler).query(NotebookRef(notebook_id="nb-1"), "ask")
+
+
+# -- Redis trouble and the session lock (review 2026-10-29) ----------------------------
+class _StubLock:
+    def __init__(self, owner: _StubRedis, blocking_timeout: float | None) -> None:
+        self.owner = owner
+        self.blocking_timeout = blocking_timeout
+
+    def acquire(self, blocking: bool = True) -> bool:
+        if self.owner.acquire_error is not None:
+            raise self.owner.acquire_error
+        return True
+
+    def release(self) -> None:
+        if self.owner.release_error is not None:
+            raise self.owner.release_error
+
+
+class _StubRedis:
+    """Stands in for the provider's Redis client (no real lock taken)."""
+
+    def __init__(self) -> None:
+        self.acquire_error: Exception | None = None
+        self.release_error: Exception | None = None
+        self.waits: list[float | None] = []
+
+    def lock(self, name: str, timeout: float, blocking_timeout: float | None = None) -> _StubLock:
+        self.waits.append(blocking_timeout)
+        return _StubLock(self, blocking_timeout)
+
+    def close(self) -> None:
+        pass
+
+
+def _stubbed(handler: Handler) -> tuple[NotebookLmMcpProvider, _StubRedis]:
+    provider = _provider(handler)
+    provider._redis.close()
+    stub = _StubRedis()
+    provider._redis = stub  # type: ignore[assignment]
+    return provider, stub
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        __import__("redis").exceptions.ConnectionError("restarting"),
+        __import__("redis").exceptions.TimeoutError("slow"),
+        __import__("redis").exceptions.AuthenticationError("bad password"),
+    ],
+    ids=["connection", "timeout", "auth"],
+)
+def test_redis_trouble_taking_the_session_lock_is_transient(error: Exception) -> None:
+    provider, stub = _stubbed(lambda _r: _ok({"notebook_id": "nb-1"}))
+    stub.acquire_error = error
+    with pytest.raises(TransientProviderError, match="Redis"):
+        provider.create_notebook("x")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        __import__("redis").exceptions.LockNotOwnedError("key gone"),
+        __import__("redis").exceptions.ConnectionError("restarting"),
+    ],
+    ids=["lost", "down"],
+)
+def test_a_failed_lock_release_never_discards_a_finished_call(error: Exception) -> None:
+    """Worst case from the review: /studio/create succeeded, then the release fails
+    (the key vanished in a Redis restart). The NotebookLM id must still come back."""
+    provider, stub = _stubbed(lambda _r: httpx.Response(200, json={"artifact_id": "art-7"}))
+    stub.release_error = error
+    job = provider.generate(NotebookRef(notebook_id="nb-1"), ArtifactType.report, "p", {})
+    assert job.job_id == "art-7"
+
+
+def test_chat_waits_briefly_for_the_session_lock_but_generation_steps_outwait_it() -> None:
+    """A chat query holds the lock up to 330 s: generation calls wait longer than the
+    longest holder; a chat prep gives up after 60 s (its task retries with back-off)."""
+    from app.pipeline import notebooklm_mcp as m
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/call":
+            return _ok({"answer": "a"})
+        return httpx.Response(200, json={"status": 1, "artifact_id": "a", "sources": []})
+
+    provider, stub = _stubbed(handler)
+    nb = NotebookRef(notebook_id="nb-1")
+    job = StudioJobRef(job_id="a", notebook_id="nb-1", kind=ArtifactType.report)
+    provider.query(nb, "q")
+    provider.poll(job)
+    provider.generate(nb, ArtifactType.report, "p", {})
+    provider.source_statuses(nb)
+    chat, poll, create, status = stub.waits
+    assert chat == m._LOCK_BLOCKING_TIMEOUT_SEC == 60
+    longest_holder = max(m._QUERY_TIMEOUT_SEC, m._CHAINED_CALL_TIMEOUT_SEC)
+    for wait in (poll, create, status):
+        assert wait is not None and wait > longest_holder
+
+
+def test_shim_endpoints_chaining_two_connector_calls_get_room_for_both() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = request.extensions["timeout"]["read"]
+        return httpx.Response(200, json={"status": 1, "artifact_id": "a"})
+
+    provider, _stub = _stubbed(handler)
+    nb = NotebookRef(notebook_id="nb-1")
+    provider.generate(nb, ArtifactType.report, "p", {})
+    provider.poll(StudioJobRef(job_id="a", notebook_id="nb-1", kind=ArtifactType.report))
+    shim_tool_timeout = 300
+    assert seen["/studio/create"] > 2 * shim_tool_timeout
+    assert seen["/studio/artifact"] > 2 * shim_tool_timeout

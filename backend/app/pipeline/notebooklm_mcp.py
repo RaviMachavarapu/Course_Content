@@ -26,8 +26,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import redis
+from redis.exceptions import RedisError
 
 from app.config import Settings
+from app.logging import get_logger
 from app.models.enums import ArtifactType
 from app.pipeline.provider import (
     NotebookRef,
@@ -47,8 +49,12 @@ if TYPE_CHECKING:
 else:
     RedisClient = redis.Redis
 
+log = get_logger("notebooklm_mcp")
+
 _LOCK_KEY = "mcp:session"
 _LOCK_TIMEOUT_SEC = 30 * 60  # generous — a live audio generation can be slow
+#: a chat query (quiz prep) waits at most this long for the session lock; its task
+#: retries with back-off, so it gives way to generations
 _LOCK_BLOCKING_TIMEOUT_SEC = 60
 
 _CREATE_TOOL_BY_TYPE: dict[ArtifactType, str] = {
@@ -70,6 +76,15 @@ _DOWNLOAD_TIMEOUT_SEC = 300.0
 #: really finished with its stdio call (a chat answer for ~10 questions takes ~40 s).
 _SHIM_CALL_TIMEOUT_SEC = 330.0
 _QUERY_TIMEOUT_SEC = _SHIM_CALL_TIMEOUT_SEC
+#: /studio/create and /studio/artifact chain two connector calls in the shim
+_CHAINED_CALL_TIMEOUT_SEC = 2 * 300.0 + 30.0
+#: generation steps (polls, create, source status, outline) outwait the longest holder
+#: of the session lock (a chained call or a chat query), so a class taking quiz retakes
+#: doesn't fail generations that are fine
+_LOCK_WAIT_SEC = _CHAINED_CALL_TIMEOUT_SEC + 30.0
+#: an upload is one shim request (register + send up to 190 MB): long, but finite,
+#: so a half-open connection can't hold the job (and the module lock) forever
+_UPLOAD_TIMEOUT_SEC = 30 * 60.0
 #: shim statuses worth retrying: its own transport/connect failures (502) and
 #: whatever a proxy or timeout in between answers
 _TRANSIENT_STATUSES = {408, 502, 503, 504}
@@ -99,7 +114,7 @@ class NotebookLmMcpProvider:
         return SourceRef(source_id=str(data["source_id"]))
 
     def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
-        # No client timeout: the upload is bounded by Google, not by us. Not under the
+        # A long but finite timeout (`_UPLOAD_TIMEOUT_SEC`). Not under the
         # session lock (same reasoning as `download`): the shim registers and sends the
         # file over plain HTTPS in one request without the connector's stdio session, and
         # an upload of up to 190 MB would otherwise block every other job's calls and
@@ -108,7 +123,7 @@ class NotebookLmMcpProvider:
             lambda: self._http.post(
                 "/source/upload",
                 json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
-                timeout=None,
+                timeout=httpx.Timeout(_UPLOAD_TIMEOUT_SEC, connect=10.0),
             )
         )
         if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
@@ -160,6 +175,7 @@ class NotebookLmMcpProvider:
                 "focus_prompt": focus_prompt,
                 "options": options,
             },
+            timeout=_CHAINED_CALL_TIMEOUT_SEC,
         )
         artifact_id = data.get("artifact_id")
         if not artifact_id:
@@ -217,6 +233,7 @@ class NotebookLmMcpProvider:
             "notebook_query",
             {"notebook_id": nb.notebook_id, "query": text},
             timeout=_QUERY_TIMEOUT_SEC,
+            wait=_LOCK_BLOCKING_TIMEOUT_SEC,
         )
         answer = data.get("answer")
         if not isinstance(answer, str):
@@ -258,6 +275,7 @@ class NotebookLmMcpProvider:
             "GET",
             "/studio/artifact",
             params={"notebook_id": job.notebook_id, "artifact_id": job.job_id},
+            timeout=_CHAINED_CALL_TIMEOUT_SEC,
         )
 
     def _studio(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -269,11 +287,17 @@ class NotebookLmMcpProvider:
         return body
 
     def _call(
-        self, tool: str, args: dict[str, Any], *, timeout: float | None = None
+        self,
+        tool: str,
+        args: dict[str, Any],
+        *,
+        timeout: float | None = None,
+        wait: float | None = None,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
         resp = self._locked(
-            lambda: self._http.post("/call", json={"tool": tool, "args": args}, **kwargs)
+            lambda: self._http.post("/call", json={"tool": tool, "args": args}, **kwargs),
+            wait=wait,
         )
         self._raise_for_source_auth(resp)
         self._raise_for_status(resp)
@@ -283,22 +307,31 @@ class NotebookLmMcpProvider:
             raise ProviderError(f"{tool} returned a non-object result: {body!r}")
         return data
 
-    def _locked(self, request: Callable[[], httpx.Response]) -> httpx.Response:
-        """Run one shim request under the shared NotebookLM session lock."""
-        lock = self._redis.lock(
-            _LOCK_KEY,
-            timeout=_LOCK_TIMEOUT_SEC,
-            blocking_timeout=_LOCK_BLOCKING_TIMEOUT_SEC,
-        )
-        acquired = lock.acquire(blocking=True)
+    def _locked(
+        self, request: Callable[[], httpx.Response], *, wait: float | None = None
+    ) -> httpx.Response:
+        """Run one shim request under the shared NotebookLM session lock.
+
+        Redis trouble taking the lock (a restart, a rotated password) is transient. A
+        failed release is only logged: the call already ran, and throwing its result
+        away (e.g. a new NotebookLM artifact id) would orphan it and spend quota again.
+        The lock's TTL frees a key we couldn't delete."""
+        if wait is None:
+            wait = _LOCK_WAIT_SEC
+        lock = self._redis.lock(_LOCK_KEY, timeout=_LOCK_TIMEOUT_SEC, blocking_timeout=wait)
+        try:
+            acquired = lock.acquire(blocking=True)
+        except RedisError as exc:
+            raise TransientProviderError(f"{_LOCK_KEY} unavailable (Redis: {exc})") from exc
         if not acquired:
-            raise TransientProviderError(
-                f"could not acquire {_LOCK_KEY} within {_LOCK_BLOCKING_TIMEOUT_SEC}s"
-            )
+            raise TransientProviderError(f"could not acquire {_LOCK_KEY} within {wait:.0f}s")
         try:
             return self._send(request)
         finally:
-            lock.release()
+            try:
+                lock.release()
+            except RedisError as exc:
+                log.warning("notebooklm_mcp.lock_release_failed", error=str(exc))
 
     @staticmethod
     def _send(request: Callable[[], httpx.Response]) -> httpx.Response:

@@ -5,7 +5,10 @@ link and PDFs as sources. `ensure_module_sources` does that exactly once, even
 when several artifact jobs start together, and resumes after a failure:
 
 - A Redis lock per module serialises the step across workers; whoever holds it
-  does the work, the others then find `sources_ready_at` set and return.
+  does the work, the others then find `sources_ready_at` set and return. Its TTL
+  is short (a dead holder frees it soon) and refreshed after every sub-step and
+  status poll; losing it (Redis restarted) stops the step as transient before
+  anything could be added twice. Redis trouble is always transient.
 - Every completed sub-step (notebook, link, split parts, each upload) is
   committed straight away in the step's own session, so a retry (or the next
   job) carries on from there instead of adding anything twice.
@@ -17,7 +20,6 @@ when several artifact jobs start together, and resumes after a failure:
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import functools
 import shutil
@@ -30,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import redis
-from redis.exceptions import LockError
+from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -54,7 +56,13 @@ from app.storage.service import Storage, get_storage
 
 log = get_logger("module_sources")
 
-_LOCK_TIMEOUT_SEC = 7200
+#: the lock's TTL, refreshed while working; longer than the slowest single sub-step
+#: (an upload: the provider's 30-minute limit)
+_LOCK_TIMEOUT_SEC = 45 * 60
+#: how long a job waits for another job's source step, in rounds of `_LOCK_WAIT_ROUND_SEC`
+#: (each round counts as progress: the waiter isn't stuck, the holder is bounded)
+_LOCK_WAIT_SEC = 7200
+_LOCK_WAIT_ROUND_SEC = 60
 _POLL_INTERVAL_SEC = 3.0
 _SOURCE_READY_TIMEOUT_SEC = 600.0
 # NotebookLM may not list a brand-new source straight away
@@ -71,6 +79,10 @@ class SourceStepError(ProviderError):
     Not a `TransientProviderError`, so Celery does not auto-retry it."""
 
 
+def _noop() -> None:
+    return None
+
+
 def ensure_module_sources(
     provider: ContentProvider,
     module_id: uuid.UUID,
@@ -78,33 +90,57 @@ def ensure_module_sources(
     job_created_at: dt.datetime,
     session_factory: Callable[[], AbstractContextManager[Session]] = session_scope,
     redis_client: redis.Redis[Any] | None = None,
+    on_progress: Callable[[], None] = _noop,
 ) -> NotebookRef:
-    """Make sure the module's notebook holds its link and PDFs, all ready; return it."""
+    """Make sure the module's notebook holds its link and PDFs, all ready; return it.
+
+    `on_progress` is called whenever the step moves on (or waits its turn), for the
+    job's progress watchdog."""
     client = redis_client or redis.Redis.from_url(get_settings().redis_url)
     lock = client.lock(
         f"module-sources:{module_id}",
         timeout=_LOCK_TIMEOUT_SEC,
-        blocking_timeout=_LOCK_TIMEOUT_SEC,
+        blocking_timeout=_LOCK_WAIT_ROUND_SEC,
     )
     try:
-        acquired = lock.acquire()
-    except LockError as exc:  # pragma: no cover - Redis trouble
-        acquired = False
-        error = f"source step lock: {exc}"
-    else:
-        error = "timed out waiting for this module's sources"
-    if not acquired:  # pragma: no cover - Redis trouble or waited the full 2 h
+        _acquire(lock, on_progress)
+    except BaseException:
         if redis_client is None:
             client.close()
-        raise TransientProviderError(error)
+        raise
+
+    def keep_alive() -> None:
+        on_progress()
+        try:
+            owned = lock.reacquire()
+        except RedisError as exc:
+            raise TransientProviderError(f"lost this module's source lock (Redis: {exc})") from exc
+        if not owned:  # pragma: no cover - redis-py raises instead
+            raise TransientProviderError("lost this module's source lock")
+
     try:
         with session_factory() as session:
-            return _run(session, provider, module_id, job_created_at)
+            return _run(session, provider, module_id, job_created_at, keep_alive)
     finally:
-        with contextlib.suppress(LockError):
+        try:
             lock.release()
+        except RedisError as exc:  # gone with a Redis restart, or expired: the TTL frees it
+            log.warning("module_sources.lock_release_failed", error=str(exc))
         if redis_client is None:
             client.close()
+
+
+def _acquire(lock: Any, on_progress: Callable[[], None]) -> None:
+    deadline = time.monotonic() + _LOCK_WAIT_SEC
+    while True:
+        try:
+            if lock.acquire(blocking=True):
+                return
+        except RedisError as exc:
+            raise TransientProviderError(f"source step lock unavailable (Redis: {exc})") from exc
+        if time.monotonic() >= deadline:  # pragma: no cover - waited the full 2 h
+            raise TransientProviderError("timed out waiting for this module's sources")
+        on_progress()  # waiting for another job's source step: not stuck
 
 
 def _run(
@@ -112,6 +148,7 @@ def _run(
     provider: ContentProvider,
     module_id: uuid.UUID,
     job_created_at: dt.datetime,
+    keep_alive: Callable[[], None] = _noop,
 ) -> NotebookRef:
     module = session.get(Module, module_id)
     if module is None:
@@ -128,7 +165,7 @@ def _run(
     module.sources_failed_at = None
     session.commit()
     try:
-        nb = _add_sources(session, provider, module)
+        nb = _add_sources(session, provider, module, keep_alive)
     except SourceStepError as exc:
         module.sources_error = str(exc)
         module.sources_failed_at = func.clock_timestamp()
@@ -143,7 +180,12 @@ def _run(
     return nb
 
 
-def _add_sources(session: Session, provider: ContentProvider, module: Module) -> NotebookRef:
+def _add_sources(
+    session: Session,
+    provider: ContentProvider,
+    module: Module,
+    keep_alive: Callable[[], None] = _noop,
+) -> NotebookRef:
     settings = get_settings()
     storage = get_storage()
 
@@ -151,6 +193,7 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
     if not module.notebooklm_notebook_id:
         module.notebooklm_notebook_id = provider.create_notebook(module.title).notebook_id
         session.commit()
+        keep_alive()
     nb = NotebookRef(notebook_id=module.notebooklm_notebook_id)
 
     # source id -> (display name, wait deadline, how to forget it if it fails)
@@ -164,6 +207,7 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
             _check_not_reset(session, module, nb)
             module.notebooklm_link_source_id = sid
             session.commit()
+            keep_alive()
             waiting[sid] = (link, _now() + _SOURCE_READY_TIMEOUT_SEC, _forget_link(module))
         else:
             waiting[module.notebooklm_link_source_id] = (link, None, _forget_link(module))
@@ -174,6 +218,7 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
         if not sf.parts:
             sf.parts = _split(storage, module, sf)
             session.commit()
+            keep_alive()
 
     # 4. NotebookLM's per-notebook cap
     total = (1 if link else 0) + sum(len(sf.parts) for sf in files)
@@ -197,10 +242,11 @@ def _add_sources(session: Session, provider: ContentProvider, module: Module) ->
             _check_not_reset(session, module, nb)
             _set_part_id(sf, i, sid)
             session.commit()
+            keep_alive()
             waiting[sid] = (name, _now() + _SOURCE_READY_TIMEOUT_SEC, _forget_part(sf, i))
 
     # 6. wait until NotebookLM has processed every source
-    _wait_ready(provider, nb, waiting)
+    _wait_ready(provider, nb, waiting, keep_alive)
     return nb
 
 
@@ -246,6 +292,7 @@ def _wait_ready(
     provider: ContentProvider,
     nb: NotebookRef,
     waiting: dict[str, tuple[str, float | None, Callable[[], None]]],
+    keep_alive: Callable[[], None] = _noop,
 ) -> None:
     # sources added by an earlier run get their 10 minutes from now
     start = _now() + _SOURCE_READY_TIMEOUT_SEC
@@ -257,8 +304,16 @@ def _wait_ready(
         if dl is not None
     }
     while pending:
-        states = provider.source_statuses(nb)
+        try:
+            states = provider.source_statuses(nb)
+        except TransientProviderError as exc:
+            # e.g. the session lock busy behind a long chat query: keep waiting until
+            # the deadlines (the ids are committed; a requeue would only wait again)
+            log.info("module_sources.status_retry", error=str(exc))
+            states = None
         for sid, (name, _deadline, forget) in list(pending.items()):
+            if states is None:
+                break
             state = states.get(sid)
             if state is None and _now() < unlisted_until.get(sid, float("-inf")):
                 state = SourceState.pending
@@ -274,6 +329,7 @@ def _wait_ready(
             if now >= deadline:
                 # the id is kept: a Retry only waits again
                 raise SourceStepError(f"NotebookLM is still processing {name} after 10 minutes")
+        keep_alive()
         _sleep(_POLL_INTERVAL_SEC)
 
 

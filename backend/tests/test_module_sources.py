@@ -740,3 +740,190 @@ def test_artifact_error_shows_source_message(
     assert artifact.status is ArtifactStatus.error
     assert artifact.last_error == "broken.pdf can't be opened (damaged or password-protected)"
     assert provider.generated == []  # no Studio request was made
+
+
+# -- Redis trouble, lock keep-alive, transient status errors (review 2026-10-29) --------
+class _LockProxy:
+    def __init__(self, real: Any, owner: _FlakyRedis) -> None:
+        self.real = real
+        self.owner = owner
+
+    def acquire(self, *args: Any, **kwargs: Any) -> bool:
+        if self.owner.acquire_error is not None:
+            raise self.owner.acquire_error
+        if self.owner.busy_for > 0:
+            self.owner.busy_for -= 1
+            return False
+        return bool(self.real.acquire(*args, **kwargs))
+
+    def reacquire(self) -> bool:
+        self.owner.reacquired += 1
+        if self.owner.reacquire_error is not None:
+            raise self.owner.reacquire_error
+        return bool(self.real.reacquire())
+
+    def release(self) -> None:
+        if self.owner.release_error is not None:
+            raise self.owner.release_error
+        self.real.release()
+
+
+class _FlakyRedis:
+    def __init__(self, real: redis.Redis[str]) -> None:
+        self.real = real
+        self.acquire_error: Exception | None = None
+        self.reacquire_error: Exception | None = None
+        self.release_error: Exception | None = None
+        self.busy_for = 0
+        self.reacquired = 0
+        self.ttl: float | None = None
+
+    def lock(self, name: str, **kwargs: Any) -> _LockProxy:
+        self.ttl = kwargs.get("timeout")
+        return _LockProxy(self.real.lock(name, **kwargs), self)
+
+    def close(self) -> None:
+        pass
+
+
+def _flaky_run(flaky: _FlakyRedis, sessions: Sessions, db: Session) -> Callable[..., NotebookRef]:
+    def _run(provider: SpyProvider, module: Module, **kwargs: Any) -> NotebookRef:
+        try:
+            return ensure_module_sources(
+                provider,
+                module.id,
+                job_created_at=LATER,
+                session_factory=sessions,
+                redis_client=flaky,  # type: ignore[arg-type]
+                **kwargs,
+            )
+        finally:
+            db.expire_all()
+
+    return _run
+
+
+def test_redis_down_when_taking_the_module_lock_is_transient(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    source_step_sessions: Sessions,
+    redis_client: redis.Redis[str],
+    clock: list[float],
+) -> None:
+    module = _module(db_session, media_storage, tmp_path)
+    flaky = _FlakyRedis(redis_client)
+    flaky.acquire_error = redis.exceptions.ConnectionError("restarting")
+    with pytest.raises(TransientProviderError, match="Redis"):
+        _flaky_run(flaky, source_step_sessions, db_session)(provider, module)
+    assert provider.source_calls() == 0
+    assert db_session.get(Module, module.id).sources_error is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [redis.exceptions.ConnectionError("restarting"), redis.exceptions.LockNotOwnedError("gone")],
+    ids=["down", "lost"],
+)
+def test_a_failed_module_lock_release_keeps_the_finished_step(
+    error: Exception,
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    source_step_sessions: Sessions,
+    redis_client: redis.Redis[str],
+    clock: list[float],
+) -> None:
+    module = _module(db_session, media_storage, tmp_path)
+    flaky = _FlakyRedis(redis_client)
+    flaky.release_error = error
+    nb = _flaky_run(flaky, source_step_sessions, db_session)(provider, module)
+    assert db_session.get(Module, module.id).sources_ready_at is not None
+    assert nb.notebook_id
+
+
+def test_losing_the_module_lock_mid_step_requeues_and_the_retry_resumes(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    source_step_sessions: Sessions,
+    redis_client: redis.Redis[str],
+    clock: list[float],
+) -> None:
+    """Redis restarted while uploading: stop before another job can upload twice; the
+    retry carries on from the committed sub-steps."""
+    pdfs = [(f"{n}.pdf", _text_pdf(tmp_path / f"{n}.pdf")) for n in ("a", "b")]
+    module = _module(db_session, media_storage, tmp_path, pdfs=pdfs)
+    flaky = _FlakyRedis(redis_client)
+    flaky.reacquire_error = redis.exceptions.LockNotOwnedError("gone")
+    run = _flaky_run(flaky, source_step_sessions, db_session)
+    with pytest.raises(TransientProviderError, match="lock"):
+        run(provider, module)
+    assert provider.uploads == []  # stopped after the link, before any upload
+    flaky.reacquire_error = None
+    run(provider, module)
+    assert provider.links == [LINK]  # not added twice
+    assert provider.uploads == ["a.pdf", "b.pdf"]
+
+
+def test_the_module_lock_is_kept_alive_while_working(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    source_step_sessions: Sessions,
+    redis_client: redis.Redis[str],
+    clock: list[float],
+) -> None:
+    """A step longer than the lock's TTL must not lose it: the TTL is short (a dead
+    holder frees it soon) and refreshed after each sub-step and status poll."""
+    pdfs = [(f"{n}.pdf", _text_pdf(tmp_path / f"{n}.pdf")) for n in ("a", "b", "c")]
+    module = _module(db_session, media_storage, tmp_path, pdfs=pdfs)
+    provider.unlisted["c.pdf"] = 3  # a few extra status polls
+    flaky = _FlakyRedis(redis_client)
+    _flaky_run(flaky, source_step_sessions, db_session)(provider, module)
+    assert flaky.ttl is not None and flaky.ttl <= 3600
+    assert flaky.reacquired >= 3 + 3
+
+
+def test_waiting_for_the_module_lock_counts_as_progress(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    source_step_sessions: Sessions,
+    redis_client: redis.Redis[str],
+    clock: list[float],
+) -> None:
+    module = _module(db_session, media_storage, tmp_path)
+    flaky = _FlakyRedis(redis_client)
+    flaky.busy_for = 3  # another job holds it for three wait rounds
+    beats: list[int] = []
+    _flaky_run(flaky, source_step_sessions, db_session)(
+        provider, module, on_progress=lambda: beats.append(1)
+    )
+    assert len(beats) >= 3
+
+
+def test_a_transient_status_error_keeps_waiting_for_the_sources(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+) -> None:
+    """The session lock busy behind a long chat query must not fail the source step."""
+    module = _module(db_session, media_storage, tmp_path)
+    failures = [TransientProviderError("lock busy")] * 2
+
+    def busy() -> None:
+        if failures:
+            raise failures.pop()
+
+    provider.before["source_statuses"] = busy
+    nb = run(provider, module)
+    assert nb.notebook_id
+    assert db_session.get(Module, module.id).sources_ready_at is not None
