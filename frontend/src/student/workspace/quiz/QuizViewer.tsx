@@ -147,7 +147,6 @@ export function QuizViewer({
       <Attempt
         key={phase.attempt.attempt_id}
         attempt={phase.attempt}
-        artifactId={artifactId}
         onDone={(result) => {
           setPhase({ kind: "results", result });
           void qc.invalidateQueries({ queryKey: ["student", "quiz-attempts", artifactId] });
@@ -163,11 +162,9 @@ export function QuizViewer({
 
 function Attempt({
   attempt,
-  artifactId,
   onDone,
 }: {
   attempt: QuizAttemptStart;
-  artifactId: string;
   onDone: (r: QuizResult) => void;
 }): JSX.Element {
   const questions = attempt.questions;
@@ -210,10 +207,11 @@ function Attempt({
       focusPending.current = true;
       setResults((m) => ({ ...m, [q.index]: r }));
     } catch {
-      // Resync: the server may already have recorded this check (409, lost response).
+      // Resync: the server may already have recorded this check (409, lost
+      // response). Read the attempt; starting one (POST) could open a new
+      // attempt if this one was finished in another tab.
       try {
-        const s = await workspaceApi.startQuiz(artifactId);
-        if (s.status === "preparing" || s.attempt_id !== attempt.attempt_id) throw new Error();
+        const s = await workspaceApi.quizAttempt(attempt.attempt_id);
         const merged: Record<number, QuizCheckResult> = {};
         for (const sq of s.questions) if (sq.result) merged[sq.index] = sq.result;
         if (!merged[q.index]) throw new Error();

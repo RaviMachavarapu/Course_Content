@@ -130,6 +130,8 @@ interface Setup {
   /** Per-call override for POST /answers: a response spec, or "network" to reject. */
   answers?: (call: number) => { status: number; body: unknown } | "network" | undefined;
   complete?: (call: number) => { status: number; body: unknown } | "network" | undefined;
+  /** GET /quiz-attempts/{id} (the resync after a failed Check), in order. */
+  attemptReads?: { status: number; body: unknown }[];
 }
 
 function installFetch(setup: Setup) {
@@ -144,6 +146,9 @@ function installFetch(setup: Setup) {
     if (url.endsWith("/quiz-attempts") && method === "POST") {
       const next = starts.length > 1 ? starts.shift()! : starts[0]!;
       ({ status, body } = next);
+    } else if (/\/quiz-attempts\/[^/]+$/.test(url) && method === "GET") {
+      const next = setup.attemptReads?.shift();
+      if (next) ({ status, body } = next);
     } else if (url.endsWith("/answers") && setup.answers?.(answerCalls++)) {
       const o = setup.answers(answerCalls - 1)!;
       if (o === "network") return Promise.reject(new TypeError("network"));
@@ -324,8 +329,8 @@ describe("QuizViewer failures", () => {
 
   it("resyncs after a 409 already_checked and shows the recorded feedback", async () => {
     const fetchMock = installFetch({
-      starts: [
-        START,
+      starts: [START],
+      attemptReads: [
         {
           status: 200,
           body: attempt([MCQ({ result: CHECKS[0] }), FILL()], { status: "resumed" }),
@@ -341,7 +346,13 @@ describe("QuizViewer failures", () => {
     await userEvent.click(screen.getByTestId("btn-qz8"));
     expect(await screen.findByText(/Because 2 plus 2 is four/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(posts(fetchMock, "/quiz-attempts")).toHaveLength(2);
+    // resynced by reading the attempt: a second start could open a new attempt
+    expect(posts(fetchMock, "/quiz-attempts")).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.some(
+        (c) => /\/quiz-attempts\/[^/]+$/.test(String(c[0])) && (c[1]?.method ?? "GET") === "GET",
+      ),
+    ).toBe(true);
     expect(screen.getByTestId("quiz-feedback")).toHaveFocus();
   });
 

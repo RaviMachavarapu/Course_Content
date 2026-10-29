@@ -373,6 +373,23 @@ def _is_complete(attempt: QuizAttempt) -> bool:
     return attempt.completed_at is not None or attempt.submitted_at is not None
 
 
+@router.get("/quiz-attempts/{attempt_id}", response_model=QuizStartOut)
+def get_attempt(attempt_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> QuizStartOut:
+    """An open attempt's state (checked results only), read-only: what the
+    viewer resyncs from after a failed Check. Starting (POST) instead could
+    open a new attempt when this one was finished elsewhere. 409 once
+    finished, 404 for anyone else's."""
+    attempt = db.scalar(
+        select(QuizAttempt).where(QuizAttempt.id == attempt_id, QuizAttempt.user_id == student.id)
+    )
+    if attempt is None:
+        raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
+    _quiz_artifact(db, attempt.artifact_id)
+    if _is_complete(attempt):
+        raise APIError(status.HTTP_409_CONFLICT, "attempt_completed", "This attempt is finished.")
+    return _start_out(db, attempt, _attempt_number(db, attempt), resumed=True)
+
+
 @router.post("/quiz-attempts/{attempt_id}/answers", response_model=QuizCheckOut)
 def check_answer(
     attempt_id: uuid.UUID, body: QuizCheckRequest, db: DbDep, student: CurrentStudent

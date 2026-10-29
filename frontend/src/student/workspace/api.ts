@@ -154,6 +154,9 @@ export const workspaceApi = {
       method: "POST",
       body: { index, response },
     }),
+  /** Read an open attempt (resync after a failed Check); never starts one. */
+  quizAttempt: (attemptId: string) =>
+    apiFetch<QuizAttemptStart>(`/api/student/quiz-attempts/${attemptId}`),
   completeQuiz: (attemptId: string) =>
     apiFetch<QuizResult>(`/api/student/quiz-attempts/${attemptId}/complete`, { method: "POST" }),
   quizAttempts: (id: string) =>
