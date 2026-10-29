@@ -47,10 +47,14 @@ export function SlidesViewer({
   // "loaded", not `data`: each save updates the cached artifact, and a `data`
   // dependency would save again after every save.
   const loaded = Boolean(data);
+  // completion is sticky: once done, reaching the last slide again (e.g.
+  // resuming there) saves the position only, without the completion refetches
+  const completedRef = useRef(false);
+  completedRef.current = Boolean(data?.completed);
   useEffect(() => {
     if (!loaded || total === 0) return;
     const body =
-      index >= total - 1
+      index >= total - 1 && !completedRef.current
         ? { completed: true, slide_last_index: index }
         : { slide_last_index: index };
     const t = setTimeout(() => progress.mutate(body), 400);

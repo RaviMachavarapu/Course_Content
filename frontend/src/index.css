@@ -51,3 +51,19 @@
       "opsz" 24;
   }
 }
+
+/* Display formulas (KaTeX doesn't wrap) and long unbroken tokens (URLs) must
+   not push a phone-width page sideways: display math scrolls inside its own
+   box instead. */
+@layer components {
+  .math-display,
+  .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .prose-report,
+  .math-text-wrap {
+    overflow-wrap: anywhere;
+  }
+}

@@ -18,7 +18,7 @@ export function MathText({ text, className }: MathTextProps) {
     [text],
   );
   return (
-    <span className={className}>
+    <span className={className ? `math-text-wrap ${className}` : "math-text-wrap"}>
       {parts.map((p, i) => {
         if (p.kind === "text") return <Fragment key={i}>{p.text}</Fragment>;
         if (p.html === null) return <Fragment key={i}>{p.raw}</Fragment>;

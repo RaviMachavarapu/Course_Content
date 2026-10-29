@@ -160,3 +160,20 @@ describe("SlidesViewer saving", () => {
     expect(puts).toHaveLength(1);
   });
 });
+
+describe("SlidesViewer completion", () => {
+  it("doesn't re-send completion when an already completed deck resumes on its last slide", async () => {
+    const fetchMock = installFetch({ ...artifact(2), completed: true });
+    renderViewer();
+    expect(await screen.findByText("Slide 3 of 3")).toBeInTheDocument();
+    await waitFor(() => {
+      const puts = fetchMock.mock.calls.filter(
+        (c) => (c[1] as RequestInit)?.method === "PUT" && String(c[0]).includes("/progress"),
+      );
+      expect(puts).toHaveLength(1);
+      expect(JSON.parse((puts[0]![1] as RequestInit).body as string)).toEqual({
+        slide_last_index: 2,
+      });
+    });
+  });
+});

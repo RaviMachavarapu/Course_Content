@@ -27,16 +27,26 @@ import { StyleGuide } from "./StyleGuide";
 
 // Each area has two error boundaries: one around its pages (inside the shell,
 // so the nav stays usable) and one at the root for errors in the shell itself.
+// The sign-in pages have no shell: they get the same boundary on their own.
 export const routes: RouteObject[] = [
-  { path: "/styleguide", element: <StyleGuide /> },
-  { path: "/login", element: <LoginPage /> },
-  { path: "/register", element: <RegisterPage /> },
-  { path: "/forgot-password", element: <ForgotPasswordPage /> },
-  { path: "/reset-password", element: <ResetPasswordPage /> },
+  // the component gallery is a development aid, not part of the product
+  ...(import.meta.env.DEV ? [{ path: "/styleguide", element: <StyleGuide /> }] : []),
+  { path: "/login", element: <LoginPage />, errorElement: <RouteError /> },
+  { path: "/register", element: <RegisterPage />, errorElement: <RouteError /> },
+  { path: "/forgot-password", element: <ForgotPasswordPage />, errorElement: <RouteError /> },
+  { path: "/reset-password", element: <ResetPasswordPage />, errorElement: <RouteError /> },
 
-  { path: "/admin/login", element: <AdminLoginPage /> },
-  { path: "/admin/forgot-password", element: <AdminForgotPasswordPage /> },
-  { path: "/admin/reset-password", element: <AdminResetPasswordPage /> },
+  { path: "/admin/login", element: <AdminLoginPage />, errorElement: <RouteError /> },
+  {
+    path: "/admin/forgot-password",
+    element: <AdminForgotPasswordPage />,
+    errorElement: <RouteError />,
+  },
+  {
+    path: "/admin/reset-password",
+    element: <AdminResetPasswordPage />,
+    errorElement: <RouteError />,
+  },
   {
     path: "/admin",
     element: <RequireAdmin />,
