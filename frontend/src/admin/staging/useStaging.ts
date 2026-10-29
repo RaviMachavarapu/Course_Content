@@ -15,16 +15,22 @@ export function invalidateAfterModuleChange(qc: QueryClient, moduleId: string): 
   ]);
 }
 
+/** Poll every 2.5 s while anything is still resolving (spec §3.3). A failed
+ * first load (module deleted → 404, session ended → 401) stops polling; the
+ * page offers a retry instead. */
+export function stagingPollInterval(
+  data: { artifacts: { status: string }[] } | undefined,
+  status: "pending" | "error" | "success",
+): number | false {
+  if (!data) return status === "error" ? false : 2500;
+  return data.artifacts.some((a) => PENDING.has(a.status)) ? 2500 : false;
+}
+
 export function useStaging(moduleId: string) {
   return useQuery({
     queryKey: ["admin", "staging", moduleId],
     queryFn: () => stagingApi.get(moduleId),
-    // poll every 2.5s while anything is still resolving (spec §3.3)
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (!data) return 2500;
-      return data.artifacts.some((a) => PENDING.has(a.status)) ? 2500 : false;
-    },
+    refetchInterval: (query) => stagingPollInterval(query.state.data, query.state.status),
   });
 }
 

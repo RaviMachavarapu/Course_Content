@@ -118,6 +118,7 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Pro
               variant="secondary"
               iconLeft="refresh"
               onClick={onRetry}
+              disabled={busy}
               data-testid="btn-sr6"
             >
               Retry

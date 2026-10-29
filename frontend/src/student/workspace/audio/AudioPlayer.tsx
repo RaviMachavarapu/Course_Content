@@ -43,6 +43,10 @@ export function AudioPlayer({
   const [volume, setVolume] = useState(1);
   const [showTranscript, setShowTranscript] = useState(false);
   const seeked = useRef(false);
+  // Latest playback position, kept in a ref so the unmount save can read it:
+  // `audioRef` is still null at mount (the Skeleton renders first) and is
+  // detached again before a passive-effect cleanup runs.
+  const positionRef = useRef(0);
 
   // NotebookLM's Audio Overview is AAC (m4a); fixture content is mp3.
   const src = data?.media.find((m) => m.kind === "audio_mp3" || m.kind === "audio_m4a")?.url;
@@ -50,14 +54,16 @@ export function AudioPlayer({
   const fallbackDuration = Number(data?.content_json?.duration_seconds ?? 0);
   const totalDuration = duration || fallbackDuration;
 
-  const save = useCallback(
-    (extra: { completed?: boolean } = {}) => {
-      const el = audioRef.current;
-      if (!el) return;
-      progress.mutate({ audio_position_seconds: Math.floor(el.currentTime), ...extra });
-    },
-    [progress],
-  );
+  // `useMutation` returns a new object on every render, and playback
+  // re-renders ~4×/s (timeupdate): keep `save` stable, or the 5 s interval
+  // below is torn down and restarted before it ever fires.
+  const mutateRef = useRef(progress.mutate);
+  mutateRef.current = progress.mutate;
+  const save = useCallback((extra: { completed?: boolean } = {}) => {
+    const el = audioRef.current;
+    if (!el) return;
+    mutateRef.current({ audio_position_seconds: Math.floor(el.currentTime), ...extra });
+  }, []);
 
   // periodic position save while playing
   useEffect(() => {
@@ -66,10 +72,22 @@ export function AudioPlayer({
     return () => window.clearInterval(id);
   }, [playing, save]);
 
-  // Latest playback position, kept in a ref so the unmount save can read it:
-  // `audioRef` is still null at mount (the Skeleton renders first) and is
-  // detached again before a passive-effect cleanup runs.
-  const positionRef = useRef(0);
+  // the tab is hidden or closed (a phone may kill a backgrounded browser)
+  useEffect(() => {
+    const onHide = (): void => {
+      if (document.visibilityState === "hidden" && positionRef.current > 0) save();
+    };
+    const onPageHide = (): void => {
+      if (positionRef.current > 0) save();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [save]);
+
   useEffect(() => {
     return () => {
       if (positionRef.current > 0) {

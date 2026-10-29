@@ -4,6 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useUIStore } from "@/lib/store";
 import { StagingPage } from "./StagingPage";
+import { stagingPollInterval } from "./useStaging";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -95,8 +96,7 @@ function installFetch(
   return fn;
 }
 
-function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/admin/modules/m1/staging"]}>
@@ -426,5 +426,55 @@ describe("StagingPage", () => {
     const box = await screen.findByRole("textbox");
     expect(box).toHaveValue("");
     expect(box).toHaveAttribute("maxLength", "4000");
+  });
+
+  it("Retry is disabled while its request runs (a double-click sends one POST)", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([
+          artifact("quiz", { status: "error", last_error: "bad markup", current_version: null }),
+        ]),
+      },
+    ]);
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) =>
+      init?.method === "POST" ? new Promise<Response>(() => {}) : real(input, init),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    const retry = screen.getByTestId("btn-sr6");
+    await userEvent.click(retry);
+    await userEvent.click(retry);
+    await waitFor(() => expect(screen.getByTestId("btn-sr6")).toBeDisabled());
+    const posts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST");
+    expect(posts).toHaveLength(1);
+  });
+
+  it("a failed background poll keeps the cards (and an open dialog) on screen", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const fetchMock = installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage(qc);
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError("network down")));
+    await qc.refetchQueries({ queryKey: ["admin", "staging", "m1"] });
+    expect(screen.getAllByTestId("btn-sr4")).toHaveLength(6);
+    expect(screen.queryByText("Could not load staging")).not.toBeInTheDocument();
+    expect(await screen.findByText(/couldn’t refresh/i)).toBeInTheDocument();
+  });
+});
+
+describe("stagingPollInterval", () => {
+  const pending = { artifacts: [{ status: "processing" }] };
+  const settled = { artifacts: [{ status: "ready" }] };
+  it("polls while loading or while anything is still generating", () => {
+    expect(stagingPollInterval(undefined, "pending")).toBe(2500);
+    expect(stagingPollInterval(pending, "success")).toBe(2500);
+    expect(stagingPollInterval(pending, "error")).toBe(2500);
+  });
+  it("stops once settled, and on an error with nothing to show (404/401)", () => {
+    expect(stagingPollInterval(settled, "success")).toBe(false);
+    expect(stagingPollInterval(undefined, "error")).toBe(false);
   });
 });

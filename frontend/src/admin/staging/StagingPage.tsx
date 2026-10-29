@@ -24,7 +24,9 @@ export function StagingPage(): JSX.Element {
   const failed = (title: string, err: unknown) =>
     toast({ title, description: errorMessage(err), tone: "error" });
 
-  if (isError) {
+  // a failed poll with data already shown keeps the page (and any open
+  // dialog): only a failed first load replaces it
+  if (isError && !data) {
     return (
       <div className="flex-1 p-4 md:p-margin-desktop">
         <ErrorState title="Could not load staging" onRetry={() => void refetch()} />
@@ -37,6 +39,21 @@ export function StagingPage(): JSX.Element {
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-margin-desktop">
+      {isError && (
+        <p
+          role="status"
+          className="rounded-lg bg-surface-container-high px-3 py-2 font-label-md text-label-md text-on-surface-variant"
+        >
+          Couldn’t refresh the status just now.{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2"
+            onClick={() => void refetch()}
+          >
+            Try again
+          </button>
+        </p>
+      )}
       <div className="flex flex-col gap-3">
         <Link
           to="/admin/ingestion"

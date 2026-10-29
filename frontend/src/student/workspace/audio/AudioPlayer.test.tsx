@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onTestFinished } from "vitest";
 import { AudioPlayer } from "./AudioPlayer";
@@ -181,6 +181,52 @@ describe("AudioPlayer", () => {
           String(c[0]).includes("/progress") &&
           (JSON.parse((c[1] as RequestInit).body as string) as { audio_position_seconds?: number })
             .audio_position_seconds === 42,
+      );
+      expect(put).toBeDefined();
+    });
+  });
+
+  it("saves the position every 5 s while audio is actually playing (timeupdate re-renders)", async () => {
+    const fetchMock = installFetch();
+    const { container } = renderPlayer();
+    await screen.findByTestId("btn-au1");
+    const audio = container.querySelector("audio")!;
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    fireEvent.play(audio);
+    for (let i = 0; i < 24; i += 1) {
+      audio.currentTime = 20 + i * 0.25;
+      fireEvent.timeUpdate(audio);
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+    }
+    vi.useRealTimers(); // waitFor polls with setInterval
+    const puts = () =>
+      fetchMock.mock.calls.filter(
+        (c) => (c[1] as RequestInit)?.method === "PUT" && String(c[0]).includes("/progress"),
+      );
+    await waitFor(() => expect(puts().length).toBeGreaterThanOrEqual(1));
+  });
+
+  it("saves the position when the tab is hidden (phone backgrounds the browser)", async () => {
+    const fetchMock = installFetch();
+    const { container } = renderPlayer();
+    await screen.findByTestId("btn-au1");
+    const audio = container.querySelector("audio")!;
+    audio.currentTime = 77;
+    fireEvent.timeUpdate(audio);
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    onTestFinished(() => hidden.mockRestore());
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (c) =>
+          (c[1] as RequestInit)?.method === "PUT" &&
+          (JSON.parse((c[1] as RequestInit).body as string) as { audio_position_seconds?: number })
+            .audio_position_seconds === 77,
       );
       expect(put).toBeDefined();
     });
