@@ -108,6 +108,62 @@ docker build --target build -t sdp-fe-build frontend
 docker run --rm sdp-fe-build npm test     # Vitest
 ```
 
+## Production checklist
+
+`docker-compose.yml` is the dev stack. Its secrets and public address have
+obviously-dev defaults that a root `.env` overrides; with `APP_ENV` set to
+`staging` or `prod` the api, workers and beat **refuse to start** while any of
+them is a dev or missing value (`backend/app/config.py`).
+
+1. **Secrets.** `cp .env.example .env`, then `scripts/gen-secrets` and paste its
+   three lines over the `<generate>` placeholders (no python3? any
+   `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` equivalent
+   works; keep values URL-safe). `.env` is git-ignored: never commit it, keep a
+   copy in a password manager.
+   The guard requires: `DATABASE_URL` with a password that isn't `shikshak`;
+   `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` with a password
+   that isn't the dev one; `DEVICE_COOKIE_SECRET` of 32+ characters (not the
+   dev one); `PUBLIC_BASE_URL` on https and not localhost; in prod a real
+   `SMTP_URL` or `PASSWORD_RESET_ENABLED=false`.
+2. **`APP_ENV=prod`** (or `staging`): Secure cookies, HSTS (prod), no
+   `/api/docs`.
+3. **Database password.** `POSTGRES_PASSWORD` only applies when the `pgdata`
+   volume is created. On an existing volume change it in the database first:
+   `docker compose exec postgres psql -U shikshak -c "ALTER USER shikshak PASSWORD '<new>'"`,
+   then set it in `.env` and `docker compose up -d`.
+4. **Redis password.** `REDIS_PASSWORD` in `.env`; redis and every backend
+   service must be recreated together (`docker compose up -d`). Recreating
+   redis signs everyone out and drops queued Celery messages.
+5. **HTTPS.** Put a TLS-terminating reverse proxy in front of `web`
+   (127.0.0.1:5173) and set `PUBLIC_BASE_URL` / `CORS_ORIGINS` to the https
+   address. Outside dev the session, CSRF and device cookies are `Secure`, so
+   plain http can't sign in. The api trusts `X-Forwarded-For` only from `web`;
+   if your proxy sits in front of nginx, configure nginx `real_ip` for it or
+   every client shares one login rate-limit bucket.
+6. **Ports.** Everything is published on 127.0.0.1 only. In production publish
+   only `web` (to the TLS proxy); drop the postgres (5432), redis (6379), api
+   (8000) and mailhog ports, e.g. `ports: !reset []` in a production override.
+   Keep mcp's 7332/6080 on localhost and reach noVNC through an SSH tunnel.
+7. **Dev-only bits.** In a production override remove the api's `--reload`,
+   the `./backend:/app` bind mounts (the image has the code) and mailhog, and
+   set the login/sign-up limits in `.env` (the compose defaults are loose for
+   e2e runs; `.env.example` has the app defaults).
+8. **Backups.** The database and the `media` volume (uploaded PDFs and every
+   generated artifact file) together:
+   ```bash
+   mkdir -p backups
+   docker compose exec -T postgres pg_dump -U shikshak -Fc shikshak > backups/db-$(date +%F).dump
+   docker run --rm -v shikshak-dp_media:/data:ro -v "$PWD/backups:/backup" alpine \
+     tar czf /backup/media-$(date +%F).tgz -C /data .
+   ```
+   Test a restore; keep the copies off the host.
+9. **mcp (live NotebookLM) auth.** `mcp/auth/` holds a signed-in Google session
+   (`auth.json` and the browser profile): it is git-ignored, must never be
+   committed, copied into backups others can read, or baked into an image.
+   Keep it `chmod 700`, run the `mcp` profile only where needed, and sign in
+   with `mcp/auth-login.mjs` (`mcp/README.md`). If the host is compromised,
+   sign that Google account out of all sessions.
+
 ## Development workflow
 
 Work proceeds **one task at a time, in order**, tracked in

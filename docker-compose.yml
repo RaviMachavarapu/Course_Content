@@ -1,8 +1,12 @@
 name: shikshak-dp
 
+# Every secret and deployment value below has an obviously-dev default and can
+# be set from a root `.env` (git-ignored; see .env.example and
+# scripts/gen-secrets). Outside APP_ENV=dev the backend refuses to start on any
+# dev default (backend/app/config.py) — see "Production checklist" in README.
 x-backend-env: &backend-env
-  APP_ENV: dev
-  DATABASE_URL: postgresql+psycopg://shikshak:shikshak@postgres:5432/shikshak
+  APP_ENV: ${APP_ENV:-dev}
+  DATABASE_URL: postgresql+psycopg://shikshak:${POSTGRES_PASSWORD:-shikshak}@postgres:5432/shikshak
   # Redis requires a password. Dev default below (obviously dev; the config
   # guard refuses it outside APP_ENV=dev); set REDIS_PASSWORD in a root .env to
   # change it. URL-safe characters only (it sits inside the URLs).
@@ -10,17 +14,21 @@ x-backend-env: &backend-env
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev-only-redis-password-change-me}@redis:6379/1
   CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev-only-redis-password-change-me}@redis:6379/2
   MEDIA_ROOT: /data/media
-  CORS_ORIGINS: http://localhost:5173
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:5173}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
   CONTENT_PROVIDER: fixture
-  SMTP_URL: smtp://mailhog:1025
+  SMTP_URL: ${SMTP_URL:-smtp://mailhog:1025}
+  EMAIL_FROM: ${EMAIL_FROM:-no-reply@shikshak.local}
+  PASSWORD_RESET_ENABLED: ${PASSWORD_RESET_ENABLED:-true}
+  SENTRY_DSN: ${SENTRY_DSN:-}
   LOG_LEVEL: info
-  # dev/e2e only — the Playwright suite logs in, registers and requests resets
-  # many times per run
-  LOGIN_RATE_LIMIT: 100/5m
-  REGISTER_RATE_LIMIT: 300/1h
-  PASSWORD_RESET_RATE_LIMIT: 100/1h
+  # dev/e2e defaults — the Playwright suite logs in, registers and requests
+  # resets many times per run (production: see .env.example)
+  LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-100/5m}
+  REGISTER_RATE_LIMIT: ${REGISTER_RATE_LIMIT:-300/1h}
+  PASSWORD_RESET_RATE_LIMIT: ${PASSWORD_RESET_RATE_LIMIT:-100/1h}
   # dev only (the config guard refuses this value outside APP_ENV=dev)
-  DEVICE_COOKIE_SECRET: dev-only-device-cookie-secret-change-me
+  DEVICE_COOKIE_SECRET: ${DEVICE_COOKIE_SECRET:-dev-only-device-cookie-secret-change-me}
 
 # Published ports are bound to 127.0.0.1: the dev stack runs with default
 # credentials (and, with the override, the owner's Google session), so nothing
@@ -32,7 +40,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: shikshak
-      POSTGRES_PASSWORD: shikshak
+      # Applied only when the pgdata volume is first created; to change it
+      # later, ALTER USER shikshak PASSWORD '…' first (README checklist).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shikshak}
       POSTGRES_DB: shikshak
     ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]

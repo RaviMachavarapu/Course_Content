@@ -42,7 +42,14 @@ def test_dev_keeps_its_defaults() -> None:
     [
         ("database_url", "postgresql+psycopg://shikshak:shikshak@postgres:5432/shikshak"),
         ("database_url", "postgresql+psycopg://shikshak:shikshak@db.internal:5432/other"),
+        ("database_url", "postgresql+psycopg://app:shikshak@db.internal:5432/shikshak"),
+        ("database_url", "postgresql+psycopg://app@db.internal:5432/shikshak"),
+        ("database_url", "postgresql+psycopg://db.internal:5432/shikshak"),
         ("public_base_url", "http://localhost:5173"),
+        ("public_base_url", "https://localhost"),
+        ("public_base_url", "https://127.0.0.1:8443/"),
+        ("public_base_url", "http://learn.example.org"),
+        ("public_base_url", ""),
     ],
 )
 def test_dev_defaults_are_refused_outside_dev(env: str, field: str, dev_value: str) -> None:
@@ -50,9 +57,13 @@ def test_dev_defaults_are_refused_outside_dev(env: str, field: str, dev_value: s
         _settings(app_env=env, **{**_REAL, field: dev_value})
 
 
-def test_prod_refuses_the_dev_mail_relay_while_reset_is_on() -> None:
+@pytest.mark.parametrize("smtp_url", ["smtp://mailhog:1025", "smtp://mailhog:2525", ""])
+def test_prod_refuses_the_dev_mail_relay_while_reset_is_on(smtp_url: str) -> None:
     with pytest.raises(ValidationError, match="SMTP_URL"):
-        _settings(app_env="prod", **{**_REAL, "smtp_url": "smtp://mailhog:1025"})
+        _settings(app_env="prod", **{**_REAL, "smtp_url": smtp_url})
+
+
+def test_prod_allows_the_dev_mail_relay_with_reset_off() -> None:
     off = _settings(
         app_env="prod", password_reset_enabled=False, **{**_REAL, "smtp_url": "smtp://mailhog:1025"}
     )
@@ -113,3 +124,19 @@ def test_dev_defaults_carry_the_dev_redis_password() -> None:
     dev = Settings.model_construct()  # class defaults, no environment
     for url in (dev.redis_url, dev.celery_broker_url, dev.celery_result_backend):
         assert f":{_DEV_REDIS_PW}@redis:6379/" in url
+
+
+def test_every_problem_is_reported_at_once() -> None:
+    with pytest.raises(ValidationError) as exc:
+        _settings(**{**Settings.model_construct().model_dump(), "app_env": "prod"})
+    text = str(exc.value)
+    for name in (
+        "DATABASE_URL",
+        "PUBLIC_BASE_URL",
+        "DEVICE_COOKIE_SECRET",
+        "REDIS_URL",
+        "CELERY_BROKER_URL",
+        "CELERY_RESULT_BACKEND",
+        "SMTP_URL",
+    ):
+        assert name in text

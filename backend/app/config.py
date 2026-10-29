@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import unquote, urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -16,9 +17,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 Environment = Literal["dev", "staging", "prod"]
 ContentProviderName = Literal["fixture", "notebooklm"]
 
-_DEV_DB_CREDENTIALS = "shikshak:shikshak@"
+_DEV_DB_PASSWORD = "shikshak"
 _DEV_PUBLIC_BASE_URL = "http://localhost:5173"
 _DEV_SMTP_URL = "smtp://mailhog:1025"
+_DEV_SMTP_HOST = "mailhog"
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 _DEV_DEVICE_COOKIE_SECRET = "dev-only-device-cookie-secret-change-me"
 _MIN_DEVICE_COOKIE_SECRET_LEN = 32
 #: the dev compose stack's Redis password (docker-compose.yml)
@@ -115,35 +118,53 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _no_dev_defaults_outside_dev(self) -> Settings:
-        """Staging/prod must not run on the dev database password or the dev
-        (or no) Redis password, sign device cookies with the dev secret, or
-        send reset links to localhost; prod must not "send" reset mail into
-        mailhog."""
+        """Staging/prod refuse to start on dev or missing secrets: the database
+        and Redis need a password that isn't the dev one, device cookies a
+        signing secret of 32+ characters that isn't the dev one, and reset
+        links an https PUBLIC_BASE_URL that isn't localhost (session cookies
+        are Secure outside dev). Prod must not "send" reset mail into mailhog
+        or nowhere: a real SMTP_URL, or PASSWORD_RESET_ENABLED=false."""
         if self.app_env == "dev":
             return self
         problems: list[str] = []
-        if _DEV_DB_CREDENTIALS in self.database_url:
+
+        db_password = _url_password(self.database_url)
+        if not db_password:
+            problems.append("DATABASE_URL has no password")
+        elif db_password == _DEV_DB_PASSWORD:
             problems.append("DATABASE_URL uses the dev credentials")
-        if self.public_base_url.rstrip("/") == _DEV_PUBLIC_BASE_URL:
-            problems.append("PUBLIC_BASE_URL is the dev default (reset links would point there)")
+
+        base = urlsplit(self.public_base_url)
+        if base.hostname in _LOCAL_HOSTS or not base.hostname:
+            problems.append("PUBLIC_BASE_URL is localhost (reset links would point there)")
+        elif base.scheme != "https":
+            problems.append("PUBLIC_BASE_URL must be https (cookies are Secure outside dev)")
+
         if self.device_cookie_secret == _DEV_DEVICE_COOKIE_SECRET:
             problems.append("DEVICE_COOKIE_SECRET is the dev default")
         elif len(self.device_cookie_secret) < _MIN_DEVICE_COOKIE_SECRET_LEN:
             problems.append(
                 f"DEVICE_COOKIE_SECRET must be at least {_MIN_DEVICE_COOKIE_SECRET_LEN} characters"
             )
+
         for name, url in (
             ("REDIS_URL", self.redis_url),
             ("CELERY_BROKER_URL", self.celery_broker_url),
             ("CELERY_RESULT_BACKEND", self.celery_result_backend),
         ):
-            password = _redis_password(url)
+            password = _url_password(url)
             if not password:
                 problems.append(f"{name} has no Redis password")
             elif password == _DEV_REDIS_PASSWORD:
                 problems.append(f"{name} uses the dev Redis password")
-        if self.is_prod and self.password_reset_enabled and self.smtp_url == _DEV_SMTP_URL:
-            problems.append("SMTP_URL is the dev mailhog (or set PASSWORD_RESET_ENABLED=false)")
+
+        if self.is_prod and self.password_reset_enabled:
+            smtp_host = urlsplit(self.smtp_url).hostname
+            if not smtp_host or smtp_host == _DEV_SMTP_HOST:
+                problems.append(
+                    "SMTP_URL is the dev mailhog or empty (or set PASSWORD_RESET_ENABLED=false)"
+                )
+
         if problems:
             raise ValueError(f"APP_ENV={self.app_env}: " + "; ".join(problems))
         return self
@@ -158,10 +179,8 @@ class Settings(BaseSettings):
         return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
-def _redis_password(url: str) -> str | None:
-    """The password in a redis:// or rediss:// URL (None when there is none)."""
-    from urllib.parse import unquote, urlsplit
-
+def _url_password(url: str) -> str | None:
+    """The password in a database/redis URL (None when there is none)."""
     password = urlsplit(url).password
     return unquote(password) if password else None
 
