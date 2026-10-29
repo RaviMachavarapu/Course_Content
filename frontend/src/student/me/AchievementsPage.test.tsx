@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { render, screen } from "@testing-library/react";
 import { AchievementsPage } from "./AchievementsPage";
 
@@ -22,7 +23,9 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <AchievementsPage />
+      <MemoryRouter>
+        <AchievementsPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

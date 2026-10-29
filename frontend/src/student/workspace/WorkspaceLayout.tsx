@@ -1,6 +1,6 @@
-import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
-import { Button, ErrorState, Icon, Skeleton } from "@/components";
-import { useLogout } from "../auth/useStudentAuth";
+import { Link, Outlet, useParams } from "react-router-dom";
+import { ErrorState, Icon, Skeleton } from "@/components";
+import { LogoutButton } from "../auth/LogoutButton";
 import type { ArtifactType } from "../catalog/api";
 import type { WorkspaceCourse } from "./api";
 import { ModuleExplorer } from "./ModuleExplorer";
@@ -13,8 +13,6 @@ export interface WorkspaceContext {
 export function WorkspaceLayout(): JSX.Element {
   const { slug = "", moduleIndex, type } = useParams();
   const { data: course, isPending, isError, error, refetch } = useWorkspaceCourse(slug);
-  const navigate = useNavigate();
-  const logout = useLogout();
 
   if (isPending) {
     return (
@@ -75,22 +73,7 @@ export function WorkspaceLayout(): JSX.Element {
             <Icon name="arrow_back" className="text-[16px]" />
             Back to Dashboard
           </Link>
-          <Button
-            variant="secondary"
-            size="sm"
-            iconLeft="logout"
-            data-testid="btn-ws9"
-            loading={logout.isPending}
-            onClick={() =>
-              logout.mutate(undefined, {
-                // only on success: a failed logout leaves the session live, and
-                // the hook tells the user so
-                onSuccess: () => navigate("/login", { replace: true }),
-              })
-            }
-          >
-            Log out
-          </Button>
+          <LogoutButton testid="btn-ws9" />
         </div>
       </header>
       {isError && (

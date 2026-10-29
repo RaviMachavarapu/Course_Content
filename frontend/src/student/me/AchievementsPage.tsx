@@ -2,18 +2,24 @@ import { Card, ErrorState, Icon, Skeleton, TopBar } from "@/components";
 import { cn } from "@/lib/cn";
 import type { Achievement } from "./api";
 import { useMyAchievements } from "./useMe";
+import { LogoutButton } from "../auth/LogoutButton";
 
 function Badge({ badge }: { badge: Achievement }): JSX.Element {
   return (
     <Card
-      className={cn("flex flex-col items-center gap-2 p-5 text-center", !badge.earned && "opacity-50")}
+      className={cn(
+        "flex flex-col items-center gap-2 p-5 text-center",
+        !badge.earned && "opacity-50",
+      )}
       data-testid="achievement-badge"
       data-earned={badge.earned}
     >
       <div
         className={cn(
           "flex h-14 w-14 items-center justify-center rounded-full",
-          badge.earned ? "bg-tertiary text-on-tertiary" : "bg-surface-container-high text-on-surface-variant",
+          badge.earned
+            ? "bg-tertiary text-on-tertiary"
+            : "bg-surface-container-high text-on-surface-variant",
         )}
       >
         <Icon name={badge.icon} filled={badge.earned} className="text-[28px]" />
@@ -37,7 +43,7 @@ export function AchievementsPage(): JSX.Element {
 
   return (
     <>
-      <TopBar title="Achievements" />
+      <TopBar title="Achievements" right={<LogoutButton />} />
       <div className="flex flex-1 flex-col gap-6 p-4 md:p-margin-desktop">
         <p className="text-body-md text-on-surface-variant">
           Badges you've earned, and what unlocks the rest.

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Card, EmptyState, ErrorState, Icon, ProgressBar, Skeleton, TopBar } from "@/components";
 import { useMyListening } from "./useMe";
+import { LogoutButton } from "../auth/LogoutButton";
 
 function fmt(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -13,7 +14,7 @@ export function MyListeningPage(): JSX.Element {
 
   return (
     <>
-      <TopBar title="My Listening" />
+      <TopBar title="My Listening" right={<LogoutButton />} />
       <div className="flex flex-1 flex-col gap-5 p-4 md:p-margin-desktop">
         <p className="text-body-md text-on-surface-variant">
           Audio overviews you've started, and how far you've gotten.
@@ -27,7 +28,9 @@ export function MyListeningPage(): JSX.Element {
           </div>
         )}
 
-        {isError && <ErrorState title="Could not load your listening" onRetry={() => void refetch()} />}
+        {isError && (
+          <ErrorState title="Could not load your listening" onRetry={() => void refetch()} />
+        )}
 
         {data && data.length === 0 && (
           <EmptyState

@@ -1,13 +1,14 @@
 import { Link } from "react-router-dom";
 import { Card, EmptyState, ErrorState, ProgressBar, Skeleton, TopBar } from "@/components";
 import { useMyProgress } from "./useMe";
+import { LogoutButton } from "../auth/LogoutButton";
 
 export function ProgressPage(): JSX.Element {
   const { data, isPending, isError, refetch } = useMyProgress();
 
   return (
     <>
-      <TopBar title="Progress" />
+      <TopBar title="Progress" right={<LogoutButton />} />
       <div className="flex flex-1 flex-col gap-5 p-4 md:p-margin-desktop">
         <p className="text-body-md text-on-surface-variant">
           How far you've gotten in every course you've started.
@@ -21,7 +22,9 @@ export function ProgressPage(): JSX.Element {
           </div>
         )}
 
-        {isError && <ErrorState title="Could not load your progress" onRetry={() => void refetch()} />}
+        {isError && (
+          <ErrorState title="Could not load your progress" onRetry={() => void refetch()} />
+        )}
 
         {data && data.length === 0 && (
           <EmptyState
