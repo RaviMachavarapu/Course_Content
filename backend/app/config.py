@@ -52,8 +52,11 @@ class Settings(BaseSettings):
     # ---- content provider ----
     content_provider: ContentProviderName = "fixture"
     mcp_endpoint: str = "http://mcp:7332"
-    mcp_timeout_text_sec: int = 360
-    mcp_timeout_audio_sec: int = 1200
+    #: how long a run waits for NotebookLM to finish one artifact. Live slide decks
+    #: have taken > 6 min; a run that still times out keeps NotebookLM's request so
+    #: Retry goes on waiting for the same artifact (no new generation).
+    mcp_timeout_text_sec: int = 30 * 60
+    mcp_timeout_audio_sec: int = 45 * 60
     #: generation jobs: heartbeat cadence while running; the reaper fails a running
     #: job silent for `job_stale_running_sec` and a queued one untouched for
     #: `job_stale_queued_sec` (lost message), so cards never sit on "Generating…".

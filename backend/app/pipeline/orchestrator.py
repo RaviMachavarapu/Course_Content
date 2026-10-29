@@ -573,6 +573,10 @@ def _record_failure(
         message = TIME_LIMIT
     elif isinstance(exc, ArtifactParseError):
         message = f"{type(exc).__name__}: {exc}. {PARSE_RETRY_HINT}"
+    elif isinstance(exc, GenerationTimeout) and not (plan.resume and plan.previous_outline is None):
+        # NotebookLM may still finish it; its request is kept (below), so Retry waits
+        # for the same artifact instead of generating a new one.
+        message = STILL_WORKING
     else:
         message = f"{type(exc).__name__}: {exc}"
     artifact.status = ArtifactStatus.error
@@ -600,6 +604,10 @@ def _record_failure(
 
 TIME_LIMIT = "Generation took too long and was stopped. Press Retry."
 PARSE_RETRY_HINT = "Press Retry to generate it again"
+STILL_WORKING = (
+    "NotebookLM is taking longer than usual. Press Retry to keep waiting for it "
+    "(it won't start a new generation)."
+)
 #: how often a run re-reads its job's state while it waits on NotebookLM
 _STATE_CHECK_SEC = 60.0
 

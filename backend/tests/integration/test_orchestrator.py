@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models.artifact import Artifact
 from app.models.artifact_version import ArtifactVersion
 from app.models.course import Course
@@ -201,6 +202,22 @@ def test_generation_times_out(
             db_session, provider, jobs[0].artifact_id, job_id=jobs[0].job_id
         )
     db_session.expire_all()
-    assert db_session.get(Artifact, jobs[0].artifact_id).status is ArtifactStatus.error
+    artifact = db_session.get(Artifact, jobs[0].artifact_id)
+    assert artifact.status is ArtifactStatus.error
     job_row = db_session.get(Module, module.id).artifacts
     assert any(a.type is ArtifactType.report and a.status is ArtifactStatus.error for a in job_row)
+    # NotebookLM may still finish it: the admin is told Retry keeps waiting on the same one
+    assert artifact.last_error == orchestrator.STILL_WORKING
+    assert artifact.studio_request is not None
+
+
+def test_generation_budgets_cover_slow_notebooklm_types() -> None:
+    # Live slide decks have taken > 6 min (2026-10-26, 2026-10-29): every type gets
+    # 30 min, audio 45 min, before the run gives up waiting.
+    settings = get_settings()
+    assert settings.mcp_timeout_text_sec == 30 * 60
+    assert settings.mcp_timeout_audio_sec == 45 * 60
+    # the waiting itself counts as progress: the stall watchdog must outlast it
+    assert settings.job_stall_sec > settings.mcp_timeout_text_sec
+    assert settings.job_time_limit_text_sec > settings.mcp_timeout_text_sec
+    assert settings.job_time_limit_audio_sec > settings.mcp_timeout_audio_sec
