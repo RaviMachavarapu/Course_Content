@@ -1287,3 +1287,48 @@ def test_a_live_task_whose_set_was_replaced_does_not_retry(
     assert retries == []
     statuses = sorted(qs.status.value for qs in _sets(db_session, artifact, user))
     assert statuses == ["failed", "ready"]
+
+
+# -- worst cases (review 2026-10-29, section B 28/29) --------------------------------
+def test_a_redelivered_message_while_the_set_is_preparing_does_nothing(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """worker-quiz killed mid-preparation: the broker redelivers the original message
+    (no set id). The set still beats (or isn't stale yet): "exists", no chat query."""
+    artifact, user = setup
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    def redelivered() -> None:
+        assert _run(monkeypatch, FakeChat(), artifact, user) == "exists"
+
+    chat.on_query = redelivered
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+    assert len(chat.prompts) == 1
+    assert [s.status for s in _sets(db_session, artifact, user)] == [QuizSetStatus.ready]
+
+
+def test_after_a_republish_the_next_preparation_follows_the_new_studio_count(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The admin redoes and republishes the quiz while a student retakes: the ready set
+    is still served; the next preparation asks for the new Studio count."""
+    artifact, user = setup
+    assert (
+        _run(monkeypatch, FakeChat(answer([mcq() for _ in range(10)])), artifact, user) == "ready"
+    )
+    [ready] = _sets(db_session, artifact, user)
+
+    v2 = ArtifactVersion(
+        artifact_id=artifact.id, revision=2, content_json={"questions": [mcq() for _ in range(4)]}
+    )
+    db_session.add(v2)
+    db_session.flush()
+    artifact.published_version_id = v2.id
+    ready.status = QuizSetStatus.used  # the student took it
+    db_session.commit()
+
+    chat = FakeChat(answer([mcq() for _ in range(6)]))
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+    assert "Create 4 NEW quiz questions" in chat.prompts[0]
+    newest = [s for s in _sets(db_session, artifact, user) if s.status is QuizSetStatus.ready]
+    assert len(newest) == 1 and len(newest[0].questions) == 4
