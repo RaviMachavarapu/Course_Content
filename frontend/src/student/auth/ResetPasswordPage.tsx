@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Input } from "@/components";
-import { ApiError, authErrorMessage } from "@/lib/api";
+import { ApiError, PASSWORD_RESET_DONE_MESSAGE, authErrorMessage } from "@/lib/api";
 import { AuthShell } from "./AuthShell";
 import { confirmError, passwordError } from "./validation";
 import { studentAuthApi } from "./api";
@@ -32,7 +32,8 @@ export function ResetPasswordPage(): JSX.Element {
     if (next.password || next.confirm) return;
 
     confirmReset.mutate(undefined, {
-      onSuccess: () => navigate("/login", { replace: true }),
+      onSuccess: () =>
+        navigate("/login", { replace: true, state: { notice: PASSWORD_RESET_DONE_MESSAGE } }),
       onError: (err) => {
         if (err instanceof ApiError && err.code === "weak_password") {
           setErrors((p) => ({ ...p, password: err.message }));

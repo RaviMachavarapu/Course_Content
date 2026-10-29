@@ -36,6 +36,9 @@ export class ApiError extends Error {
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export const SESSION_ENDED_MESSAGE = "Session ended — please sign in again.";
+/** Shown on the login page after a completed password reset (owner decision 2026-10-29). */
+export const PASSWORD_RESET_DONE_MESSAGE =
+  "Your password has been changed and this device is now trusted. Other devices have been signed out. Please sign in with your new password.";
 /** The same notice: a CSRF token that can't be refreshed means no session. */
 export const SESSION_EXPIRED_MESSAGE = SESSION_ENDED_MESSAGE;
 

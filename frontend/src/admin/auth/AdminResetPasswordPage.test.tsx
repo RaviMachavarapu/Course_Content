@@ -1,11 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockFetch } from "@/student/auth/authTestUtils";
 import { AdminResetPasswordPage } from "./AdminResetPasswordPage";
 
 afterEach(() => vi.unstubAllGlobals());
+
+function LoginProbe() {
+  const state = useLocation().state as { notice?: string } | null;
+  return (
+    <div>
+      ADMIN LOGIN
+      <p data-testid="notice">{state?.notice ?? ""}</p>
+    </div>
+  );
+}
 
 function renderPage(initial: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -14,7 +24,7 @@ function renderPage(initial: string) {
       <MemoryRouter initialEntries={[initial]}>
         <Routes>
           <Route path="/admin/reset-password" element={<AdminResetPasswordPage />} />
-          <Route path="/admin/login" element={<div>ADMIN LOGIN</div>} />
+          <Route path="/admin/login" element={<LoginProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -34,6 +44,10 @@ describe("AdminResetPasswordPage", () => {
     await userEvent.type(screen.getByLabelText("Confirm password"), "brand-new-admin-pw-2");
     await userEvent.click(screen.getByTestId("btn-admin-reset-confirm"));
     await waitFor(() => expect(screen.getByText("ADMIN LOGIN")).toBeInTheDocument());
+    // owner decision 9 (2026-10-29)
+    expect(screen.getByTestId("notice")).toHaveTextContent(
+      "Your password has been changed and this device is now trusted. Other devices have been signed out. Please sign in with your new password.",
+    );
   });
 
   it("says when password reset is turned off", async () => {
