@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockFetch } from "@/student/auth/authTestUtils";
 import { AdminLoginPage } from "./AdminLoginPage";
@@ -75,5 +75,38 @@ describe("AdminLoginPage", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Expired");
+  });
+});
+
+describe("AdminLoginPage rate limit countdown", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("counts down from retry_after, disables submit, re-enables at 0, offers a reset", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockFetch({
+      status: 429,
+      body: { error: { code: "rate_limited", message: "Too many attempts.", retry_after: 8 } },
+    });
+    renderPage();
+    await u.type(screen.getByLabelText("Email"), "boss@example.com");
+    await u.type(screen.getByLabelText("Password"), "wrong-password-1");
+    await u.click(screen.getByTestId("btn-al1"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Too many attempts — try again in 0:08");
+    expect(screen.getByTestId("btn-al1")).toBeDisabled();
+    expect(within(alert).getByRole("link", { name: /forgot password/i })).toHaveAttribute(
+      "href",
+      "/admin/forgot-password",
+    );
+
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    expect(screen.getByRole("alert")).toHaveTextContent("try again in 0:05");
+    expect(screen.getByTestId("btn-al1")).toBeDisabled();
+
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("btn-al1")).toBeEnabled();
   });
 });

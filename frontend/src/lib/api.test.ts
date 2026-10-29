@@ -1,4 +1,11 @@
-import { ApiError, apiFetch, authErrorMessage, errorMessage, setCsrfFailureHandler } from "./api";
+import {
+  ApiError,
+  apiFetch,
+  authErrorMessage,
+  errorMessage,
+  formatCountdown,
+  setCsrfFailureHandler,
+} from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -151,6 +158,36 @@ describe("apiFetch CSRF recovery", () => {
     const fn = sequence([{ status: 500, body: { error: { code: "error", message: "boom" } } }]);
     await expect(apiFetch("/api/admin/modules", { method: "POST" })).rejects.toThrow("boom");
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retry_after", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("carries the server's retry_after on a 429", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 429,
+          statusText: "429",
+          json: () =>
+            Promise.resolve({
+              error: { code: "rate_limited", message: "Too many", retry_after: 42 },
+            }),
+        } as Response),
+      ),
+    );
+    await expect(
+      apiFetch("/api/student/auth/login", { method: "POST", body: {} }),
+    ).rejects.toMatchObject({ status: 429, retryAfter: 42 });
+  });
+
+  it("formats a countdown as m:ss", () => {
+    expect(formatCountdown(65)).toBe("1:05");
+    expect(formatCountdown(9)).toBe("0:09");
+    expect(formatCountdown(600)).toBe("10:00");
   });
 });
 

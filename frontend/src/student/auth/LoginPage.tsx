@@ -1,8 +1,9 @@
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { type LoginRedirectState, safeFrom } from "@/app/csrfRecovery";
-import { Button, Input } from "@/components";
-import { authErrorMessage } from "@/lib/api";
+import { Button, Input, RateLimitAlert } from "@/components";
+import { authErrorMessage, retryAfterSeconds } from "@/lib/api";
+import { useCountdown } from "@/lib/useCountdown";
 import { AuthShell } from "./AuthShell";
 import { emailError } from "./validation";
 import { useLogin } from "./useStudentAuth";
@@ -17,9 +18,12 @@ export function LoginPage(): JSX.Element {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const countdown = useCountdown();
+  const waiting = countdown.remaining > 0;
 
   function onSubmit(e: FormEvent): void {
     e.preventDefault();
+    if (waiting) return;
     setFormError(null);
     const next = {
       email: emailError(email) ?? undefined,
@@ -34,7 +38,9 @@ export function LoginPage(): JSX.Element {
         onSuccess: () =>
           navigate(safeFrom(location.state?.from, "/catalog", "student"), { replace: true }),
         onError: (err) => {
-          setFormError(authErrorMessage(err, "Could not sign in. Try again."));
+          const wait = retryAfterSeconds(err);
+          if (wait) countdown.start(wait);
+          else setFormError(authErrorMessage(err, "Could not sign in. Try again."));
         },
       },
     );
@@ -58,7 +64,7 @@ export function LoginPage(): JSX.Element {
       }
     >
       <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
-        {notice && !formError && (
+        {notice && !formError && !waiting && (
           <p
             role="status"
             className="rounded-lg bg-surface-container-high px-3 py-2 font-label-md text-label-md text-on-surface"
@@ -66,6 +72,7 @@ export function LoginPage(): JSX.Element {
             {notice}
           </p>
         )}
+        {waiting && <RateLimitAlert seconds={countdown.remaining} forgotPath="/forgot-password" />}
         {formError && (
           <p
             role="alert"
@@ -103,6 +110,7 @@ export function LoginPage(): JSX.Element {
           type="submit"
           variant="student"
           loading={login.isPending}
+          disabled={waiting}
           fullWidth
           data-testid="btn-sl2"
         >

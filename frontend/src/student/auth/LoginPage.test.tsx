@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { LoginPage } from "./LoginPage";
 import userEvent from "@testing-library/user-event";
@@ -76,5 +76,40 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText("Password"), "correct-pw-123");
     await userEvent.click(screen.getByTestId("btn-sl2"));
     await waitFor(() => expect(screen.getByText("DEEP LINK")).toBeInTheDocument());
+  });
+});
+
+describe("LoginPage rate limit countdown", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("counts down from retry_after, disables submit, re-enables at 0, offers a reset", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockFetch({
+      status: 429,
+      body: { error: { code: "rate_limited", message: "Too many attempts.", retry_after: 65 } },
+    });
+    renderAuthRoute("/login");
+    await u.type(screen.getByLabelText("Email"), "sam@example.com");
+    await u.type(screen.getByLabelText("Password"), "whatever-1234");
+    await u.click(screen.getByTestId("btn-sl2"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Too many attempts — try again in 1:05");
+    expect(screen.getByTestId("btn-sl2")).toBeDisabled();
+    expect(within(alert).getByRole("link", { name: /forgot password/i })).toHaveAttribute(
+      "href",
+      "/forgot-password",
+    );
+
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.getByRole("alert")).toHaveTextContent("try again in 1:04");
+    await act(() => vi.advanceTimersByTimeAsync(55_000));
+    expect(screen.getByRole("alert")).toHaveTextContent("try again in 0:09");
+    expect(screen.getByTestId("btn-sl2")).toBeDisabled();
+
+    await act(() => vi.advanceTimersByTimeAsync(9_000));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("btn-sl2")).toBeEnabled();
   });
 });

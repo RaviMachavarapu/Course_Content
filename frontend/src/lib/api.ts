@@ -11,13 +11,22 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields?: unknown;
+  /** Seconds until the server accepts another attempt (429 `retry_after`). */
+  readonly retryAfter?: number;
 
-  constructor(status: number, code: string, message: string, fields?: unknown) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields?: unknown,
+    retryAfter?: number,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -56,7 +65,14 @@ export interface ApiOptions {
   signal?: AbortSignal;
 }
 
-type ErrorBody = { code?: string; message?: string; fields?: unknown };
+type ErrorBody = { code?: string; message?: string; fields?: unknown; retry_after?: unknown };
+
+/** `retry_after` from the error body, else the `Retry-After` header (seconds). */
+function retryAfterOf(res: Response, err: ErrorBody | undefined): number | undefined {
+  const raw = err?.retry_after ?? res.headers?.get?.("Retry-After");
+  const seconds = typeof raw === "number" ? raw : Number(raw);
+  return raw != null && Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined;
+}
 
 interface Sent {
   res: Response;
@@ -135,6 +151,7 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
       err?.code ?? "error",
       err?.message ?? res.statusText,
       err?.fields,
+      retryAfterOf(res, err),
     );
   }
 
@@ -152,6 +169,17 @@ export function errorMessage(err: unknown, fallback = "The request failed. Try a
   if (!first?.msg) return err.message;
   const loc = Array.isArray(first.loc) ? first.loc.filter((p) => p !== "body").join(".") : "";
   return loc ? `${loc}: ${first.msg}` : first.msg;
+}
+
+/** `65` → `"1:05"`. */
+export function formatCountdown(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Seconds to wait when `err` is a 429 that says how long (login pages count down). */
+export function retryAfterSeconds(err: unknown): number | undefined {
+  return err instanceof ApiError && err.status === 429 ? err.retryAfter : undefined;
 }
 
 export const RATE_LIMITED_MESSAGE = "Too many attempts — please try again later.";
