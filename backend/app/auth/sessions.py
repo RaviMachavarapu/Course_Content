@@ -34,6 +34,10 @@ class SessionData:
     user_id: str
     scope: SessionScope
     created_at: str
+    #: signed in with "Remember this device" (logging out of a session that
+    #: wasn't remembered also drops the device cookie). Sessions from before
+    #: the checkbox existed always set the cookie, so they count as remembered.
+    remember: bool = True
 
 
 def _key(scope: SessionScope, token: str) -> str:
@@ -54,12 +58,13 @@ class SessionStore:
             return self._settings.admin_session_ttl_hours * 3600
         return self._settings.student_session_ttl_days * 86400
 
-    def create(self, user_id: str, scope: SessionScope) -> str:
+    def create(self, user_id: str, scope: SessionScope, *, remember: bool = False) -> str:
         token = secrets.token_urlsafe(_TOKEN_BYTES)
         payload = SessionData(
             user_id=user_id,
             scope=scope,
             created_at=dt.datetime.now(tz=dt.UTC).isoformat(),
+            remember=remember,
         )
         self._r.setex(_key(scope, token), self.ttl_seconds(scope), json.dumps(payload.__dict__))
         return token
@@ -72,7 +77,10 @@ class SessionStore:
             return None
         data = json.loads(raw)
         session = SessionData(
-            user_id=data["user_id"], scope=data["scope"], created_at=data["created_at"]
+            user_id=data["user_id"],
+            scope=data["scope"],
+            created_at=data["created_at"],
+            remember=bool(data.get("remember", True)),
         )
         epoch = self._r.get(_epoch_key(session.user_id))
         if epoch is not None and dt.datetime.fromisoformat(

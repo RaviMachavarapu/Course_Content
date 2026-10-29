@@ -6,6 +6,9 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=512)
+    #: "Remember this device" (ticked by default on the login pages): only then
+    #: does the browser get the trusted-device cookie
+    remember: bool = False
 
 
 class RegisterRequest(BaseModel):

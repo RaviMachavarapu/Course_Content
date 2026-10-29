@@ -50,3 +50,13 @@ def set_device_cookie(
         samesite="lax",
         path="/",
     )
+
+
+def clear_device_cookie(response: Response, scope: SessionScope, settings: Settings) -> None:
+    response.delete_cookie(
+        key=DEVICE_COOKIE_NAMES[scope],
+        httponly=True,
+        secure=settings.app_env != "dev",
+        samesite="lax",
+        path="/",
+    )

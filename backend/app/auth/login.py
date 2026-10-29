@@ -12,9 +12,14 @@
   its own counter with `LOGIN_DEVICE_FREE_FAILURES` free failures.
 - An attempt made too early is a 429 ``rate_limited`` with ``retry_after`` and
   ``Retry-After``; the password isn't checked and it isn't a failure.
-- A success clears the email's (and the device's) count.
-- After 5 consecutive failures without a device cookie the account's owner is
-  mailed (at most once an hour), after the response is sent.
+- A success clears the device's count; a success *without* a device cookie
+  also clears the email's (a trusted-device success leaves an attacker's
+  per-email backoff to age out).
+- After 5 consecutive failures (with or without a device cookie: a shared PC
+  that remembers the owner mustn't hide guessing) the account's owner is
+  mailed, at most once an hour, after the response is sent.
+- The device cookie is set only when the login asks for it ("Remember this
+  device"); the browser's previous session token is destroyed.
 
 Counters are Redis sorted sets of failure timestamps from the injected clock,
 so tests can drive time; their Redis TTLs only clean up. The limit check and
@@ -39,7 +44,7 @@ from app.auth.csrf import issue_csrf_cookie
 from app.auth.device import DEVICE_COOKIE_NAMES, issue_device_token, matches, read_device_token
 from app.auth.hashing import dummy_hash, verify_password
 from app.auth.ratelimit import client_ip, parse_rate
-from app.auth.sessions import SessionScope, SessionStore
+from app.auth.sessions import COOKIE_NAMES, SessionScope, SessionStore
 from app.config import Settings
 from app.errors import APIError
 from app.logging import get_logger
@@ -175,6 +180,7 @@ def login_flow(
     role: UserRole,
     email: str,
     password: str,
+    remember: bool,
     request: Request,
     response: Response,
     db: Session,
@@ -232,30 +238,40 @@ def login_flow(
     # "wrong password".
     password_ok = verify_password(user.password_hash if user else dummy_hash(), password)
     if user is None or not password_ok:
-        # the reservation stays: it is this failure
-        background = (
-            None if trusted else _note_failure(redis_client, settings, scope, normalized, user, now)
-        )
+        # the reservation stays: it is this failure. Device-cookie failures
+        # count toward the alert too (owner decision 2026-10-29: shared PCs).
+        background = _note_failure(redis_client, settings, scope, normalized, user, now)
         raise _invalid(background)
 
-    # successes never count: release the reservation, clear the account
+    # successes never count: release the reservation, clear the account. A
+    # trusted-device success clears only its own device counter: the email's
+    # failures may be an attacker's, who mustn't get fresh free guesses each
+    # time the owner signs in.
     pipe = redis_client.pipeline()
     pipe.zrem(ip_key, member)
-    pipe.delete(email_key, f"{ns}:streak:{normalized}", account_key)
+    pipe.delete(f"{ns}:streak:{normalized}", account_key)
     pipe.execute()
     user.last_login_at = dt.datetime.now(tz=dt.UTC)
     db.flush()
-    token = store.create(str(user.id), scope)
+    # whatever session this browser held (perhaps someone else's on a shared
+    # PC) ends here rather than living on in Redis
+    store.destroy(scope, request.cookies.get(COOKIE_NAMES[scope]))
+    token = store.create(str(user.id), scope, remember=remember)
     set_session_cookie(response, scope, token, store, settings)
     issue_csrf_cookie(response, settings)
-    set_device_cookie(
-        response,
-        scope,
-        issue_device_token(
-            settings, user_id=str(user.id), scope=scope, password_hash=user.password_hash, now=now
-        ),
-        settings,
-    )
+    if remember:
+        set_device_cookie(
+            response,
+            scope,
+            issue_device_token(
+                settings,
+                user_id=str(user.id),
+                scope=scope,
+                password_hash=user.password_hash,
+                now=now,
+            ),
+            settings,
+        )
     return user
 
 
@@ -267,8 +283,8 @@ def _note_failure(
     user: User | None,
     now: float,
 ) -> BackgroundTasks | None:
-    """Count a failure without a device cookie toward the owner's alert; the
-    same Redis work for unknown emails, but only a real account gets mail."""
+    """Count a failure toward the owner's alert; the same Redis work for
+    unknown emails, but only a real account gets mail."""
     streak_key = f"lg:{scope}:streak:{email}"
     alerted_key = f"lg:{scope}:alerted:{email}"
     pipe = redis_client.pipeline()
@@ -278,13 +294,11 @@ def _note_failure(
     pipe.expire(
         streak_key, _STREAK_TTL_SEC if user is not None else settings.login_failure_window_sec
     )
-    pipe.get(alerted_key)
-    streak, _, alerted = pipe.execute()
+    streak, _ = pipe.execute()
     if user is None or int(streak) < ALERT_AFTER_FAILURES:
         return None
-    if alerted is not None and now - float(alerted) < ALERT_INTERVAL_SEC:
+    if not _claim_alert(redis_client, alerted_key, now):
         return None
-    redis_client.set(alerted_key, str(now), ex=ALERT_INTERVAL_SEC)
     when = dt.datetime.fromtimestamp(now, tz=dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
     link = f"{settings.public_base_url}{_FORGOT_PATH[scope]}"
     tasks = BackgroundTasks()
@@ -301,6 +315,26 @@ def _note_failure(
         ),
     )
     return tasks
+
+
+#: Atomically: claim the right to send the alert unless one went out less than
+#: ARGV[2] seconds ago (by the injected clock). KEYS: alerted key. ARGV: now,
+#: interval. Returns 1 when claimed. Two concurrent failures can't both send.
+_CLAIM_ALERT_LUA = """
+local last = redis.call('GET', KEYS[1])
+if last and tonumber(ARGV[1]) - tonumber(last) < tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return 1
+"""
+
+
+def _claim_alert(redis_client: RedisClient, alerted_key: str, now: float) -> bool:
+    claimed = redis_client.eval(  # type: ignore[no-untyped-call]  # untyped in the stubs
+        _CLAIM_ALERT_LUA, 1, alerted_key, repr(now), ALERT_INTERVAL_SEC
+    )
+    return bool(int(claimed))
 
 
 def _send_alert_mail(settings: Settings, *, to: str, body: str) -> None:

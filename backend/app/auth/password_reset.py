@@ -15,10 +15,12 @@ import secrets
 import uuid
 from typing import TYPE_CHECKING, Literal
 
-from fastapi import BackgroundTasks, status
+from fastapi import BackgroundTasks, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.cookies import set_device_cookie
+from app.auth.device import issue_device_token
 from app.auth.hashing import hash_password
 from app.auth.passwords import validate_password_strength
 from app.auth.ratelimit import RateLimiter, parse_rate
@@ -161,7 +163,10 @@ def confirm_password_reset(
     scope: ResetScope,
     token: str,
     new_password: str,
-) -> None:
+) -> User:
+    """Set the new password and sign every session out. Returns the user: the
+    caller marks the redeeming browser as a trusted device (owner decision
+    2026-10-29), since opening the mailed link proves the account is theirs."""
     _ensure_enabled(settings)
     validate_password_strength(new_password)
     user_id = consume_reset_token(redis_client, token=token, scope=scope)
@@ -182,3 +187,19 @@ def confirm_password_reset(
     db.flush()
     # whoever held a session (perhaps the reason for the reset) is signed out
     sessions.revoke_user(str(user.id))
+    return user
+
+
+def trust_redeeming_browser(
+    response: Response, settings: Settings, *, scope: ResetScope, user: User, now: float
+) -> None:
+    """A fresh device cookie, stamped with the new password, for the browser
+    that completed the reset (every other device cookie stopped matching)."""
+    set_device_cookie(
+        response,
+        scope,
+        issue_device_token(
+            settings, user_id=str(user.id), scope=scope, password_hash=user.password_hash, now=now
+        ),
+        settings,
+    )

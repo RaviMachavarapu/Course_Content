@@ -24,7 +24,7 @@ from app.api.deps import (
     SessionStoreDep,
     SettingsDep,
 )
-from app.auth.cookies import clear_session_cookie, set_session_cookie
+from app.auth.cookies import clear_device_cookie, clear_session_cookie, set_session_cookie
 from app.auth.csrf import (
     clear_csrf_cookie_after_logout,
     csrf_protect,
@@ -33,7 +33,11 @@ from app.auth.csrf import (
 )
 from app.auth.hashing import hash_password
 from app.auth.login import login_flow
-from app.auth.password_reset import confirm_password_reset, request_password_reset
+from app.auth.password_reset import (
+    confirm_password_reset,
+    request_password_reset,
+    trust_redeeming_browser,
+)
 from app.auth.passwords import validate_password_strength
 from app.auth.ratelimit import client_ip, parse_rate
 from app.auth.sessions import COOKIE_NAMES
@@ -120,6 +124,7 @@ def login(
         role=UserRole.student,
         email=body.email,
         password=body.password,
+        remember=body.remember,
         request=request,
         response=response,
         db=db,
@@ -137,9 +142,14 @@ def login(
     dependencies=[Depends(csrf_protect)],
 )
 def logout(request: Request, store: SessionStoreDep, settings: SettingsDep) -> Response:
-    store.destroy("student", request.cookies.get(COOKIE_NAMES["student"]))
+    token = request.cookies.get(COOKIE_NAMES["student"])
+    session = store.read("student", token)
+    store.destroy("student", token)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, "student", settings)
+    if session is not None and not session.remember:
+        # signed in without "Remember this device": leave nothing behind
+        clear_device_cookie(response, "student", settings)
     clear_csrf_cookie_after_logout(request, response, settings, logging_out="student")
     return response
 
@@ -183,8 +193,9 @@ def password_reset_confirm(
     redis_client: RedisDep,
     settings: SettingsDep,
     store: SessionStoreDep,
+    clock: ClockDep,
 ) -> Response:
-    confirm_password_reset(
+    user = confirm_password_reset(
         db,
         redis_client,
         settings,
@@ -193,4 +204,6 @@ def password_reset_confirm(
         token=body.token,
         new_password=body.password,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    trust_redeeming_browser(response, settings, scope="student", user=user, now=clock())
+    return response

@@ -102,8 +102,16 @@ def _register(client: TestClient, email: str) -> None:
     assert r.status_code == status.HTTP_201_CREATED, r.text
 
 
-def _login(client: TestClient, email: str, password: str = GOOD_PW, path: str = STUDENT_LOGIN):
-    return client.post(path, json={"email": email, "password": password})
+def _login(
+    client: TestClient,
+    email: str,
+    password: str = GOOD_PW,
+    path: str = STUDENT_LOGIN,
+    *,
+    remember: bool = True,
+):
+    """Like the login pages, which send "Remember this device" (ticked by default)."""
+    return client.post(path, json={"email": email, "password": password, "remember": remember})
 
 
 def _trusted_device(client: TestClient, email: str, ip: str = "10.1.0.1") -> TestClient:
@@ -457,15 +465,11 @@ def test_alert_after_a_success_needs_five_new_failures(
     assert mails == []  # not five consecutive
 
 
-def test_no_alert_for_unknown_emails_or_device_attempts(
+def test_no_alert_for_unknown_emails(
     app_client: TestClient, mails: list[dict[str, str]], fast_verify: list[str]
 ) -> None:
     for _ in range(6):
         _login(_other(app_client, "10.50.0.1"), "ghost@example.com", BAD_PW)
-    _register(app_client, "owner@example.com")
-    laptop = _trusted_device(app_client, "owner@example.com")
-    for _ in range(8):
-        _login(laptop, "owner@example.com", BAD_PW)
     assert mails == []
 
 
