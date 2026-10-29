@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 
@@ -12,6 +13,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.logging import get_logger
 
 REQUEST_ID_HEADER = "X-Request-ID"
+#: a caller's id is echoed and bound into every log line of the request: only
+#: a short token is accepted (anything else gets a fresh id)
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 log = get_logger("http")
 
 
@@ -30,7 +34,8 @@ class RequestContextMiddleware:
             return
 
         request = Request(scope)
-        request_id = request.headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
+        supplied = request.headers.get(REQUEST_ID_HEADER, "")
+        request_id = supplied if _REQUEST_ID_RE.fullmatch(supplied) else uuid.uuid4().hex
 
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
