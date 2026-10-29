@@ -93,7 +93,13 @@ describe("AdminLoginPage rate limit countdown", () => {
     await u.type(screen.getByLabelText("Password"), "wrong-password-1");
     await u.click(screen.getByTestId("btn-al1"));
 
-    const alert = await screen.findByRole("alert");
+    const alert = await screen.findByTestId("rate-limit-countdown");
+    const live = screen.getByTestId("rate-limit-announcement");
+    // announced once when the wait starts; the ticking box is not a live region
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toHaveTextContent(`Too many attempts. Try again in 0:08.`);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(alert).not.toHaveAttribute("aria-live");
     expect(alert).toHaveTextContent("Too many attempts — try again in 0:08");
     expect(screen.getByTestId("btn-al1")).toBeDisabled();
     expect(within(alert).getByRole("link", { name: /forgot password/i })).toHaveAttribute(
@@ -102,11 +108,16 @@ describe("AdminLoginPage rate limit countdown", () => {
     );
 
     await act(() => vi.advanceTimersByTimeAsync(3000));
-    expect(screen.getByRole("alert")).toHaveTextContent("try again in 0:05");
+    expect(screen.getByTestId("rate-limit-countdown")).toHaveTextContent("try again in 0:05");
+    expect(live).toHaveTextContent("Too many attempts. Try again in 0:08.");
     expect(screen.getByTestId("btn-al1")).toBeDisabled();
 
     await act(() => vi.advanceTimersByTimeAsync(5000));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rate-limit-countdown")).not.toBeInTheDocument();
     expect(screen.getByTestId("btn-al1")).toBeEnabled();
+    // announced once more when it ends
+    expect(screen.getByTestId("rate-limit-announcement")).toHaveTextContent(
+      "You can try signing in again.",
+    );
   });
 });

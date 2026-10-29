@@ -69,9 +69,7 @@ export function AdminLoginPage(): JSX.Element {
                 {notice}
               </p>
             )}
-            {waiting && (
-              <RateLimitAlert seconds={countdown.remaining} forgotPath="/admin/forgot-password" />
-            )}
+            <RateLimitAlert seconds={countdown.remaining} forgotPath="/admin/forgot-password" />
             {formError && (
               <p
                 role="alert"

@@ -94,7 +94,13 @@ describe("LoginPage rate limit countdown", () => {
     await u.type(screen.getByLabelText("Password"), "whatever-1234");
     await u.click(screen.getByTestId("btn-sl2"));
 
-    const alert = await screen.findByRole("alert");
+    const alert = await screen.findByTestId("rate-limit-countdown");
+    const live = screen.getByTestId("rate-limit-announcement");
+    // announced once when the wait starts; the ticking box is not a live region
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toHaveTextContent(`Too many attempts. Try again in 1:05.`);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(alert).not.toHaveAttribute("aria-live");
     expect(alert).toHaveTextContent("Too many attempts — try again in 1:05");
     expect(screen.getByTestId("btn-sl2")).toBeDisabled();
     expect(within(alert).getByRole("link", { name: /forgot password/i })).toHaveAttribute(
@@ -103,13 +109,18 @@ describe("LoginPage rate limit countdown", () => {
     );
 
     await act(() => vi.advanceTimersByTimeAsync(1000));
-    expect(screen.getByRole("alert")).toHaveTextContent("try again in 1:04");
+    expect(screen.getByTestId("rate-limit-countdown")).toHaveTextContent("try again in 1:04");
+    expect(live).toHaveTextContent("Too many attempts. Try again in 1:05.");
     await act(() => vi.advanceTimersByTimeAsync(55_000));
-    expect(screen.getByRole("alert")).toHaveTextContent("try again in 0:09");
+    expect(screen.getByTestId("rate-limit-countdown")).toHaveTextContent("try again in 0:09");
     expect(screen.getByTestId("btn-sl2")).toBeDisabled();
 
     await act(() => vi.advanceTimersByTimeAsync(9_000));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rate-limit-countdown")).not.toBeInTheDocument();
     expect(screen.getByTestId("btn-sl2")).toBeEnabled();
+    // announced once more when it ends
+    expect(screen.getByTestId("rate-limit-announcement")).toHaveTextContent(
+      "You can try signing in again.",
+    );
   });
 });
