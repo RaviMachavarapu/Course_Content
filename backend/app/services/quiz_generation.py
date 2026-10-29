@@ -38,6 +38,14 @@ MAX_AVOID = 60
 DUPLICATE_RATIO = 0.85
 QUOTE_WINDOW_FACTOR = 3
 MIN_SERVED = 5
+
+
+def min_served(n: int) -> int:
+    """The fewest questions a fresh set may have: 5, or all N when the Studio quiz has
+    fewer (a retake is as long as the reviewed quiz; owner decision 2026-10-29)."""
+    return max(1, min(MIN_SERVED, n))
+
+
 MCQ_SHARE = 0.6
 
 _BLANK_RE = re.compile(r"_{3,}")
@@ -417,6 +425,11 @@ def _option_key(option: str) -> str:
 # -- validate -------------------------------------------------------------------
 
 
+def blank_key(question: str) -> str:
+    """A question's text with its blank normalised to `BLANK` (as served)."""
+    return _BLANK_RE.sub(BLANK, question.strip())
+
+
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
@@ -566,7 +579,10 @@ def validate(
         problem = index.quote_problem(q["source_quote"]) if index is not None else None
         if problem == _QUOTE_NOT_FOUND and link_source:
             if unverified is not None:
-                unverified.append({"index": i, "question": shown, "reason": UNVERIFIED_REASON})
+                # the text as served (a fill-blank's blank normalised), so it can be matched
+                unverified.append(
+                    {"index": i, "question": q["question"], "reason": UNVERIFIED_REASON}
+                )
             problem = None
         if problem:
             dropped.append({"index": i, "question": shown, "reason": problem})

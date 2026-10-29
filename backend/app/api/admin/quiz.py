@@ -19,6 +19,7 @@ from app.models.enums import QuizSetSource
 from app.models.module import Module
 from app.models.quiz_question_set import QuizQuestionSet
 from app.models.user import User
+from app.services import quiz_generation as qg
 
 router = APIRouter(prefix="/api/admin", tags=["admin-quiz"], dependencies=ADMIN_DEPENDENCIES)
 
@@ -77,6 +78,14 @@ def _entries(r: dict[str, Any], key: str) -> list[DroppedOut]:
     ]
 
 
+def _served_text(question: str, questions: list[Any]) -> str:
+    key = qg.blank_key(question)
+    for q in questions:
+        if isinstance(q, dict) and qg.blank_key(str(q.get("question", ""))) == key:
+            return str(q.get("question"))
+    return question
+
+
 def _out(row: QuizQuestionSet, user: User) -> QuizSetOut:
     dropped: list[DroppedOut] = []
     unverified: list[DroppedOut] = []
@@ -86,6 +95,16 @@ def _out(row: QuizQuestionSet, user: User) -> QuizSetOut:
         kept += len(k) if isinstance(k, list) else 0
         dropped += _entries(r, "dropped")
         unverified += _entries(r, "unverified")
+    # only questions actually served (round 1 may return more than N); an older report
+    # holds a fill-blank's raw text, so compare with the blank normalised
+    served = {
+        qg.blank_key(str(q.get("question", ""))) for q in row.questions if isinstance(q, dict)
+    }
+    unverified = [
+        u.model_copy(update={"question": _served_text(u.question, row.questions)})
+        for u in unverified
+        if qg.blank_key(u.question) in served
+    ]
     report = row.validation_report if isinstance(row.validation_report, dict) else {}
     error = report.get("error")
     warning = report.get("reask_error")

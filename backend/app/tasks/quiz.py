@@ -10,7 +10,7 @@ Steps: claim a `preparing` chat set for (artifact, student) — the partial uniq
 set is preparing or ready does nothing); ask chat for N questions (N = the published
 Studio quiz's question count, default 10) avoiding the student's most recent 60 seen
 questions; parse and validate; ask once more for any shortfall; store the set `ready`
-(at least 5 questions, at most N) or `failed`, with the validation report either way.
+(at least min(5, N) questions, at most N) or `failed`, with the validation report either way.
 
 Chat unavailable (a transient provider error, a 5xx/408 answer, the connector unreachable),
 unreadable source PDFs or a database connection error is
@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+import redis.exceptions
 from celery import Task, shared_task
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -74,7 +75,14 @@ STALE_AFTER = dt.timedelta(minutes=20)
 
 _PENDING_WHERE = text("source = 'chat' AND status IN ('preparing', 'ready')")
 #: chat unavailable (timeout, locked session, 5xx/408, connector unreachable during a restart)
-_CHAT_UNAVAILABLE = (TransientProviderError, GenerationTimeout, httpx.TransportError)
+_CHAT_UNAVAILABLE = (
+    TransientProviderError,
+    GenerationTimeout,
+    httpx.TransportError,
+    # Redis (the NotebookLM session lock) restarting or unreachable
+    redis.exceptions.ConnectionError,
+    redis.exceptions.TimeoutError,
+)
 _RETRYABLE = (*_CHAT_UNAVAILABLE, qg.SourceTextUnavailable, OperationalError)
 FINISH_ATTEMPTS = 4
 FINISH_BACKOFF_SEC = 0.5
@@ -106,7 +114,7 @@ class _Result:
 
     @property
     def ready(self) -> bool:
-        return len(self.questions) >= qg.MIN_SERVED
+        return bool(self.questions)
 
 
 # -- helpers (also used by the API and tests) -----------------------------------
@@ -394,7 +402,7 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
         try:
             answer = provider.query(nb, qg.build_prompt(short, kept_texts + job.seen))
         except (ProviderError, httpx.TransportError) as exc:
-            if len(kept) < qg.MIN_SERVED:
+            if len(kept) < qg.min_served(job.n):
                 raise  # transient: retry the whole preparation; otherwise the set fails
             report["reask_error"] = f"{type(exc).__name__}: {exc}"  # serve round 1's
         else:
@@ -405,8 +413,9 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
 
     served = kept[: job.n]
     report["served"] = len(served)
-    if len(served) < qg.MIN_SERVED:
-        report["error"] = f"only {len(served)} valid question(s), fewer than {qg.MIN_SERVED} needed"
+    needed = qg.min_served(job.n)
+    if len(served) < needed:
+        report["error"] = f"only {len(served)} valid question(s), fewer than {needed} needed"
         return _Result(report=report)
     return _Result(questions=served, report=report)
 

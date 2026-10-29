@@ -185,6 +185,34 @@ def test_sets_list_questions_whose_quote_is_not_verified(
     assert row["dropped"] == 0 and row["kept"] == 1
 
 
+def test_unverified_flags_only_count_served_questions(
+    client: TestClient, db_session: Session
+) -> None:
+    """A flagged question that was cut (round 1 returned more than N) isn't reported; an
+    older report's raw fill-blank text still matches its normalised served question."""
+    _, artifact, student = _setup(db_session)
+    served = {
+        "index": 0,
+        "question": "Old raw ______ blank?",
+        "reason": "quote not verified (link source)",
+    }
+    cut = {"index": 9, "question": "Cut question?", "reason": "quote not verified (link source)"}
+    _set(
+        db_session,
+        artifact,
+        student,
+        5,
+        questions=[{"type": "fill_blank", "question": "Old raw ____ blank?"}],
+        validation_report={
+            "rounds": [{"round": 1, "kept": ["x", "y"], "dropped": [], "unverified": [served, cut]}]
+        },
+    )
+    _admin(client, db_session)
+    (row,) = client.get(f"/api/admin/artifacts/{artifact.id}/quiz-sets").json()
+    assert [u["index"] for u in row["unverified_questions"]] == [0]
+    assert row["unverified_questions"][0]["question"] == "Old raw ____ blank?"
+
+
 def test_sets_unknown_artifact_404(client: TestClient, db_session: Session) -> None:
     _admin(client, db_session)
     assert client.get(f"/api/admin/artifacts/{uuid.uuid4()}/quiz-sets").status_code == 404

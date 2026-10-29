@@ -316,6 +316,101 @@ def test_fewer_than_five_valid_questions_fails_the_set(
     assert artifact.status is ArtifactStatus.published
 
 
+def _studio_count(db: Session, artifact: Artifact, n: int) -> None:
+    version = db.get(ArtifactVersion, artifact.published_version_id)
+    assert version is not None
+    version.content_json = {"questions": [mcq() for _ in range(n)]}
+    db.commit()
+
+
+def test_a_short_studio_quiz_serves_retakes_of_its_own_size(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner decision 2026-10-29: a retake has as many questions as the Studio quiz; the
+    minimum served is min(5, N), so a 3-question quiz gets 3-question retakes."""
+    artifact, user = setup
+    _studio_count(db_session, artifact, 3)
+    chat = FakeChat(answer([mcq() for _ in range(7)]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.ready
+    assert len(qs.questions) == 3
+    assert "Create 3 NEW quiz questions" in chat.prompts[0]
+
+
+def test_a_short_studio_quiz_needs_all_of_its_questions(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    _studio_count(db_session, artifact, 3)
+    chat = FakeChat(answer([mcq(), mcq(), bad()]), answer([bad()]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "failed"
+
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.failed
+    assert "fewer than 3 needed" in qs.validation_report["error"]
+
+
+def test_a_failed_re_ask_serves_round_one_when_it_covers_a_short_quiz(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    _studio_count(db_session, artifact, 4)
+    chat = FakeChat(answer([mcq() for _ in range(4)]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+    assert len(chat.prompts) == 1  # nothing short: no re-ask
+
+
+def test_min_served_is_five_or_the_studio_count() -> None:
+    assert [qg.min_served(n) for n in (1, 3, 5, 10)] == [1, 3, 5, 5]
+
+
+def test_a_redis_outage_during_preparation_is_retried(
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+    retries: list[dict[str, Any]],
+) -> None:
+    """Redis restarting (the NotebookLM session lock lives there) is chat unavailable."""
+    import redis.exceptions
+
+    artifact, user = setup
+    with pytest.raises(Retry):
+        _run(monkeypatch, FakeChat(redis.exceptions.ConnectionError("restarting")), artifact, user)
+    assert len(retries) == 1
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.preparing
+
+
+def test_unverified_fill_blank_is_recorded_with_its_served_text(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unverified flag carries the question as served (blank normalised to ____), so
+    the admin panel can match it."""
+    artifact, user = setup
+    quote = "the reaction proceeds through a planar carbocation intermediate"
+    monkeypatch.setattr(qg, "module_source_text", lambda _m: f"Notes. {quote}. End.")
+    from_pdf = [{**mcq(), "source_quote": quote} for _ in range(4)]
+    video_blank = {
+        **blank(),
+        "question": "The video says the ______ is red.",
+        "source_quote": "a sentence only spoken in the video",
+    }
+    chat = FakeChat(answer([*from_pdf, video_blank]), answer([]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    [qs] = _sets(db_session, artifact, user)
+    [flag] = qs.validation_report["rounds"][0]["unverified"]
+    assert flag["question"] == "The video says the ____ is red."
+    assert flag["question"] in [q["question"] for q in qs.questions]
+
+
 def test_transient_error_retries_with_back_off_then_succeeds(
     db_session: Session,
     scope: Any,
