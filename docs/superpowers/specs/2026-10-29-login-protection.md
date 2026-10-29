@@ -66,9 +66,10 @@ Supersedes the parts of §1, §2 and §4 it contradicts.
 1. **"Remember this device"** — both login pages show a checkbox "Remember this device", ticked by default, with an
    accessible label. The login request carries `remember` (boolean; omitted = false, so API clients get no device
    cookie unless they ask). Only `remember: true` sets `sdp_device_<scope>` (§1). The session records whether it was
-   remembered; logging out of a session that was *not* remembered also deletes `sdp_device_<scope>`, so a shared PC
-   keeps nothing behind (this also removes a device cookie another user left on that browser). Logging out of a
-   remembered session keeps the device cookie.
+   remembered; logging out of a session that was *not* remembered also deletes `sdp_device_<scope>` when that cookie
+   belongs to the account logging out (or is unreadable/expired), so a shared PC keeps nothing of that account
+   behind. A device cookie of *another* account on that browser stays (controller ruling 2026-10-29). Logging out of
+   a remembered session keeps the device cookie.
 2. **Alert counts device-cookie guesses** — wrong passwords carrying a valid device cookie still use the per-device
    counter for delays (§1), but they now also count toward the 5-consecutive-failures alert mail (§4). The "no valid
    device cookie" condition in §4 is dropped. At most one mail per account per hour, claimed atomically, so

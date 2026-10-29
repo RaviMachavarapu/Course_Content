@@ -75,11 +75,10 @@ def test_remember_defaults_to_off_for_api_clients(app_client: TestClient) -> Non
 def test_logout_of_an_unremembered_session_leaves_no_device_cookie(
     app_client: TestClient,
 ) -> None:
-    """Shared lab PC: A was remembered here once; B signs in without
-    remembering and logs out — the browser keeps no device cookie at all."""
-    _register(app_client, "a@example.com")
+    """B was remembered on this PC once; later B signs in without remembering
+    and logs out — B's own device cookie goes too."""
     _register(app_client, "b@example.com")
-    pc = _trusted_device(app_client, "a@example.com", ip="10.1.2.1")
+    pc = _trusted_device(app_client, "b@example.com", ip="10.1.2.1")
     assert pc.cookies.get("sdp_device_student")
     assert _login(pc, "b@example.com", remember=False).status_code == status.HTTP_200_OK
     out = _logout(pc)
@@ -87,6 +86,21 @@ def test_logout_of_an_unremembered_session_leaves_no_device_cookie(
     cleared = _device_cookie_headers(out)
     assert cleared and "max-age=0" in cleared[0].lower()
     assert pc.cookies.get("sdp_device_student") is None
+
+
+def test_logout_keeps_a_device_cookie_of_another_account(app_client: TestClient) -> None:
+    """Controller ruling 2026-10-29: shared lab PC, A was remembered here; B
+    signs in without remembering and logs out — A's trust stays."""
+    _register(app_client, "a2@example.com")
+    _register(app_client, "b2@example.com")
+    pc = _trusted_device(app_client, "a2@example.com", ip="10.1.2.2")
+    a_cookie = pc.cookies.get("sdp_device_student")
+    assert a_cookie
+    assert _login(pc, "b2@example.com", remember=False).status_code == status.HTTP_200_OK
+    out = _logout(pc)
+    assert out.status_code == status.HTTP_204_NO_CONTENT
+    assert _device_cookie_headers(out) == []
+    assert pc.cookies.get("sdp_device_student") == a_cookie
 
 
 def test_logout_of_a_remembered_session_keeps_the_device_cookie(app_client: TestClient) -> None:

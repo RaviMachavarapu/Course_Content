@@ -24,7 +24,11 @@ from app.api.deps import (
     SessionStoreDep,
     SettingsDep,
 )
-from app.auth.cookies import clear_device_cookie, clear_session_cookie, set_session_cookie
+from app.auth.cookies import (
+    clear_device_cookie_after_logout,
+    clear_session_cookie,
+    set_session_cookie,
+)
 from app.auth.csrf import (
     clear_csrf_cookie_after_logout,
     csrf_protect,
@@ -147,9 +151,7 @@ def logout(request: Request, store: SessionStoreDep, settings: SettingsDep) -> R
     store.destroy("student", token)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, "student", settings)
-    if session is not None and not session.remember:
-        # signed in without "Remember this device": leave nothing behind
-        clear_device_cookie(response, "student", settings)
+    clear_device_cookie_after_logout(request, response, "student", session, settings)
     clear_csrf_cookie_after_logout(request, response, settings, logging_out="student")
     return response
 
