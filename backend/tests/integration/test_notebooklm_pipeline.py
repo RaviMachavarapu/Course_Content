@@ -402,3 +402,75 @@ def test_persistent_download_failures_end_as_a_permanent_error(db_session: Sessi
     # not Transient: Celery must not retry (that would generate it again)
     assert not isinstance(info.value, TransientProviderError)
     assert artifact.status is ArtifactStatus.error
+
+
+# -- the "Gemini Notebook" mark is cropped off NotebookLM's images (2026-10-29) -----------
+
+
+class _MediaNotebookLm(FakeNotebookLm):
+    """Serves real images / PDF / PPTX for the row's media URLs."""
+
+    def __init__(self, row: list[Any], media: dict[str, bytes]) -> None:
+        super().__init__(row)
+        self.media = media
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        self.downloads.append(url)
+        return self.media[url], "application/octet-stream"
+
+
+def _media_for(kind: ArtifactType, row: list[Any]) -> dict[str, bytes]:
+    from app.pipeline.parsers.notebooklm import parse_notebooklm
+    from app.render import notebook_logo as nl
+    from tests.test_notebook_logo import _logo, _png, _pptx, _slide
+
+    refs = parse_notebooklm(kind, row, "").media
+    images: list[bytes] = []
+    for _ref in (r for r in refs if r.kind not in (MediaFileKind.deck_pdf, MediaFileKind.pptx)):
+        image = _slide((12, 58, 110))
+        _logo(image)
+        images.append(_png(image))
+    media: dict[str, bytes] = {}
+    it = iter(images)
+    for ref in refs:
+        if ref.kind is MediaFileKind.deck_pdf:
+            media[ref.url] = nl.images_pdf(images)
+        elif ref.kind is MediaFileKind.pptx:
+            media[ref.url] = _pptx(images)
+        else:
+            media[ref.url] = next(it)
+    return media
+
+
+@pytest.mark.parametrize("kind", [ArtifactType.slide_deck, ArtifactType.infographic])
+def test_the_notebook_mark_is_cropped_before_storing(
+    db_session: Session, kind: ArtifactType
+) -> None:
+    import io
+
+    from PIL import Image
+    from pypdf import PdfReader
+
+    from app.storage.service import get_storage
+
+    name = "slide_deck.json" if kind is ArtifactType.slide_deck else "infographic.json"
+    row = _row(name)
+    provider = _MediaNotebookLm(row, _media_for(kind, row))
+    artifact = _artifact(db_session, kind)
+
+    version = orchestrator.run_artifact_generation(db_session, provider, artifact.id)
+
+    assert version is not None
+    storage = get_storage()
+    rows = list(
+        db_session.scalars(select(MediaFile).where(MediaFile.artifact_version_id == version.id))
+    )
+    pngs = [m for m in rows if m.kind in (MediaFileKind.slide_png, MediaFileKind.infographic_png)]
+    assert pngs
+    for m in pngs:
+        with Image.open(io.BytesIO(storage.open(m.storage_key))) as im:
+            assert im.size[0] == 1376 and im.size[1] < 768
+    for m in rows:
+        if m.kind is MediaFileKind.deck_pdf:
+            pages = PdfReader(io.BytesIO(storage.open(m.storage_key))).pages
+            assert all(p.mediabox.height < 768 for p in pages)

@@ -11,14 +11,17 @@ downloadable PDF except audio is typeset after generation
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from app.logging import get_logger
 from app.models.enums import ArtifactType, MediaFileKind
 from app.pipeline.provider import ContentProvider, StudioJobRef
-from app.render import RenderError
+from app.render import RenderError, notebook_logo
 from app.render.infographic import render_infographic
 from app.render.slides_pptx import render_slides
+
+log = get_logger("pipeline.renderers")
 
 
 @dataclass(frozen=True)
@@ -81,3 +84,44 @@ RENDERERS: dict[ArtifactType, Renderer] = {
     ArtifactType.infographic: _render_infographic,
     ArtifactType.audio_overview: _render_audio,
 }
+
+
+_LOGO_IMAGE_KINDS = (MediaFileKind.slide_png, MediaFileKind.infographic_png)
+
+
+def strip_notebook_logo(blobs: list[MediaBlob]) -> list[MediaBlob]:
+    """NotebookLM's media with its "Gemini Notebook" mark cropped off (owner decision
+    2026-10-29, `app/render/notebook_logo.py`): every slide PNG and the infographic PNG;
+    the deck PDF is rebuilt from the cropped slide PNGs (its pages are those images) and
+    the PPTX's slide pictures are cropped. An image without the mark, or that can't be
+    read, is kept as it is: cropping never fails a generation."""
+    out: list[MediaBlob] = []
+    cropped = 0
+    for blob in blobs:
+        if blob.kind in _LOGO_IMAGE_KINDS:
+            label = f"{blob.kind.value}.{blob.page_index or 0}"
+            try:
+                result = notebook_logo.strip_logo(blob.data, label=label)
+            except Exception as exc:  # unreadable image: store it as downloaded
+                log.warning("notebook_logo.image_unreadable", image=label, error=str(exc))
+            else:
+                if result.cropped:
+                    cropped += 1
+                    blob = replace(blob, data=result.data, mime="image/png")
+        out.append(blob)
+    slides = sorted(
+        (b for b in out if b.kind is MediaFileKind.slide_png), key=lambda b: b.page_index or 0
+    )
+    for i, blob in enumerate(out):
+        try:
+            if blob.kind is MediaFileKind.deck_pdf and cropped and slides:
+                data = notebook_logo.rebuild_deck_pdf(
+                    blob.data, [s.data for s in slides], label="deck_pdf"
+                )
+                out[i] = replace(blob, data=data)
+            elif blob.kind is MediaFileKind.pptx:
+                data, _n = notebook_logo.strip_pptx(blob.data, label="pptx")
+                out[i] = replace(blob, data=data)
+        except Exception as exc:  # a damaged download: store it as it came
+            log.warning("notebook_logo.document_kept", kind=blob.kind.value, error=str(exc))
+    return out

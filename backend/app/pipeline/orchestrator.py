@@ -47,7 +47,7 @@ from app.pipeline.provider import (
     StudioStatus,
     TransientProviderError,
 )
-from app.pipeline.renderers import RENDERERS, MediaBlob
+from app.pipeline.renderers import RENDERERS, MediaBlob, strip_notebook_logo
 from app.render import RenderError
 from app.render.report_html import build_report_html
 from app.schemas.content import AudioOverviewContent, ReportContent
@@ -934,6 +934,8 @@ def _content_and_media(
         )
         for ref in parsed.media
     ]
+    # owner decision 2026-10-29: crop NotebookLM's "Gemini Notebook" mark off the images
+    blobs = strip_notebook_logo(blobs)
     # NotebookLM gives a report as text only; its HTML is ours (T020).
     return parsed.content, blobs, _report_html(kind, parsed.content)
 
