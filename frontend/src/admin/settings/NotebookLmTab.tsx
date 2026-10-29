@@ -4,18 +4,10 @@ import { useToast } from "@/lib/store";
 import { McpBadge, WorkerBadge } from "../AdminStatus";
 import { useMcpStatus } from "../useAdminApi";
 import { useRefreshMcpAuth } from "./useSettings";
+import { vncUrl } from "./vncUrl";
 
 const REAUTH_CMD =
   "docker compose --profile mcp run --rm --service-ports mcp npx -y notebooklm-mcp-server@4.0.2 auth";
-/** noVNC for the mcp auth browser: `VITE_VNC_URL` when the build sets it,
- * else port 6080 on the host this app is served from (compose publishes it
- * there; it was hardcoded to localhost, which only worked on the dev host). */
-export function vncUrl(
-  configured: string | undefined,
-  loc: { protocol: string; hostname: string },
-): string {
-  return configured || `${loc.protocol}//${loc.hostname}:6080/vnc.html`;
-}
 const VNC_URL = vncUrl(import.meta.env.VITE_VNC_URL as string | undefined, window.location);
 
 export function NotebookLmTab(): JSX.Element {

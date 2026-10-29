@@ -405,9 +405,7 @@ describe("IngestionPage PDF sources", () => {
     await waitFor(() => expect(screen.getByText("STAGING PAGE")).toBeInTheDocument());
 
     const coursePosts = fn.mock.calls.filter(
-      (c) =>
-        (c[1] as RequestInit | undefined)?.method === "POST" &&
-        String(c[0]).endsWith("/api/admin/courses"),
+      (c) => c[1]?.method === "POST" && String(c[0]).endsWith("/api/admin/courses"),
     );
     expect(coursePosts).toHaveLength(1);
     expect(moduleCalls).toBe(2);

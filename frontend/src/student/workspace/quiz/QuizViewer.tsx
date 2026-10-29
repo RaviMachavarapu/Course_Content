@@ -14,11 +14,8 @@ import {
   workspaceApi,
 } from "../api";
 import { useStudentArtifact } from "../useWorkspace";
+import { optionLetter } from "./optionLetter";
 
-/** A, B, C, … for option `i` (Studio quizzes can have more than four options). */
-export function optionLetter(i: number): string {
-  return i >= 0 && i < 26 ? String.fromCharCode(65 + i) : String(i + 1);
-}
 const POLL_MS = 3000;
 const POLL_GIVE_UP_MS = 120_000;
 export const PREPARING_MESSAGE = "Preparing new questions…";

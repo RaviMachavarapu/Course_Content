@@ -24,7 +24,7 @@ function setup(result: Record<string, unknown>) {
     slide_last_index: null,
     audio_position_seconds: null,
     completed: false,
-  } as unknown as StudentArtifact);
+  });
   qc.setQueryData(["student", "me", "listening"], { items: [] });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>

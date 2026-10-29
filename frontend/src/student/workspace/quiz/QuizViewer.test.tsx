@@ -3,7 +3,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onTestFinished } from "vitest";
-import { QuizViewer, optionLetter } from "./QuizViewer";
+import { QuizViewer } from "./QuizViewer";
+import { optionLetter } from "./optionLetter";
 
 afterEach(() => {
   vi.useRealTimers();

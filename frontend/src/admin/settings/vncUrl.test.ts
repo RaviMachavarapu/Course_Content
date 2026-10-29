@@ -1,4 +1,4 @@
-import { vncUrl } from "./NotebookLmTab";
+import { vncUrl } from "./vncUrl";
 
 describe("vncUrl", () => {
   it("uses the configured URL when set", () => {

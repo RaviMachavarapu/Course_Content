@@ -42,7 +42,7 @@ export interface QuizSetItem {
   questions: QuizSetQuestion[];
 }
 
-export function useQuizSets(artifactId: string, enabled: boolean) {
+function useQuizSets(artifactId: string, enabled: boolean) {
   return useQuery({
     queryKey: ["admin", "quiz-sets", artifactId],
     queryFn: () => apiFetch<QuizSetItem[]>(`/api/admin/artifacts/${artifactId}/quiz-sets?limit=20`),
