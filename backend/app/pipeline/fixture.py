@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.logging import get_logger
 from app.models.enums import ArtifactType
 from app.pipeline.provider import (
     NotebookRef,
@@ -24,6 +25,8 @@ from app.pipeline.provider import (
     StudioJobRef,
     StudioStatus,
 )
+
+log = get_logger("fixture")
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 DEFAULT_FIXTURE_ID = "sample-neural-nets"
@@ -182,6 +185,11 @@ class FixtureProvider:
     def query(self, nb: NotebookRef, text: str) -> str:
         self.calls.append(("query", nb.notebook_id, text))
         return FIXTURE_CHAT_ANSWER
+
+    def delete_notebook(self, nb: NotebookRef) -> None:
+        # recorded for tests; logged so an E2E run can see it happened
+        self.calls.append(("delete_notebook", nb.notebook_id))
+        log.info("fixture.notebook_deleted", notebook_id=nb.notebook_id)
 
     def health(self) -> ProviderHealth:
         return ProviderHealth(

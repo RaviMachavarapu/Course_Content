@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 import redis
 from sqlalchemy import select
@@ -12,8 +13,10 @@ from app.config import get_settings
 from app.db.session import session_scope
 from app.logging import get_logger
 from app.models.enums import SourceUploadStatus
+from app.models.module import Module
 from app.models.source_upload import SourceUpload
 from app.pipeline.factory import get_content_provider
+from app.pipeline.provider import NotebookRef, TransientProviderError
 from app.pipeline.reaper import broker_job_ids, reap_stale_jobs, redispatch_lost_jobs
 from app.services.metrics import record_mcp_healthcheck
 from app.storage.service import get_storage
@@ -33,6 +36,52 @@ def mcp_healthcheck() -> bool:
     record_mcp_healthcheck(get_redis(), healthy=health.healthy)
     log.info("mcp_healthcheck.done", healthy=health.healthy, detail=health.detail)
     return health.healthy
+
+
+DELETE_NOTEBOOK_RETRIES = 3
+
+
+@celery_app.task(bind=True, name="app.tasks.delete_notebook")
+def delete_notebook_task(self: Any, notebook_id: str) -> str:
+    """Delete a module's old NotebookLM notebook after Re-run all or a module delete
+    committed (owner decision 2026-10-29: NotebookLM caps notebooks per account).
+    Best effort: never touches our data; a failure is logged. Returns "deleted",
+    "skipped" (still used by a module), "failed" or "gave up"."""
+    with session_scope() as session:
+        in_use = session.scalar(
+            select(Module.id).where(Module.notebooklm_notebook_id == notebook_id).limit(1)
+        )
+    if in_use is not None:
+        log.warning("notebook_delete.skipped_in_use", notebook_id=notebook_id)
+        return "skipped"
+    try:
+        get_content_provider().delete_notebook(NotebookRef(notebook_id=notebook_id))
+    except TransientProviderError as exc:
+        retries = self.request.retries
+        if retries >= DELETE_NOTEBOOK_RETRIES:
+            log.warning("notebook_delete.gave_up", notebook_id=notebook_id, error=str(exc))
+            return "gave up"
+        raise self.retry(
+            exc=exc, countdown=60 * 2**retries, max_retries=DELETE_NOTEBOOK_RETRIES
+        ) from exc
+    except Exception as exc:  # a provider error, a sign-in problem: logged, never raised
+        log.warning(
+            "notebook_delete.failed", notebook_id=notebook_id, error=f"{type(exc).__name__}: {exc}"
+        )
+        return "failed"
+    log.info("notebook_delete.done", notebook_id=notebook_id)
+    return "deleted"
+
+
+def enqueue_notebook_delete(notebook_id: str | None) -> None:
+    """Queue the old notebook's deletion (call after the commit). A broker error is
+    logged, never raised: the admin action already succeeded."""
+    if not notebook_id:
+        return
+    try:
+        delete_notebook_task.apply_async(args=[notebook_id], queue="maintenance")
+    except Exception as exc:
+        log.warning("notebook_delete.enqueue_failed", notebook_id=notebook_id, error=str(exc))
 
 
 @celery_app.task(name="app.tasks.media_gc")

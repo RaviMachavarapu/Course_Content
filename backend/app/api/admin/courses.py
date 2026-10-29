@@ -387,6 +387,7 @@ def regenerate_module(
     module_id: uuid.UUID, db: DbDep, admin: CurrentAdmin, background: BackgroundTasks
 ) -> ModuleEnvelope:
     module = _get_module(db, module_id)
+    old_notebook = module.notebooklm_notebook_id
     try:
         jobs = orchestrator.start_module_generation(
             db, get_content_provider(), module.id, list(ARTIFACT_TYPES), requested_by=admin.id
@@ -395,8 +396,18 @@ def regenerate_module(
         raise APIError(status.HTTP_409_CONFLICT, "module_busy", str(exc)) from None
     db.flush()
     background.add_task(_dispatch_all, [j.dispatch for j in jobs])
+    # the notebook is rebuilt: delete the old one (owner decision 2026-10-29)
+    background.add_task(_delete_notebook_later, old_notebook)
     db.refresh(module)
     return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
+
+
+def _delete_notebook_later(notebook_id: str | None) -> None:
+    """After the commit: queue a best-effort delete of a module's old NotebookLM
+    notebook. Never blocks or fails the admin's action."""
+    from app.tasks.maintenance import enqueue_notebook_delete
+
+    enqueue_notebook_delete(notebook_id)
 
 
 def _module_file_keys(module: Module) -> list[str]:
@@ -435,8 +446,10 @@ def delete_module(
     course = module.course
     prefix = module_prefix(course.id, module.id)
     keys = _module_file_keys(module)
+    old_notebook = module.notebooklm_notebook_id
     db.delete(module)  # BR9 cascade (rows); files go after commit
     db.flush()
     recompute_course_status(db, course)
     background.add_task(_delete_module_files, prefix, keys)
+    background.add_task(_delete_notebook_later, old_notebook)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

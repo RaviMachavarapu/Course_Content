@@ -243,6 +243,11 @@ class NotebookLmMcpProvider:
             raise ProviderError(f"notebook_query returned no answer: {data!r}")
         return answer
 
+    def delete_notebook(self, nb: NotebookRef) -> None:
+        # the connector's tool (notebooklm-mcp-server docs/TOOLS.md): irreversible,
+        # so it asks for an explicit confirm
+        self._call("notebook_delete", {"notebook_id": nb.notebook_id, "confirm": True})
+
     def health(self) -> ProviderHealth:
         try:
             resp = self._http.get("/health", timeout=10.0)

@@ -590,3 +590,15 @@ def test_poll_reports_an_artifact_notebooklm_no_longer_has() -> None:
     )
     job = StudioJobRef(job_id="gone", notebook_id="nb-1", kind=ArtifactType.report)
     assert provider.poll(job) is StudioStatus.missing
+
+
+def test_delete_notebook_calls_the_connector_with_confirm() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _ok({"status": "ok"})
+
+    provider, _stub = _stubbed(handler)
+    provider.delete_notebook(NotebookRef(notebook_id="nb-old"))
+    assert seen == [{"tool": "notebook_delete", "args": {"notebook_id": "nb-old", "confirm": True}}]

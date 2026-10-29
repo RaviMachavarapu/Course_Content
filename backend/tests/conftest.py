@@ -180,6 +180,27 @@ def _bind_source_step(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_notebook_deletes_on_the_real_broker(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Re-run all / module delete queue a NotebookLM notebook delete after the commit.
+    A test must never put that on the running stack's broker (its worker may be signed
+    in to live NotebookLM): record it instead (`notebook_deletes` fixture)."""
+    from app.tasks import maintenance
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        maintenance.delete_notebook_task,
+        "apply_async",
+        lambda args, **_: sent.append(args[0]),
+    )
+    return sent
+
+
+@pytest.fixture
+def notebook_deletes(_no_notebook_deletes_on_the_real_broker: list[str]) -> list[str]:
+    return _no_notebook_deletes_on_the_real_broker
+
+
 @pytest.fixture
 def redis_client() -> Iterator[redis.Redis[str]]:
     """A flushed, isolated Redis DB (index 15, or TEST_REDIS_DB for a parallel

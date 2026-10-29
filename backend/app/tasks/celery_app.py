@@ -25,6 +25,7 @@ MAINTENANCE_TASKS = (
     "app.tasks.purge_abandoned_uploads",
     "app.tasks.mcp_healthcheck",
     "app.tasks.reap_stale_jobs",
+    "app.tasks.delete_notebook",
 )
 
 celery_app = Celery("shikshak_dp", broker=_BROKER, backend=_BACKEND)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -25,6 +25,7 @@ from app.models.artifact import Artifact
 from app.models.enums import ArtifactStatus, ArtifactType, GenerationJobState
 from app.models.module import Module
 from app.pipeline import orchestrator, reaper
+from app.pipeline.fixture import FixtureProvider
 from app.pipeline.parsers.base import ArtifactParseError
 from app.pipeline.provider import (
     GenerationTimeout,
@@ -567,3 +568,146 @@ def test_publish_waits_for_a_writer_holding_an_artifact(
             publish_module(publisher, module)
         publisher.rollback()
         writer.rollback()
+
+
+# -- owner decision 5: the old notebook is deleted after Re-run all / module delete --------
+def _with_notebook(db: Session, notebook_id: str) -> Module:
+    module = _module_with_generated(db, [ArtifactType.report])
+    module.notebooklm_notebook_id = notebook_id
+    db.commit()
+    return module
+
+
+def test_rerun_all_queues_the_old_notebooks_delete_after_the_commit(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    notebook_deletes: list[str],
+) -> None:
+    monkeypatch.setattr("app.api.admin.courses._dispatch_all", lambda *_: None)
+    module = _with_notebook(db_session, "nb-old")
+    headers = _admin_headers(client, db_session)
+    resp = client.post(f"/api/admin/courses/modules/{module.id}/regenerate", headers=headers)
+    assert resp.status_code == status.HTTP_200_OK
+    assert notebook_deletes == ["nb-old"]
+    db_session.expire_all()
+    assert db_session.get(Module, module.id).notebooklm_notebook_id is None
+
+
+def test_a_busy_rerun_all_deletes_nothing(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    notebook_deletes: list[str],
+) -> None:
+    monkeypatch.setattr("app.api.admin.courses._dispatch_all", lambda *_: None)
+    module = _with_notebook(db_session, "nb-old")
+    headers = _admin_headers(client, db_session)
+    url = f"/api/admin/courses/modules/{module.id}/regenerate"
+    assert client.post(url, headers=headers).status_code == 200
+    assert client.post(url, headers=headers).status_code == 409  # still generating
+    assert notebook_deletes == ["nb-old"]  # only the first one
+
+
+def test_module_delete_queues_its_notebooks_delete_and_never_fails_on_it(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks import maintenance
+
+    def broker_down(**_: Any) -> None:
+        raise ConnectionError("redis restarting")
+
+    monkeypatch.setattr(maintenance.delete_notebook_task, "apply_async", broker_down)
+    module = _with_notebook(db_session, "nb-gone")
+    headers = _admin_headers(client, db_session)
+    resp = client.delete(f"/api/admin/courses/modules/{module.id}", headers=headers)
+    assert resp.status_code == status.HTTP_204_NO_CONTENT
+    db_session.expire_all()
+    assert db_session.get(Module, module.id) is None
+
+
+def test_a_module_without_a_notebook_deletes_nothing(
+    client: TestClient, db_session: Session, notebook_deletes: list[str]
+) -> None:
+    module = _module(db_session)
+    db_session.commit()
+    headers = _admin_headers(client, db_session)
+    assert (
+        client.delete(f"/api/admin/courses/modules/{module.id}", headers=headers).status_code == 204
+    )
+    assert notebook_deletes == []
+
+
+@pytest.fixture
+def delete_task(
+    monkeypatch: pytest.MonkeyPatch, source_step_sessions: Any
+) -> tuple[FixtureProvider, Callable[..., str]]:
+    from app.tasks import maintenance
+
+    provider = FixtureProvider()
+    monkeypatch.setattr(maintenance, "session_scope", source_step_sessions)
+    monkeypatch.setattr(maintenance, "get_content_provider", lambda: provider)
+
+    def run(notebook_id: str, retries: int = 0) -> str:
+        task = maintenance.delete_notebook_task
+        task.push_request(retries=retries)
+        try:
+            return str(task.run(notebook_id))
+        finally:
+            task.pop_request()
+
+    return provider, run
+
+
+def test_the_delete_task_deletes_an_unused_notebook(
+    db_session: Session, delete_task: tuple[FixtureProvider, Callable[..., str]]
+) -> None:
+    provider, run = delete_task
+    assert run("nb-old") == "deleted"
+    assert ("delete_notebook", "nb-old") in provider.calls
+
+
+def test_the_delete_task_never_deletes_a_notebook_a_module_uses(
+    db_session: Session, delete_task: tuple[FixtureProvider, Callable[..., str]]
+) -> None:
+    provider, run = delete_task
+    module = _module(db_session)
+    module.notebooklm_notebook_id = "nb-live"
+    db_session.commit()
+    assert run("nb-live") == "skipped"
+    assert provider.calls == []
+
+
+def test_the_delete_task_logs_failures_and_retries_transient_ones(
+    db_session: Session,
+    delete_task: tuple[FixtureProvider, Callable[..., str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from celery.exceptions import Retry
+
+    from app.pipeline.provider import ProviderError
+    from app.tasks import maintenance
+
+    provider, run = delete_task
+    errors: list[Exception] = [ProviderError("not found")]
+
+    def delete(_nb: Any) -> None:
+        raise errors[0]
+
+    monkeypatch.setattr(provider, "delete_notebook", delete)
+    assert run("nb-x") == "failed"
+
+    errors[0] = TransientProviderError("lock busy")
+    scheduled: list[dict[str, Any]] = []
+
+    def fake_retry(**kwargs: Any) -> Retry:
+        scheduled.append(kwargs)
+        return Retry("retry")
+
+    monkeypatch.setattr(maintenance.delete_notebook_task, "retry", fake_retry)
+    with pytest.raises(Retry):
+        run("nb-x")
+    assert scheduled and scheduled[0]["countdown"] == 60
+    assert run("nb-x", retries=maintenance.DELETE_NOTEBOOK_RETRIES) == "gave up"
