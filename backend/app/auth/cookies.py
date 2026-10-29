@@ -19,7 +19,7 @@ def set_session_cookie(
     response.set_cookie(
         key=COOKIE_NAMES[scope],
         value=token,
-        max_age=store.ttl_seconds(scope),
+        max_age=store.max_seconds(scope),
         httponly=True,
         secure=settings.app_env != "dev",
         samesite="lax",

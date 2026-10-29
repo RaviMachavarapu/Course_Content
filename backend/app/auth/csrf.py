@@ -21,7 +21,7 @@ import secrets
 from fastapi import Request, status
 from starlette.responses import Response
 
-from app.auth.sessions import COOKIE_NAMES
+from app.auth.sessions import COOKIE_NAMES, max_seconds
 from app.config import Settings
 from app.errors import APIError
 
@@ -33,7 +33,7 @@ _TOKEN_BYTES = 32
 
 def csrf_max_age(settings: Settings) -> int:
     """At least as long as any session cookie it protects."""
-    return max(settings.admin_session_ttl_hours * 3600, settings.student_session_ttl_days * 86400)
+    return max(max_seconds(settings, "admin"), max_seconds(settings, "student"))
 
 
 def issue_csrf_cookie(response: Response, settings: Settings, token: str | None = None) -> str:

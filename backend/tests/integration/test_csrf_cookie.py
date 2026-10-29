@@ -38,7 +38,7 @@ def _max_age(resp: object) -> int:
 
 def _longest_session_seconds() -> int:
     s = get_settings()
-    return max(s.admin_session_ttl_hours * 3600, s.student_session_ttl_days * 86400)
+    return max(s.admin_session_max_days * 86400, s.student_session_max_days * 86400)
 
 
 def _admin_login(client: TestClient, db_session: Session) -> object:

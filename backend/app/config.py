@@ -73,8 +73,13 @@ class Settings(BaseSettings):
     typeset_timeout_sec: int = 180
 
     # ---- auth ----
+    #: idle timeout: a session ends after this long without a request (each
+    #: authenticated request renews it, cheaply — see auth.sessions)
     admin_session_ttl_hours: int = 8
     student_session_ttl_days: int = 30
+    #: absolute maximum: however active, a session ends this long after sign-in
+    admin_session_max_days: int = 7
+    student_session_max_days: int = 30
     #: failed logins per client IP, sliding window (successes don't count);
     #: beyond it 429 until the oldest failure leaves the window
     login_rate_limit: str = "100/15m"
