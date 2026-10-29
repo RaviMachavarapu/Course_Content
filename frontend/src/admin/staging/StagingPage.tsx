@@ -12,6 +12,23 @@ import { PublishModal } from "./PublishModal";
 import { usePublish } from "./publish";
 import { useCancel, useOutlineAction, useRedo, useRetry, useStaging } from "./useStaging";
 
+/**
+ * Run one request at a time. `pending` disables the buttons, but only after a
+ * re-render: both clicks of a fast double-click can arrive before it (a second
+ * Retry then gets a 409 toast, a second publish runs twice). The ref is
+ * checked synchronously; `start` calls `settled` when its request ends.
+ */
+function useOneAtATime(): (start: (settled: () => void) => void) => void {
+  const running = useRef(false);
+  return (start) => {
+    if (running.current) return;
+    running.current = true;
+    start(() => {
+      running.current = false;
+    });
+  };
+}
+
 export function StagingPage(): JSX.Element {
   const { moduleId = "" } = useParams();
   const { data, isPending, isError, refetch } = useStaging(moduleId);
@@ -24,17 +41,9 @@ export function StagingPage(): JSX.Element {
   const [publishScope, setPublishScope] = useState<"module" | "course" | null>(null);
   const failed = (title: string, err: unknown) =>
     toast({ title, description: errorMessage(err), tone: "error" });
-  // One card action at a time. `busy` disables the buttons, but only after a
-  // re-render: both clicks of a fast double-click can arrive before it (a
-  // second Retry then gets a 409 toast). The ref is checked synchronously.
-  const acting = useRef(false);
-  const once = (start: (settled: () => void) => void) => {
-    if (acting.current) return;
-    acting.current = true;
-    start(() => {
-      acting.current = false;
-    });
-  };
+  // One card action, and one publish, at a time (see `useOneAtATime`).
+  const once = useOneAtATime();
+  const oncePublish = useOneAtATime();
 
   // a failed poll with data already shown keeps the page (and any open
   // dialog): only a failed first load replaces it
@@ -193,9 +202,15 @@ export function StagingPage(): JSX.Element {
             };
             // the dialog stays open on failure so the admin can retry or cancel
             const onError = (err: unknown) => failed("Publish failed", err);
-            if (scope === "course")
-              publish.course.mutate(data.module.course_id, { onSuccess: onDone, onError });
-            else publish.module.mutate(undefined, { onSuccess: onDone, onError });
+            oncePublish((onSettled) => {
+              if (scope === "course")
+                publish.course.mutate(data.module.course_id, {
+                  onSuccess: onDone,
+                  onError,
+                  onSettled,
+                });
+              else publish.module.mutate(undefined, { onSuccess: onDone, onError, onSettled });
+            });
           }}
         />
       )}

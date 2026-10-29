@@ -423,6 +423,30 @@ describe("StagingPage", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("a double-click on the publish confirm sends one publish", async () => {
+    const fetchMock = installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) =>
+      init?.method === "POST" ? new Promise<Response>(() => {}) : real(input, init),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByTestId("btn-sr3"));
+    const confirm = await screen.findByTestId("btn-publish-confirm");
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST"),
+      ).toHaveLength(1),
+    );
+    expect(
+      fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST"),
+    ).toHaveLength(1);
+  });
+
   it("a failed redo shows the server's field error", async () => {
     installFetch([
       { method: "GET", match: "/staging", body: stagingBody() },
