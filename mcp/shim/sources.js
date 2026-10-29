@@ -9,7 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ORIGIN, UA, StudioError, cookieHeader, remember, rpc } from "./studio.js";
+import { ORIGIN, UA, StudioError, cookieHeader, remember, rpc, transientHttp } from "./studio.js";
 
 const PIECE = 1048576;
 const UPLOAD_URL = `${ORIGIN}/upload/_/?authuser=0`;
@@ -32,7 +32,7 @@ function uploadHeaders(extra) {
 function failUpload(step, res) {
   const msg = `NotebookLM upload ${step} failed (HTTP ${res.status})`;
   if (res.status === 401 || res.status === 403) return new StudioError(msg, { auth: true });
-  if (res.status >= 500 || res.status === 429) return new Error(msg);
+  if (transientHttp(res.status)) return new Error(msg);
   return new StudioError(msg);
 }
 
@@ -116,10 +116,25 @@ export async function uploadSource(notebookId, filePath, name, { root = MEDIA_RO
       }
       offset += len;
     } while (offset < size);
+  } catch (err) {
+    // Registered but not uploaded: NotebookLM would keep it "pending" for good (and
+    // count it toward the notebook's source cap). Best effort; the upload's own error
+    // is what the caller sees. NOT LIVE-VERIFIED: params are the connector's own
+    // source_delete request (notebooklm-mcp-server 4.0.2 deleteSource).
+    if (sourceId) await deleteSource(notebookId, sourceId);
+    throw err;
   } finally {
     await file.close();
   }
   return sourceId;
+}
+
+async function deleteSource(notebookId, sourceId) {
+  try {
+    await rpc("tGMBJ", [[[sourceId]], [2]], `/notebook/${notebookId}`);
+  } catch (err) {
+    console.warn(`could not delete the half-uploaded source ${sourceId}: ${err?.message ?? err}`);
+  }
 }
 
 // [null, N] in a source row: 2 = ready, 1 / 5 = still processing, else failed.

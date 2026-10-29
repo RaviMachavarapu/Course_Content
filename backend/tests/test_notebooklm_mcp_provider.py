@@ -580,3 +580,13 @@ def test_shim_endpoints_chaining_two_connector_calls_get_room_for_both() -> None
     shim_tool_timeout = 300
     assert seen["/studio/create"] > 2 * shim_tool_timeout
     assert seen["/studio/artifact"] > 2 * shim_tool_timeout
+
+
+def test_poll_reports_an_artifact_notebooklm_no_longer_has() -> None:
+    provider, _stub = _stubbed(
+        lambda _r: httpx.Response(
+            200, json={"status": None, "raw": None, "html": None, "missing": True}
+        )
+    )
+    job = StudioJobRef(job_id="gone", notebook_id="nb-1", kind=ArtifactType.report)
+    assert provider.poll(job) is StudioStatus.missing

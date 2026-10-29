@@ -164,7 +164,15 @@ export async function rpc(rpcId, params, sourcePath, retried = false) {
       });
     }
   }
-  throw new StudioError(`no ${rpcId} result in NotebookLM's reply (HTTP ${res.status})`);
+  const msg = `no ${rpcId} result in NotebookLM's reply (HTTP ${res.status})`;
+  // Google overloaded or rate-limiting: worth a retry (plain Error -> 502)
+  if (transientHttp(res.status)) throw new Error(msg);
+  throw new StudioError(msg);
+}
+
+/** 5xx and 429 are Google being busy, not a rejection: retried by the backend. */
+export function transientHttp(status) {
+  return status >= 500 || status === 429;
 }
 
 // -- option codes (all observed) ------------------------------------------------
@@ -322,7 +330,10 @@ export async function download(url) {
       current = new URL(res.headers.get("location"), current);
       continue;
     }
-    if (!res.ok) throw new StudioError(`media download failed (HTTP ${res.status})`);
+    if (!res.ok) {
+      const msg = `media download failed (HTTP ${res.status})`;
+      throw transientHttp(res.status) ? new Error(msg) : new StudioError(msg);
+    }
     const type = res.headers.get("content-type") || "application/octet-stream";
     if (type.startsWith("text/html")) {
       throw new StudioError("media download returned a web page, not a file (session rejected?)", { auth: true });
@@ -347,10 +358,37 @@ async function rangedDownload(url, headers, size) {
   for (let start = 0; start < size; start += RANGE_CHUNK) {
     const end = Math.min(start + RANGE_CHUNK, size) - 1;
     const res = await fetch(url, { headers: { ...headers, Range: `bytes=${start}-${end}` } });
-    if (res.status !== 206) throw new StudioError(`media range download failed (HTTP ${res.status})`);
+    if (res.status !== 206) {
+      const msg = `media range download failed (HTTP ${res.status})`;
+      throw transientHttp(res.status) ? new Error(msg) : new StudioError(msg);
+    }
     parts.push(Buffer.from(await res.arrayBuffer()));
   }
   const data = Buffer.concat(parts);
   if (data.length !== size) throw new StudioError(`media download incomplete (${data.length} of ${size} bytes)`);
   return data;
+}
+
+// studio_poll's status strings -> NotebookLM's codes (connector's mapping).
+const STATUS_CODES = { pending: 1, in_progress: 2, completed: 3, failed: 4 };
+
+/**
+ * Status + content of one artifact: {status, raw, html, missing}. status is
+ * NotebookLM's code (3 = completed, 6 = outline waiting for review) or null;
+ * `missing` = neither call knows the id (deleted in NotebookLM, notebook gone),
+ * so the backend can stop waiting for it. `callTool(name, args)` is the connector.
+ */
+export async function artifactState(callTool, notebookId, artifactId) {
+  const data = await callTool("artifact_content_get", { notebook_id: notebookId, artifact_id: artifactId });
+  const row = Array.isArray(data?.raw) && data.raw.length ? data.raw[0] : null;
+  let status = row ? (row[4] ?? null) : null;
+  let missing = false;
+  if (status === null) {
+    // Flashcards/quiz come back as html with no row; studio_poll has their status.
+    const poll = await callTool("studio_poll", { notebook_id: notebookId });
+    const listed = (poll?.artifacts ?? []).find((a) => a.artifact_id === artifactId);
+    status = listed ? (STATUS_CODES[listed.status] ?? null) : null;
+    missing = !listed && !row && !data?.html;
+  }
+  return { status, raw: row, html: data?.html ?? null, missing };
 }

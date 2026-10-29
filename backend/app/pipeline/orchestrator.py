@@ -800,6 +800,9 @@ class StudioGenerationFailed(RenderError):
 #: (the spike didn't observe Refine take effect at once): wait this long for the
 #: status or the outline to change before accepting "awaiting review" again.
 _OUTLINE_SETTLE_SEC = 120.0
+#: NotebookLM may not list a brand-new artifact straight away; "missing" for longer
+#: than this means it is gone (deleted, or its notebook was)
+_MISSING_GRACE_SEC = 60.0
 
 
 def _await_terminal(
@@ -817,6 +820,7 @@ def _await_terminal(
     start = time.monotonic()
     deadline = start + timeout_sec
     moved_on = previous_outline is None
+    missing_since: float | None = None
     while True:
         try:
             status = provider.poll(job)
@@ -824,6 +828,16 @@ def _await_terminal(
             # e.g. the session lock is busy: keep waiting within the deadline
             log.info("orchestrator.poll_retry", job=job.job_id, error=str(exc))
             status = StudioStatus.pending
+        if status is StudioStatus.missing:
+            now = time.monotonic()
+            missing_since = now if missing_since is None else missing_since
+            if now - missing_since >= _MISSING_GRACE_SEC:
+                raise StudioGenerationFailed(
+                    "NotebookLM no longer has this artifact (deleted, or its notebook is gone)"
+                )
+            status = StudioStatus.pending
+        else:
+            missing_since = None
         if status is StudioStatus.awaiting_review and not moved_on:
             moved_on = time.monotonic() - start >= _OUTLINE_SETTLE_SEC or _current_outline(
                 provider, job

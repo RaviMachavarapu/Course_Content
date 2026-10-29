@@ -183,7 +183,10 @@ class NotebookLmMcpProvider:
         return StudioJobRef(job_id=str(artifact_id), notebook_id=nb.notebook_id, kind=kind)
 
     def poll(self, job: StudioJobRef) -> StudioStatus:
-        status = self._artifact(job).get("status")
+        data = self._artifact(job)
+        if data.get("missing") is True:
+            return StudioStatus.missing
+        status = data.get("status")
         if status == _STATUS_COMPLETED:
             return StudioStatus.ready
         if status == _STATUS_OUTLINE_REVIEW:

@@ -212,3 +212,79 @@ test("a symlinked directory inside the media root is refused too", async () => {
   );
   assert.equal(calls.length, 0);
 });
+
+// -- Google 5xx/429 are transient; failed uploads don't leave orphan sources (review 2026-10-29)
+
+test("an rpc answered with 5xx or 429 and no result is transient (502), a 4xx is permanent", async () => {
+  const { rpc } = await import("../studio.js");
+  const { failStatus } = await import("../tools.js");
+  for (const [status, expected] of [[503, 502], [500, 502], [429, 502], [400, 422]]) {
+    globalThis.fetch = async (url, init = {}) => {
+      if ((init.method ?? "GET") === "GET") return new Response(PAGE, { status: 200 });
+      return new Response("<html>busy</html>", { status });
+    };
+    const err = await rpc("R7cb6c", [], "/notebook/NB").catch((e) => e);
+    assert.ok(err instanceof Error, `HTTP ${status}`);
+    assert.equal(failStatus(err), expected, `HTTP ${status}`);
+  }
+});
+
+function failingUpload({ startStatus = 503, deleteBody = null } = {}) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if ((init.method ?? "GET") === "GET" && url === "https://notebook.google.com/") {
+      return new Response(PAGE, { status: 200 });
+    }
+    const headers = Object.fromEntries(Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+    calls.push({ url, body: init.body, headers });
+    if (url.includes("rpcids=o4cbdc")) return new Response(O4CBDC_REPLY, { status: 200 });
+    if (url.includes("rpcids=tGMBJ")) {
+      if (deleteBody === "fail") return new Response("", { status: 500 });
+      return new Response(batchReply("tGMBJ", []), { status: 200 });
+    }
+    return new Response("", { status: startStatus });
+  };
+  return calls;
+}
+
+test("an upload failing after the source was registered deletes that source", async () => {
+  const file = tempFile(724);
+  const calls = failingUpload();
+  const { failStatus } = await import("../tools.js");
+
+  const err = await uploadSource("NB", file, "upload-check.pdf", { root: home }).catch((e) => e);
+
+  assert.equal(failStatus(err), 502); // still worth a retry
+  const del = calls.find((c) => c.url.includes("rpcids=tGMBJ"));
+  assert.ok(del, "the registered source is deleted");
+  const fReq = new URLSearchParams(del.body).get("f.req");
+  assert.deepEqual(JSON.parse(JSON.parse(fReq)[0][0][1]), [[["SRC"]], [2]]);
+});
+
+test("a failed cleanup never hides the upload's own error", async () => {
+  const file = tempFile(724);
+  failingUpload({ startStatus: 400, deleteBody: "fail" });
+  const err = await uploadSource("NB", file, "upload-check.pdf", { root: home }).catch((e) => e);
+  assert.ok(err instanceof StudioError);
+  assert.match(err.message, /upload start failed \(HTTP 400\)/);
+});
+
+test("an artifact neither call lists is reported missing (it was deleted or never existed)", async () => {
+  const { artifactState } = await import("../studio.js");
+  const tool = (listed) => async (name) => {
+    if (name === "artifact_content_get") return { raw: [], html: null };
+    if (name === "studio_poll") return { artifacts: listed };
+    throw new Error(name);
+  };
+  assert.deepEqual(await artifactState(tool([]), "NB", "A"), { status: null, raw: null, html: null, missing: true });
+  assert.deepEqual(await artifactState(tool([{ artifact_id: "A", status: "in_progress" }]), "NB", "A"), {
+    status: 2,
+    raw: null,
+    html: null,
+    missing: false,
+  });
+  const row = ["A", "t", 1, null, 3];
+  const withRow = async (name) => (name === "artifact_content_get" ? { raw: [row], html: "<p>" } : {});
+  assert.deepEqual(await artifactState(withRow, "NB", "A"), { status: 3, raw: row, html: "<p>", missing: false });
+});

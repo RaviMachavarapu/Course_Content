@@ -8,6 +8,7 @@
  *   dropped and the next call spawns a new child. A call that finds the client
  *   already disconnected ("Not connected": nothing was sent) reconnects and
  *   retries once; a connection lost mid-call is not retried (it may have run).
+ * - A call the SDK timed out replaces the child (it may still be running it).
  *
  * `connect()` returns a connected SDK Client; injected so this is unit-testable.
  */
@@ -16,6 +17,9 @@ import { callMcpTool } from "./tools.js";
 
 const NOT_CONNECTED = /not connected/i;
 const CONNECTION_LOST = /connection closed|not connected|EPIPE|ECONNRESET/i;
+// The SDK gave up waiting (MCP error -32001): the child may still be running that
+// call, so it is replaced; the next call can't interleave with the stale one.
+const TIMED_OUT = /request timed out/i;
 
 export function createSession(connect) {
   let client = null;
@@ -48,6 +52,11 @@ export function createSession(connect) {
       return await callMcpTool(c, name, args);
     } catch (err) {
       const message = String(err?.message ?? err);
+      if (err?.code === -32001 || TIMED_OUT.test(message)) {
+        drop(c);
+        c.close?.().catch?.(() => {});
+        throw err;
+      }
       if (!CONNECTION_LOST.test(message)) throw err;
       drop(c);
       c.close?.().catch?.(() => {});

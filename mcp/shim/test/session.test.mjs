@@ -113,3 +113,19 @@ test("connector rejections are permanent (422), sign-in problems 401, the rest 5
   assert.equal(failStatus(new Error("Not connected")), 502);
   assert.equal(failStatus(new Error("MCP error -32001: Request timed out")), 502);
 });
+
+test("after a tool call times out the child is replaced (a stale call can't interleave)", async () => {
+  const slow = fakeClient("slow", {
+    reply: () => {
+      const err = new Error("MCP error -32001: Request timed out");
+      err.code = -32001;
+      throw err;
+    },
+  });
+  const { connect, made } = factory(slow);
+  const s = createSession(connect);
+  await assert.rejects(s.call("notebook_query", {}), /timed out/);
+  assert.equal(slow.closed, true);
+  assert.deepEqual(await s.call("notebook_list", {}), { ok: "c1" });
+  assert.equal(made.length, 2);
+});

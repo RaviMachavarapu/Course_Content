@@ -39,6 +39,8 @@ class StudioStatus(str, enum.Enum):
     failed = "failed"
     #: a slide outline is drafted and waits for review ("Review slide outline")
     awaiting_review = "awaiting_review"
+    #: NotebookLM no longer knows the artifact (deleted, or its notebook is gone)
+    missing = "missing"
 
 
 class SourceState(str, enum.Enum):

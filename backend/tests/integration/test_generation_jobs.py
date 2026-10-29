@@ -241,6 +241,44 @@ def test_a_failed_notebooklm_generation_is_not_resumed(db_session: Session) -> N
     assert not orchestrator.can_resume(db_session.get(Artifact, artifact.id))
 
 
+def test_a_vanished_notebooklm_artifact_fails_fast_and_retry_regenerates(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scenario B9: the artifact was deleted in NotebookLM (or its notebook is gone). Don't
+    poll it to the full timeout; forget it, so the Retry generates a new one."""
+    monkeypatch.setattr(orchestrator, "_POLL_INTERVAL_SEC", 0)
+    monkeypatch.setattr(orchestrator, "_MISSING_GRACE_SEC", 0)
+    artifact, job_id = _queued(db_session)
+    provider = Provider()
+    provider.statuses = [StudioStatus.missing]
+    with pytest.raises(orchestrator.StudioGenerationFailed, match="no longer has"):
+        orchestrator.run_artifact_generation(db_session, provider, artifact.id, job_id=job_id)
+    db_session.expire_all()
+    art = db_session.get(Artifact, artifact.id)
+    assert art.status is ArtifactStatus.error
+    assert not orchestrator.can_resume(art)
+
+    job = orchestrator.enqueue_artifact_regeneration(
+        db_session, artifact.id, redo_note=None, resume=True
+    )
+    assert orchestrator.run_artifact_generation(
+        db_session, provider, artifact.id, job_id=job.id, resume=False
+    )
+    assert provider.generated == 2
+
+
+def test_a_briefly_unlisted_new_artifact_is_still_awaited(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Right after creation NotebookLM may not list the artifact yet: within the grace
+    period "missing" is just "pending"."""
+    monkeypatch.setattr(orchestrator, "_POLL_INTERVAL_SEC", 0)
+    artifact, job_id = _queued(db_session)
+    provider = Provider()
+    provider.statuses = [StudioStatus.missing, StudioStatus.pending, StudioStatus.ready]
+    assert orchestrator.run_artifact_generation(db_session, provider, artifact.id, job_id=job_id)
+
+
 # -- no half-stored version --------------------------------------------------------------------
 def test_a_media_write_failure_leaves_no_version_and_no_files(
     db_session: Session, media_storage: Storage, monkeypatch: pytest.MonkeyPatch

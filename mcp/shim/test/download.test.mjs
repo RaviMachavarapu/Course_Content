@@ -47,3 +47,25 @@ test("downloads googlevideo media in byte ranges instead of the throttled stream
     "bytes=2097152-2621439",
   ]);
 });
+
+test("a 5xx or 429 from the media host is transient (502); other failures are permanent", async () => {
+  const { failStatus } = await import("../tools.js");
+  for (const [status, expected] of [[503, 502], [429, 502], [404, 422]]) {
+    globalThis.fetch = async () => new Response("", { status });
+    const err = await download("https://lh3.googleusercontent.com/x").catch((e) => e);
+    assert.equal(failStatus(err), expected, `HTTP ${status}`);
+  }
+});
+
+test("a 5xx on a byte range is transient (502)", async () => {
+  const { failStatus } = await import("../tools.js");
+  const file = Buffer.alloc(2 * 1024 * 1024, 1);
+  globalThis.fetch = async (_url, init = {}) => {
+    if (!init.headers?.Range) {
+      return new Response("", { status: 200, headers: { "content-type": "audio/mp4", "content-length": String(file.length) } });
+    }
+    return new Response("", { status: 503 });
+  };
+  const err = await download("https://rr1---sn-x.googlevideo.com/videoplayback?id=1").catch((e) => e);
+  assert.equal(failStatus(err), 502);
+});

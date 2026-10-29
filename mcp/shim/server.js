@@ -26,7 +26,7 @@
 import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createArtifact, download, outlineAction, resetSession } from "./studio.js";
+import { artifactState, createArtifact, download, outlineAction, resetSession } from "./studio.js";
 import { PathNotAllowed, readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
 import { createSession } from "./session.js";
 import { ToolError, failStatus } from "./tools.js";
@@ -167,9 +167,6 @@ function studioFail(res, err, { pollable = false } = {}) {
   res.status(status).json({ error: lastError });
 }
 
-// studio_poll's status strings → NotebookLM's codes (connector's mapping).
-const STATUS_CODES = { pending: 1, in_progress: 2, completed: 3, failed: 4 };
-
 app.post("/studio/create", async (req, res) => {
   const { notebook_id: notebookId, kind, focus_prompt: focus, options } = req.body ?? {};
   try {
@@ -193,21 +190,12 @@ app.post("/studio/outline", async (req, res) => {
   }
 });
 
-// Status + content of one artifact: {status, raw, html}. status is NotebookLM's
-// code (3 = completed, 6 = outline waiting for review), or null if not found.
+// Status + content of one artifact: {status, raw, html, missing} (studio.js
+// artifactState); missing = NotebookLM no longer has it.
 app.get("/studio/artifact", async (req, res) => {
   const { notebook_id: notebookId, artifact_id: artifactId } = req.query;
   try {
-    const data = await callTool("artifact_content_get", { notebook_id: notebookId, artifact_id: artifactId });
-    const row = Array.isArray(data?.raw) ? data.raw[0] : null;
-    let status = row ? row[4] ?? null : null;
-    if (status === null) {
-      // Flashcards/quiz come back as html with no row; studio_poll has their status.
-      const poll = await callTool("studio_poll", { notebook_id: notebookId });
-      const listed = (poll.artifacts ?? []).find((a) => a.artifact_id === artifactId);
-      status = listed ? (STATUS_CODES[listed.status] ?? null) : null;
-    }
-    res.json({ status, raw: row, html: data?.html ?? null });
+    res.json(await artifactState(callTool, notebookId, artifactId));
   } catch (err) {
     studioFail(res, err, { pollable: true });
   }
