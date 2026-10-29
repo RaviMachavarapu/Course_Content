@@ -77,6 +77,7 @@ All published ports are bound to 127.0.0.1 (the stack uses dev credentials).
 | `worker-pdf` | Celery: typeset PDFs (`pdf` queue, one at a time) |
 | `worker-quiz` | Celery: fresh quiz question sets for students (`quiz` queue, one at a time) |
 | `beat` | Celery beat: periodic maintenance |
+| `media-init` | one-shot, before the backend services: gives the `media` volume to the backend's unprivileged user (uid/gid 10001); api, workers and beat run as that user, never root |
 | `typeset` | Markdown + LaTeX formulas -> PDF; internal only, no published port |
 | `postgres`, `redis`, `mailhog` | infrastructure |
 | `mcp` | live NotebookLM connector; off by default (`docker compose --profile mcp up -d mcp`, sign-in: `mcp/README.md`) |
@@ -144,11 +145,17 @@ them is a dev or missing value (`backend/app/config.py`).
    only `web` (to the TLS proxy); drop the postgres (5432), redis (6379), api
    (8000) and mailhog ports, e.g. `ports: !reset []` in a production override.
    Keep mcp's 7332/6080 on localhost and reach noVNC through an SSH tunnel.
-7. **Dev-only bits.** In a production override remove the api's `--reload`,
+7. **Non-root.** api, workers and beat run as uid/gid 10001 (`backend/Dockerfile`);
+   `media-init` fixes the media volume's ownership before they start. For a
+   one-off root shell use `docker compose run --rm --user 0 api sh`. On a Linux
+   host the dev `./backend:/app` bind mount is owned by your user, so tools that
+   write caches there (pytest, ruff, mypy) need `--user "$(id -u)"` or a
+   writable checkout; Docker Desktop (macOS) needs nothing.
+8. **Dev-only bits.** In a production override remove the api's `--reload`,
    the `./backend:/app` bind mounts (the image has the code) and mailhog, and
    set the login/sign-up limits in `.env` (the compose defaults are loose for
    e2e runs; `.env.example` has the app defaults).
-8. **Backups.** The database and the `media` volume (uploaded PDFs and every
+9. **Backups.** The database and the `media` volume (uploaded PDFs and every
    generated artifact file) together:
    ```bash
    mkdir -p backups
@@ -157,7 +164,7 @@ them is a dev or missing value (`backend/app/config.py`).
      tar czf /backup/media-$(date +%F).tgz -C /data .
    ```
    Test a restore; keep the copies off the host.
-9. **mcp (live NotebookLM) auth.** `mcp/auth/` holds a signed-in Google session
+10. **mcp (live NotebookLM) auth.** `mcp/auth/` holds a signed-in Google session
    (`auth.json` and the browser profile): it is git-ignored, must never be
    committed, copied into backups others can read, or baked into an image.
    Keep it `chmod 700`, run the `mcp` profile only where needed, and sign in

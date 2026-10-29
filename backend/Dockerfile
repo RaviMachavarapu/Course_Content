@@ -32,6 +32,16 @@ COPY . .
 # constraints.txt pins every resolved version (see its header to regenerate).
 RUN pip install --upgrade pip && pip install -c constraints.txt -e ".[dev]"
 
+# Run as an unprivileged user with a fixed uid/gid (10001), which the compose
+# `media-init` service hands the shared media volume to. /data/media is created
+# here owned by it, so a brand-new named volume starts out writable.
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /home/app --create-home \
+        --shell /usr/sbin/nologin app \
+    && mkdir -p /data/media \
+    && chown app:app /data/media
+USER app
+
 EXPOSE 8000
 # No --reload here: docker-compose.yml adds it for dev. Behind a proxy, also
 # pass --forwarded-allow-ips=<proxy address> (see the api service).

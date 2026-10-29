@@ -70,6 +70,23 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot, before every backend service: hands the shared `media` volume to
+  # the image's unprivileged user (uid/gid 10001). Volumes created while the
+  # backend ran as root hold root-owned files; this changes only what isn't
+  # 10001 yet, so after the first run it's a quick no-op. The backend services
+  # themselves never run as root.
+  media-init:
+    build: ./backend
+    user: "0:0"
+    command: ["sh", "-c", "find /data/media \\( ! -user 10001 -o ! -group 10001 \\) -exec chown -h 10001:10001 {} +"]
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    volumes:
+      - media:/data/media
+
   api:
     build: ./backend
     # Client IPs (login rate limit): trust X-Forwarded-For only from the web
@@ -91,6 +108,7 @@ services:
       retries: 6
       start_period: 20s
     depends_on:
+      media-init: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
 
@@ -115,6 +133,7 @@ services:
       retries: 5
       start_period: 20s
     depends_on:
+      media-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
 
@@ -136,6 +155,7 @@ services:
       retries: 5
       start_period: 20s
     depends_on:
+      media-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
 
@@ -162,6 +182,7 @@ services:
       retries: 5
       start_period: 20s
     depends_on:
+      media-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
 
@@ -184,6 +205,7 @@ services:
       retries: 3
       start_period: 30s
     depends_on:
+      media-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
   web:
