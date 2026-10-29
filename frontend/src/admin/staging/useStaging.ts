@@ -72,6 +72,14 @@ export function useRetry(moduleId: string) {
   });
 }
 
+export function useCancel(moduleId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (artifactId: string) => stagingApi.cancel(artifactId),
+    onSuccess: () => invalidateAfterModuleChange(qc, moduleId),
+  });
+}
+
 export function useInspect(artifactId: string, version?: string) {
   return useQuery({
     queryKey: ["admin", "inspect", artifactId, version ?? "current"],

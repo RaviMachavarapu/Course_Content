@@ -62,9 +62,18 @@ interface Props {
   onRedo: (note: string | null, options: OptionValues, customPrompt: string) => void;
   onRetry: () => void;
   onOutline: (feedback: string | null) => void;
+  /** Stop waiting for a stuck generation (lost job, hung call). */
+  onCancel?: () => void;
 }
 
-export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Props): JSX.Element {
+export function ArtifactCard({
+  artifact,
+  busy,
+  onRedo,
+  onRetry,
+  onOutline,
+  onCancel,
+}: Props): JSX.Element {
   const [modalOpen, setModalOpen] = useState(false);
   const label = ARTIFACT_LABELS[artifact.type];
   const isGenerating = ["queued", "processing", "running"].includes(artifact.status);
@@ -122,6 +131,18 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Pro
               data-testid="btn-sr6"
             >
               Retry
+            </Button>
+          ) : isGenerating && onCancel ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              iconLeft="cancel"
+              disabled={busy}
+              onClick={onCancel}
+              title="Stop waiting for this generation. Retry picks it up again."
+              data-testid="btn-sr21"
+            >
+              Cancel
             </Button>
           ) : (
             <Button

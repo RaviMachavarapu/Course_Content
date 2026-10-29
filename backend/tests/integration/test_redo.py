@@ -342,8 +342,8 @@ def test_rerun_all_while_generating_is_409(
 def test_retry_after_a_timeout_resumes_the_notebooklm_artifact(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sent: list[tuple[Any, ...]] = []
-    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda *a: sent.append(a))
+    sent: list[dict[str, Any]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda p: sent.append(p))
     module = _module_with_generated(db_session, [ArtifactType.report])
     report = next(a for a in module.artifacts if a.type is ArtifactType.report)
     report.status = ArtifactStatus.error
@@ -354,7 +354,7 @@ def test_retry_after_a_timeout_resumes_the_notebooklm_artifact(
 
     resp = client.post(f"/api/admin/artifacts/{report.id}/retry", headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
-    assert sent[-1][-1] is True  # resume
+    assert sent[-1]["kwargs"]["resume"] is True
     db_session.expire_all()
     assert db_session.get(Artifact, report.id).notebooklm_studio_id == "nb-artifact-1"
 
@@ -363,4 +363,4 @@ def test_retry_after_a_timeout_resumes_the_notebooklm_artifact(
     db_session.expire_all()
     resp = client.post(f"/api/admin/artifacts/{report.id}/redo", json={}, headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
-    assert sent[-1][-1] is False
+    assert sent[-1]["kwargs"]["resume"] is False

@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -71,6 +72,8 @@ class ArtifactJob:
     artifact_id: uuid.UUID
     job_id: uuid.UUID
     type: ArtifactType
+    #: the Celery message to send once the transaction has committed
+    dispatch: dict[str, Any] = field(default_factory=dict)
 
 
 class Unset(enum.Enum):
@@ -132,6 +135,89 @@ def _forget_studio_job(artifact: Artifact) -> None:
     artifact.outline_json = None
 
 
+def dispatch_payload(
+    artifact: Artifact,
+    job: GenerationJob,
+    *,
+    redo_note: str | None = None,
+    resume: bool = False,
+    outline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Store (and return) the Celery message that runs `job`: its queue, the task
+    kwargs and the time limits. Kept on the job as an outbox, so a message lost on the
+    way (broker down, api restart, Redis restart) can be sent again by the reaper."""
+    s = get_settings()
+    audio = artifact.type is ArtifactType.audio_overview
+    limit = s.job_time_limit_audio_sec if audio else s.job_time_limit_text_sec
+    kwargs: dict[str, Any] = {
+        "artifact_id": str(artifact.id),
+        "job_id": str(job.id),
+        "redo_note": redo_note,
+        "resume": resume,
+    }
+    if outline is not None:
+        kwargs["outline"] = outline
+    payload = {
+        "queue": "audio" if audio else "text",
+        "kwargs": kwargs,
+        "soft_time_limit": limit,
+        "time_limit": limit + 300,
+    }
+    job.dispatch = payload
+    return payload
+
+
+def _new_job(
+    artifact: Artifact, kind: GenerationJobKind, requested_by: uuid.UUID | None
+) -> GenerationJob:
+    return GenerationJob(
+        id=uuid.uuid4(),
+        kind=kind,
+        module_id=artifact.module_id,
+        artifact_id=artifact.id,
+        state=GenerationJobState.queued,
+        requested_by=requested_by,
+    )
+
+
+CANCELLED = "Generation cancelled by an admin. Press Retry to try again."
+
+
+class NotCancellable(Exception):
+    """The artifact isn't generating; there is nothing to cancel."""
+
+
+def cancel_generation(
+    session: Session, artifact_id: uuid.UUID, *, requested_by: uuid.UUID | None = None
+) -> Artifact:
+    """The admin's way out of a stuck "Generating…" (a lost message, a hung call): the
+    artifact's active jobs are cancelled and it shows a retryable error. A worker still
+    running the job stores nothing (its job is no longer running); a NotebookLM
+    artifact already requested is kept, so Retry resumes it instead of spending quota."""
+    artifact = _lock_artifact(session, artifact_id)
+    if artifact is None:
+        raise ValueError(f"artifact {artifact_id} not found")
+    if artifact.status is not ArtifactStatus.processing:
+        raise NotCancellable(f"artifact is {artifact.status.value}, not generating")
+    session.execute(
+        update(GenerationJob)
+        .where(GenerationJob.artifact_id == artifact.id, GenerationJob.state.in_(ACTIVE_JOB_STATES))
+        .values(state=GenerationJobState.cancelled, finished_at=func.now(), error_detail=CANCELLED)
+        .execution_options(synchronize_session=False)
+    )
+    artifact.status = ArtifactStatus.error
+    artifact.last_error = CANCELLED
+    session.flush()
+    _recompute_status(session, artifact.module)
+    session.flush()
+    log.warning(
+        "orchestrator.generation_cancelled",
+        artifact_id=str(artifact_id),
+        by=str(requested_by) if requested_by else None,
+    )
+    return artifact
+
+
 def can_resume(artifact: Artifact) -> bool:
     """NotebookLM already has this artifact's generation (it timed out or failed after
     creation): a Retry polls and fetches it instead of generating it again."""
@@ -154,7 +240,7 @@ def enqueue_artifact_regeneration(
 
     Creates the job row, flips the artifact to `processing`, and recomputes the
     rolled-up status. The caller dispatches `generate_artifact_task` with the
-    returned job id. `published_version_id` is never touched here. `options`
+    returned job's `dispatch` payload. `published_version_id` is never touched here. `options`
     (if given) overwrites the artifact's stored `generation_options` for this
     and future generations. `custom_prompt` (if passed) does the same for the
     artifact's focus text; blank or None reverts to the Settings template.
@@ -183,13 +269,8 @@ def enqueue_artifact_regeneration(
         if redo_note is not None
         else GenerationJobKind.generate_artifact
     )
-    job = GenerationJob(
-        kind=kind,
-        module_id=artifact.module_id,
-        artifact_id=artifact.id,
-        state=GenerationJobState.queued,
-        requested_by=requested_by,
-    )
+    job = _new_job(artifact, kind, requested_by)
+    dispatch_payload(artifact, job, redo_note=redo_note, resume=resume and can_resume(artifact))
     session.add(job)
     artifact.status = ArtifactStatus.processing
     artifact.last_error = None
@@ -207,33 +288,24 @@ def enqueue_artifact_regeneration(
 
 def request_outline_action(
     session: Session,
-    provider: ContentProvider,
     artifact_id: uuid.UUID,
     *,
     feedback: str | None,
     requested_by: uuid.UUID | None = None,
 ) -> GenerationJob:
     """Act on a drafted slide outline: `feedback` asks NotebookLM to revise it,
-    None ("Proceed") builds the deck. Queues a job that waits for the result;
-    the caller dispatches `generate_artifact_task` with `resume=True`."""
+    None ("Proceed") builds the deck. Queues a (resuming) job that sends the action
+    to NotebookLM and waits for the result: no NotebookLM call (up to minutes behind
+    the session lock) runs inside the admin's request or under the row lock. The
+    caller dispatches the job's `dispatch` payload."""
     artifact = _lock_artifact(session, artifact_id)
     if artifact is None:
         raise ValueError(f"artifact {artifact_id} not found")
     if artifact.status is not ArtifactStatus.outline_review or not artifact.notebooklm_studio_id:
         raise OutlineNotAwaitingReview(f"artifact is {artifact.status.value}, not outline_review")
-    nb_id = artifact.module.notebooklm_notebook_id or ""
-    provider.outline_action(
-        StudioJobRef(job_id=artifact.notebooklm_studio_id, notebook_id=nb_id, kind=artifact.type),
-        _clean_prompt(feedback),
-    )
     _cancel_lingering_jobs(session, artifact.id)
-    job = GenerationJob(
-        kind=GenerationJobKind.generate_artifact,
-        module_id=artifact.module_id,
-        artifact_id=artifact.id,
-        state=GenerationJobState.queued,
-        requested_by=requested_by,
-    )
+    job = _new_job(artifact, GenerationJobKind.generate_artifact, requested_by)
+    dispatch_payload(artifact, job, resume=True, outline={"feedback": _clean_prompt(feedback)})
     session.add(job)
     artifact.status = ArtifactStatus.processing
     session.flush()
@@ -313,16 +385,15 @@ def start_module_generation(
         _forget_studio_job(artifact)  # the notebook is rebuilt; its artifacts are gone
         artifact.status = ArtifactStatus.processing
         artifact.last_error = None
-        job = GenerationJob(
-            kind=GenerationJobKind.generate_artifact,
-            module_id=module.id,
-            artifact_id=artifact.id,
-            state=GenerationJobState.queued,
-            requested_by=requested_by,
-        )
+        job = _new_job(artifact, GenerationJobKind.generate_artifact, requested_by)
+        payload = dispatch_payload(artifact, job)
         session.add(job)
         session.flush()
-        jobs.append(ArtifactJob(artifact_id=artifact.id, job_id=job.id, type=artifact_type))
+        jobs.append(
+            ArtifactJob(
+                artifact_id=artifact.id, job_id=job.id, type=artifact_type, dispatch=payload
+            )
+        )
 
     _recompute_status(session, module)
     session.flush()
@@ -370,8 +441,13 @@ class _Plan:
     studio_request: dict[str, Any]
     #: on resuming after an outline action: the outline the admin reviewed
     previous_outline: list[str] | None = None
+    #: an outline action to send before waiting ({"feedback": str | None})
+    outline: dict[str, Any] | None = None
     created_studio_job: bool = False
     request: dict[str, Any] = field(default_factory=dict)
+    #: called whenever the job moves on (the worker's progress watchdog)
+    progress: Callable[[], None] = field(default=lambda: None)
+    last_check: float = 0.0
 
 
 def run_artifact_generation(
@@ -384,6 +460,8 @@ def run_artifact_generation(
     requested_by: uuid.UUID | None = None,
     resume: bool = False,
     retry_transient: bool = False,
+    outline: dict[str, Any] | None = None,
+    on_progress: Callable[[], None] | None = None,
 ) -> ArtifactVersion | None:
     """Generate (or, with `resume`, finish a NotebookLM artifact already requested:
     a reviewed slide outline, or a Retry after a timeout) one artifact. Returns the
@@ -398,8 +476,16 @@ def run_artifact_generation(
     another delivery of the same task), so one job never generates twice. On a
     `TransientProviderError` with `retry_transient`, the job goes back to `queued`
     (the caller's retry claims it again); any other failure marks it failed.
+
+    `outline` (resuming a slide outline): the admin's action, sent to NotebookLM first.
+    `on_progress` is called whenever the run moves on; the job's state is re-read
+    before generating and while polling, so a job resolved meanwhile (reaped,
+    cancelled, module deleted) stops instead of spending quota.
     """
     plan = _claim(session, artifact_id, job_id, redo_note, requested_by, resume)
+    plan.outline = outline
+    if on_progress is not None:
+        plan.progress = on_progress
     try:
         return _generate(session, provider, plan)
     except JobSkipped:
@@ -481,14 +567,22 @@ def _record_failure(
         return True
 
     # The source step's messages are written for admins (spec §8): show as-is.
-    message = str(exc) if isinstance(exc, SourceStepError) else f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, SourceStepError):
+        message = str(exc)
+    elif isinstance(exc, SoftTimeLimitExceeded):
+        message = TIME_LIMIT
+    elif isinstance(exc, ArtifactParseError):
+        message = f"{type(exc).__name__}: {exc}. {PARSE_RETRY_HINT}"
+    else:
+        message = f"{type(exc).__name__}: {exc}"
     artifact.status = ArtifactStatus.error
     artifact.last_error = message
-    if isinstance(exc, StudioGenerationFailed) or (
+    if isinstance(exc, StudioGenerationFailed | ArtifactParseError) or (
         plan.resume and plan.previous_outline is None and isinstance(exc, GenerationTimeout)
     ):
-        # NotebookLM's artifact failed, or resuming it timed out again: a Retry
-        # must generate a new one.
+        # NotebookLM's artifact failed, its output can't be read (fetching it again
+        # gives the same result: owner decision 2026-10-29, Retry regenerates), or
+        # resuming it timed out again: a Retry must generate a new one.
         _forget_studio_job(artifact)
     job.state = GenerationJobState.failed
     job.error_detail = message
@@ -502,6 +596,28 @@ def _record_failure(
         error=message,
     )
     return True
+
+
+TIME_LIMIT = "Generation took too long and was stopped. Press Retry."
+PARSE_RETRY_HINT = "Press Retry to generate it again"
+#: how often a run re-reads its job's state while it waits on NotebookLM
+_STATE_CHECK_SEC = 60.0
+
+
+def _check_still_running(session: Session, plan: _Plan, *, force: bool = False) -> None:
+    """`JobSkipped` when the job is no longer running (the reaper failed it, an admin
+    cancelled it, the module was deleted): a run that lost its job must not generate
+    (a second NotebookLM artifact, quota) or keep a worker slot polling. One cheap
+    read, at most every `_STATE_CHECK_SEC` unless `force`."""
+    now = time.monotonic()
+    if not force and now - plan.last_check < _STATE_CHECK_SEC:
+        return
+    plan.last_check = now
+    state = session.scalar(select(GenerationJob.state).where(GenerationJob.id == plan.job_id))
+    session.commit()
+    if state is not GenerationJobState.running:
+        log.warning("orchestrator.job_gone", job_id=str(plan.job_id), state=str(state))
+        raise JobSkipped(f"job {plan.job_id} is {state}, no longer running")
 
 
 def _lock_running(session: Session, plan: _Plan) -> tuple[Artifact, GenerationJob]:
@@ -629,23 +745,42 @@ def _generate(session: Session, provider: ContentProvider, plan: _Plan) -> Artif
         # NotebookLM doesn't offer, before anything is sent.
         options = validate_options(plan.kind, plan.generation_options)
 
+    plan.progress()
     # Once per module: the notebook with the module's link and PDFs, all ready.
     # It commits in its own session; no transaction of ours is open from here on.
-    nb = ensure_module_sources(provider, plan.module_id, job_created_at=plan.job_created_at)
+    nb = ensure_module_sources(
+        provider, plan.module_id, job_created_at=plan.job_created_at, on_progress=plan.progress
+    )
+    plan.progress()
+    _check_still_running(session, plan, force=True)
 
     if plan.resume:
         assert plan.studio_id is not None
         studio_job = StudioJobRef(job_id=plan.studio_id, notebook_id=nb.notebook_id, kind=plan.kind)
+        if plan.outline is not None:
+            # The admin's outline action, sent here rather than in their request.
+            provider.outline_action(studio_job, plan.outline.get("feedback"))
+            plan.created_studio_job = True  # from here on, never requeue (no resend)
     else:
         studio_job = provider.generate(nb, plan.kind, plan.request["focus_prompt"], options)
         _remember_studio_job(session, plan, studio_job.job_id)
+    plan.progress()
+
+    def on_poll() -> None:
+        plan.progress()
+        _check_still_running(session, plan)
 
     # From here on NotebookLM has the artifact: a transient error must not fail
     # the task, or Celery's retry would generate it a second time.
     status = _await_terminal(
-        provider, studio_job, plan.timeout_sec, previous_outline=plan.previous_outline
+        provider,
+        studio_job,
+        plan.timeout_sec,
+        previous_outline=plan.previous_outline,
+        on_poll=on_poll,
     )
     raw = _without_transient_failures(lambda: provider.fetch_content(studio_job))
+    plan.progress()
 
     if status is StudioStatus.awaiting_review:
         outline = parse_outline(raw.extras.get("row") or [])
@@ -663,7 +798,9 @@ def _generate(session: Session, provider: ContentProvider, plan: _Plan) -> Artif
         return None
 
     # Parse and fetch everything (no transaction open) before a version exists.
-    content_json, blobs, content_html = _content_and_media(provider, plan.kind, raw, studio_job)
+    content_json, blobs, content_html = _content_and_media(
+        provider, plan.kind, raw, studio_job, on_progress=plan.progress
+    )
     return _store_version(session, plan, raw, content_json, content_html, blobs)
 
 
@@ -747,7 +884,12 @@ _MEDIA_MIME: dict[MediaFileKind, str] = {
 
 
 def _content_and_media(
-    provider: ContentProvider, kind: ArtifactType, raw: RawArtifact, studio_job: StudioJobRef
+    provider: ContentProvider,
+    kind: ArtifactType,
+    raw: RawArtifact,
+    studio_job: StudioJobRef,
+    *,
+    on_progress: Callable[[], None] = lambda: None,
 ) -> tuple[dict[str, object], list[MediaBlob], str | None]:
     """(content_json, media to store, content_html) for a finished artifact."""
     if raw.extras.get("source") != "notebooklm":
@@ -762,7 +904,8 @@ def _content_and_media(
         data, _ = _without_transient_failures(lambda: provider.download(url))
         seconds = mp4_duration_seconds(data)
         if not seconds:
-            raise RenderError("audio overview: NotebookLM's download is not a readable MP4")
+            # deterministic (the same file every time): Retry generates a new one
+            raise ArtifactParseError("audio overview: NotebookLM's download is not a readable MP4")
         content = AudioOverviewContent(duration_seconds=max(1, round(seconds)))
         blob = MediaBlob(kind=MediaFileKind.audio_m4a, data=data, mime="audio/mp4")
         return content.model_dump(mode="json"), [blob], None
@@ -770,7 +913,9 @@ def _content_and_media(
     parsed = parse_notebooklm(kind, row, raw.html)
 
     def fetch(url: str) -> bytes:
-        return _without_transient_failures(lambda: provider.download(url))[0]
+        data = _without_transient_failures(lambda: provider.download(url))[0]
+        on_progress()
+        return data
 
     blobs = [
         MediaBlob(
@@ -811,6 +956,7 @@ def _await_terminal(
     timeout_sec: int,
     *,
     previous_outline: list[str] | None = None,
+    on_poll: Callable[[], None] = lambda: None,
 ) -> StudioStatus:
     """Poll until ready or awaiting outline review; raise on failure/timeout.
 
@@ -828,6 +974,7 @@ def _await_terminal(
             # e.g. the session lock is busy: keep waiting within the deadline
             log.info("orchestrator.poll_retry", job=job.job_id, error=str(exc))
             status = StudioStatus.pending
+        on_poll()
         if status is StudioStatus.missing:
             now = time.monotonic()
             missing_since = now if missing_since is None else missing_since

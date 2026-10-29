@@ -54,13 +54,14 @@ celery_app.conf.update(
         "mcp-healthcheck": {
             "task": "app.tasks.mcp_healthcheck",
             "schedule": crontab(minute="*/5"),
-            # a backlog of stale pings is useless: drop any not run within 4 min
-            "options": {"expires": 240},
+            # a backlog of stale pings is useless: drop any not run before the next
+            # cycle (worker-quiz may be busy with a chat preparation meanwhile)
+            "options": {"expires": 290},
         },
         "reap-stale-jobs": {
             "task": "app.tasks.reap_stale_jobs",
             "schedule": crontab(minute="*/5"),
-            "options": {"expires": 240},
+            "options": {"expires": 290},
         },
     },
 )
@@ -117,9 +118,14 @@ def _clear_job_id(**_: object) -> None:
     structlog.contextvars.clear_contextvars()
 
 
+#: task results that aren't a finished generation (a duplicate/redelivered or
+#: resolved job, an outline waiting for review)
+_NOT_COUNTED = ("skipped", "outline_review")
+
+
 @task_success.connect
-def _record_success(sender: Any = None, **_: object) -> None:
-    if getattr(sender, "name", None) != _GENERATION_TASK_NAME:
+def _record_success(sender: Any = None, result: Any = None, **_: object) -> None:
+    if getattr(sender, "name", None) != _GENERATION_TASK_NAME or result in _NOT_COUNTED:
         return
     from app.api.deps import get_redis
     from app.services.metrics import record_job_result

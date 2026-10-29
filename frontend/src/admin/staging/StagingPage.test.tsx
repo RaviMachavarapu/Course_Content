@@ -344,6 +344,33 @@ describe("StagingPage", () => {
     });
   });
 
+  it("offers Cancel on a generating card and posts a cancel on click", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([artifact("quiz", { status: "processing", current_version: null })]),
+      },
+      {
+        method: "POST",
+        match: "/api/admin/artifacts/a-quiz/cancel",
+        body: { id: "a-quiz", status: "error", last_error: "cancelled" },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    const cancel = screen.getByTestId("btn-sr21");
+    expect(cancel).toHaveTextContent(/cancel/i);
+
+    await userEvent.click(cancel);
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-quiz/cancel"),
+      );
+      expect(post).toBeDefined();
+    });
+  });
+
   it("wires BTN-SR2 (Publish Complete Course) to the course-scoped confirm modal", async () => {
     installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
     renderPage();

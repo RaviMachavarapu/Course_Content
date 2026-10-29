@@ -3,13 +3,18 @@
 An artifact publishes only from `ready`: `published_version_id` is set to the
 current version and its status becomes `published`. Everything else is skipped
 and reported. Module/course derived status is recomputed afterwards.
+
+Every artifact row is locked (and re-read) first, in the pipeline's lock order
+(artifact → module → course): a Redo committing `processing` or a worker storing
+a new version meanwhile is waited for, never overwritten with a stale
+"published".
 """
 
 from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.artifact import Artifact
@@ -76,8 +81,23 @@ def _stamp_course_published(course: Course) -> None:
         course.published_at = dt.datetime.now(tz=dt.UTC)
 
 
+def _lock_artifacts(session: Session, module_ids: list[object]) -> list[Artifact]:
+    if not module_ids:
+        return []
+    return list(
+        session.scalars(
+            select(Artifact)
+            .where(Artifact.module_id.in_(module_ids))
+            .order_by(Artifact.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+
+
 def publish_module(session: Session, module: Module) -> tuple[list[Artifact], list[Artifact]]:
-    published, skipped = _publish_artifacts(session, list(module.artifacts))
+    locked = _lock_artifacts(session, [module.id])
+    published, skipped = _publish_artifacts(session, locked)
     _recompute(session, module)
     return published, skipped
 
@@ -86,8 +106,9 @@ def publish_course(session: Session, course: Course) -> tuple[list[Artifact], li
     """BR4 — publish every `ready` artifact across all the course's modules."""
     published: list[Artifact] = []
     skipped: list[Artifact] = []
+    locked = _lock_artifacts(session, [m.id for m in course.modules])
     for module in course.modules:
-        p, s = _publish_artifacts(session, list(module.artifacts))
+        p, s = _publish_artifacts(session, [a for a in locked if a.module_id == module.id])
         published.extend(p)
         skipped.extend(s)
         recompute_module_status(session, module)

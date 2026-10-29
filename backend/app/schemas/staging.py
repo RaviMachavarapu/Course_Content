@@ -79,3 +79,9 @@ class StagingModuleOut(BaseModel):
 class StagingResponse(BaseModel):
     module: StagingModuleOut
     artifacts: list[StagingArtifactOut]
+
+
+class CancelResponse(BaseModel):
+    id: uuid.UUID
+    status: ArtifactStatus
+    last_error: str | None

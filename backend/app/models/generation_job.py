@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -48,3 +50,6 @@ class GenerationJob(Base):
     #: Last sign of life: set when claimed/requeued and touched every minute by the
     #: worker running it; the reaper fails jobs whose heartbeat stopped.
     heartbeat_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The Celery message that runs this job ({queue, kwargs, time limits}), kept as an
+    #: outbox: the reaper sends it again when a queued job's message was lost.
+    dispatch: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

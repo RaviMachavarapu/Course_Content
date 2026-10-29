@@ -1,4 +1,4 @@
-"""Admin staging: redo / retry a single artifact (spec.md §3.3, §5.3)."""
+"""Admin staging: redo / retry / cancel a single artifact (spec.md §3.3, §5.3)."""
 
 from __future__ import annotations
 
@@ -12,38 +12,29 @@ from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import CurrentAdmin, DbDep
 from app.errors import APIError, invalid_input
 from app.models.artifact import Artifact
-from app.models.enums import ArtifactStatus, ArtifactType
-from app.pipeline.factory import get_content_provider
+from app.models.enums import ArtifactStatus
 from app.pipeline.orchestrator import (
     UNSET,
     ArtifactBusy,
+    NotCancellable,
     OutlineNotAwaitingReview,
     Unset,
-    can_resume,
+    cancel_generation,
     enqueue_artifact_regeneration,
     request_outline_action,
 )
-from app.pipeline.provider import ProviderError
 from app.schemas.jobs import JobEnvelope, JobOut
-from app.schemas.staging import OutlineFeedbackRequest, RedoRequest
+from app.schemas.staging import CancelResponse, OutlineFeedbackRequest, RedoRequest
 
 router = APIRouter(prefix="/api/admin", tags=["admin-staging"], dependencies=ADMIN_DEPENDENCIES)
 
 
-def _dispatch(
-    artifact_id: str, job_id: str, redo_note: str | None, is_audio: bool, resume: bool = False
-) -> None:
-    from app.tasks.generation import generate_artifact_task
+def _dispatch(payload: dict[str, Any]) -> None:
+    """After the commit: send the job's stored message (a lost one is sent again by
+    the reaper)."""
+    from app.tasks.generation import dispatch_jobs
 
-    generate_artifact_task.apply_async(
-        kwargs={
-            "artifact_id": artifact_id,
-            "job_id": job_id,
-            "redo_note": redo_note,
-            "resume": resume,
-        },
-        queue="audio" if is_audio else "text",
-    )
+    dispatch_jobs([payload])
 
 
 def _requeue(
@@ -75,14 +66,7 @@ def _requeue(
     except ValidationError as exc:  # the admin's generation options
         raise invalid_input(exc) from None
     db.flush()
-    background.add_task(
-        _dispatch,
-        str(artifact_id),
-        str(job.id),
-        redo_note,
-        artifact.type is ArtifactType.audio_overview,
-        resume and can_resume(artifact),
-    )
+    background.add_task(_dispatch, dict(job.dispatch or {}))
     return JobEnvelope(job=JobOut.model_validate(job))
 
 
@@ -136,21 +120,14 @@ def _outline_action(
     feedback: str | None,
 ) -> JobEnvelope:
     try:
-        job = request_outline_action(
-            db,
-            get_content_provider(),
-            artifact_id,
-            feedback=feedback,
-            requested_by=admin.id,
-        )
+        job = request_outline_action(db, artifact_id, feedback=feedback, requested_by=admin.id)
     except ValueError as exc:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Artifact not found") from exc
     except OutlineNotAwaitingReview as exc:
         raise APIError(status.HTTP_409_CONFLICT, "no_outline_to_review", str(exc)) from exc
-    except ProviderError as exc:
-        raise APIError(status.HTTP_502_BAD_GATEWAY, "provider_error", str(exc)) from exc
     db.flush()
-    background.add_task(_dispatch, str(artifact_id), str(job.id), None, False, True)
+    # NotebookLM gets the action from the job (no provider call in this request)
+    background.add_task(_dispatch, dict(job.dispatch or {}))
     return JobEnvelope(job=JobOut.model_validate(job))
 
 
@@ -183,3 +160,17 @@ def outline_proceed(
 ) -> JobEnvelope:
     """NotebookLM builds the slide deck from the draft outline."""
     return _outline_action(db, admin, background, artifact_id, None)
+
+
+@router.post("/artifacts/{artifact_id}/cancel", response_model=CancelResponse)
+def cancel_artifact(artifact_id: uuid.UUID, db: DbDep, admin: CurrentAdmin) -> CancelResponse:
+    """Stop waiting for a generation (a lost message, a stuck call): the artifact shows
+    a retryable error. Whatever the worker still produces is dropped; a NotebookLM
+    artifact already requested is kept for Retry."""
+    try:
+        artifact = cancel_generation(db, artifact_id, requested_by=admin.id)
+    except ValueError as exc:
+        raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Artifact not found") from exc
+    except NotCancellable as exc:
+        raise APIError(status.HTTP_409_CONFLICT, "not_generating", str(exc)) from exc
+    return CancelResponse(id=artifact.id, status=artifact.status, last_error=artifact.last_error)

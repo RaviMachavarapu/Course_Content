@@ -247,9 +247,8 @@ def test_outline_review_then_proceed_builds_the_deck(
     assert artifact.outline_json["slides"] == ["**Intro**: the course.", "**Models**: why."]
 
     # 2. Staging shows the outline; the admin proceeds.
-    monkeypatch.setattr("app.api.admin.staging.get_content_provider", lambda: provider)
-    dispatched: list[tuple[Any, ...]] = []
-    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda *a: dispatched.append(a))
+    dispatched: list[dict[str, Any]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda p: dispatched.append(p))
     headers = _admin_headers(client, db_session)
     staging = client.get(f"/api/admin/modules/{artifact.module_id}/staging").json()
     deck = next(a for a in staging["artifacts"] if a["type"] == "slide_deck")
@@ -258,17 +257,26 @@ def test_outline_review_then_proceed_builds_the_deck(
 
     resp = client.post(f"/api/admin/artifacts/{artifact.id}/outline/proceed", headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
-    assert provider.outline_actions == [None]
-    assert dispatched and dispatched[0][-1] is True  # resume=True
+    # no NotebookLM call in the admin's request: the job sends the action
+    assert provider.outline_actions == []
+    [payload] = dispatched
+    assert payload["kwargs"]["resume"] is True
+    assert payload["kwargs"]["outline"] == {"feedback": None}
     db_session.expire_all()
     artifact = db_session.get(Artifact, artifact.id)
     assert artifact is not None and artifact.status is ArtifactStatus.processing
 
-    # 3. The worker waits for the built deck — without generating again.
+    # 3. The worker sends "proceed", then waits for the built deck — without generating again.
     provider.row, provider.status = _row("slide_deck.json"), StudioStatus.ready
     version = orchestrator.run_artifact_generation(
-        db_session, provider, artifact.id, job_id=uuid.UUID(resp.json()["job"]["id"]), resume=True
+        db_session,
+        provider,
+        artifact.id,
+        job_id=uuid.UUID(resp.json()["job"]["id"]),
+        resume=True,
+        outline=payload["kwargs"]["outline"],
     )
+    assert provider.outline_actions == [None]
     assert version is not None
     assert len(provider.generated) == 1
     assert artifact.status is ArtifactStatus.ready
@@ -282,22 +290,44 @@ def test_outline_feedback_is_sent_and_needs_text(
     provider.status = StudioStatus.awaiting_review
     artifact = _artifact(db_session, ArtifactType.slide_deck, {"review_outline": True})
     orchestrator.run_artifact_generation(db_session, provider, artifact.id)
-    monkeypatch.setattr("app.api.admin.staging.get_content_provider", lambda: provider)
-    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda *a: None)
+    dispatched: list[dict[str, Any]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda p: dispatched.append(p))
     headers = _admin_headers(client, db_session)
 
     url = f"/api/admin/artifacts/{artifact.id}/outline/feedback"
     assert client.post(url, json={"feedback": ""}, headers=headers).status_code == 422
     resp = client.post(url, json={"feedback": "  Fewer slides  "}, headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
+    [payload] = dispatched
+    assert payload["kwargs"]["outline"] == {"feedback": "Fewer slides"}
+
+    # the worker sends the feedback, then waits for the revised outline
+    revised: list[Any] = [None] * 31
+    revised[30] = [[["Style"], ["**Only**: one slide."]]]
+    provider.row = revised
+    assert (
+        orchestrator.run_artifact_generation(
+            db_session,
+            provider,
+            artifact.id,
+            job_id=uuid.UUID(resp.json()["job"]["id"]),
+            resume=True,
+            outline=payload["kwargs"]["outline"],
+        )
+        is None
+    )
     assert provider.outline_actions == ["Fewer slides"]
+    db_session.expire_all()
+    artifact = db_session.get(Artifact, artifact.id)
+    assert artifact is not None and artifact.status is ArtifactStatus.outline_review
+    assert artifact.outline_json is not None
+    assert artifact.outline_json["slides"] == ["**Only**: one slide."]
 
 
 def test_outline_actions_need_an_outline_waiting(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     artifact = _artifact(db_session, ArtifactType.slide_deck)
-    monkeypatch.setattr("app.api.admin.staging.get_content_provider", lambda: FakeNotebookLm(None))
     headers = _admin_headers(client, db_session)
     resp = client.post(f"/api/admin/artifacts/{artifact.id}/outline/proceed", headers=headers)
     assert resp.status_code == status.HTTP_409_CONFLICT

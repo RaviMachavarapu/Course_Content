@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     job_heartbeat_sec: int = 60
     job_stale_running_sec: int = 900
     job_stale_queued_sec: int = 6 * 3600
+    #: a queued job untouched this long whose message the broker no longer holds is
+    #: sent again (outbox); one still in the broker (a real backlog) is kept alive
+    job_redispatch_after_sec: int = 600
+    job_max_redispatches: int = 3
+    #: a running job that made no progress this long (alive but stuck) stops beating,
+    #: so the reaper fails it `job_stale_running_sec` later
+    job_stall_sec: int = 45 * 60
+    #: Celery soft time limit per generation job (then a 5-minute hard limit): frees
+    #: a worker slot held by a stuck call. Below the broker's 4 h visibility timeout.
+    job_time_limit_text_sec: int = 3 * 3600
+    job_time_limit_audio_sec: int = 3 * 3600 + 1800
     max_module_fanout: int = 2
 
     # ---- PDF sources (NotebookLM rejects >200 MB or >500,000 words per source) ----

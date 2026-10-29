@@ -86,7 +86,9 @@ def test_the_heartbeat_thread_stops_with_the_task(monkeypatch: pytest.MonkeyPatc
 
     beats: list[uuid.UUID] = []
     monkeypatch.setattr(
-        generation, "get_settings", lambda: type("S", (), {"job_heartbeat_sec": 0.01})()
+        generation,
+        "get_settings",
+        lambda: type("S", (), {"job_heartbeat_sec": 0.01, "job_stall_sec": 60})(),
     )
     monkeypatch.setattr(generation, "touch_job_heartbeat", lambda _db, jid: beats.append(jid))
     monkeypatch.setattr(generation, "session_scope", _Scope())
@@ -160,7 +162,7 @@ def test_a_broker_error_does_not_fail_generation(monkeypatch: pytest.MonkeyPatch
     scope = _Scope()
     version = _Version(ArtifactType.quiz)
     monkeypatch.setattr(generation, "session_scope", scope)
-    monkeypatch.setattr(generation, "_heartbeat", lambda _job_id: _no_heartbeat())
+    monkeypatch.setattr(generation, "_heartbeat", lambda *_: _no_heartbeat())
     monkeypatch.setattr(generation, "get_content_provider", lambda: object())
     monkeypatch.setattr(generation, "run_artifact_generation", lambda *a, **k: version)
     monkeypatch.setattr(generation.build_artifact_pdf, "apply_async", broken)
@@ -176,3 +178,93 @@ def test_a_broker_error_does_not_fail_generation(monkeypatch: pytest.MonkeyPatch
 @contextmanager
 def _no_heartbeat() -> Iterator[None]:
     yield
+
+
+# -- progress watchdog, outbox dispatch (review 2026-10-29) ------------------------
+def test_a_stalled_run_stops_beating_so_the_reaper_fails_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Alive but stuck (a call that never returns): the heartbeat thread only beats while
+    the run keeps making progress."""
+    import threading
+
+    beats: list[uuid.UUID] = []
+    monkeypatch.setattr(
+        generation,
+        "get_settings",
+        lambda: type("S", (), {"job_heartbeat_sec": 0.01, "job_stall_sec": 0.05})(),
+    )
+    monkeypatch.setattr(generation, "touch_job_heartbeat", lambda _db, jid: beats.append(jid))
+    monkeypatch.setattr(generation, "session_scope", _Scope())
+    liveness = generation.Liveness()
+    with generation._heartbeat(str(uuid.uuid4()), liveness):
+        threading.Event().wait(0.04)
+        assert beats  # moving: beats
+        threading.Event().wait(0.1)  # no progress for longer than job_stall_sec
+        stalled_at = len(beats)
+        threading.Event().wait(0.08)
+        assert len(beats) == stalled_at  # stuck: no beats
+        liveness.touch()
+        threading.Event().wait(0.04)
+        assert len(beats) > stalled_at  # moving again
+
+
+def test_the_task_reports_progress_and_passes_the_outline_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(generation, "session_scope", _Scope())
+    monkeypatch.setattr(generation, "get_content_provider", lambda: object())
+    monkeypatch.setattr(generation, "_heartbeat", lambda *_: _no_heartbeat())
+
+    def run(*_: Any, **kwargs: Any) -> None:
+        seen.append(kwargs)
+
+    monkeypatch.setattr(generation, "run_artifact_generation", run)
+    task = generation.generate_artifact_task
+    task.push_request(retries=0)
+    try:
+        task._orig_run(  # type: ignore[attr-defined]
+            str(uuid.uuid4()), job_id=str(uuid.uuid4()), resume=True, outline={"feedback": "x"}
+        )
+    finally:
+        task.pop_request()
+    assert seen[0]["outline"] == {"feedback": "x"}
+    assert callable(seen[0]["on_progress"])
+
+
+def _payload(job_id: str, queue: str = "text") -> dict[str, Any]:
+    return {
+        "queue": queue,
+        "kwargs": {"artifact_id": "a", "job_id": job_id, "redo_note": "n", "resume": False},
+        "soft_time_limit": 100,
+        "time_limit": 400,
+    }
+
+
+def test_send_job_routes_names_and_limits_the_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        generation.generate_artifact_task, "apply_async", lambda **kw: sent.append(kw)
+    )
+    job_id = str(uuid.uuid4())
+    generation.send_job(_payload(job_id, "audio"))
+    [msg] = sent
+    assert msg["queue"] == "audio"
+    assert msg["kwargs"]["redo_note"] == "n"
+    assert job_id in msg["task_id"]  # the reaper finds it in the broker by job id
+    assert (msg["soft_time_limit"], msg["time_limit"]) == (100, 400)
+
+
+def test_a_broker_error_at_dispatch_is_logged_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scenario B5(a): the job stays queued; the reaper sends its stored message again."""
+    sent: list[str] = []
+
+    def apply_async(**kw: Any) -> None:
+        if kw["kwargs"]["job_id"] == "down":
+            raise ConnectionError("redis restarting")
+        sent.append(kw["kwargs"]["job_id"])
+
+    monkeypatch.setattr(generation.generate_artifact_task, "apply_async", apply_async)
+    generation.dispatch_jobs([_payload("down"), _payload("up")])
+    assert sent == ["up"]  # one failure doesn't stop the others

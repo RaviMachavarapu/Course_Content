@@ -10,13 +10,14 @@ import { ArtifactCard } from "./ArtifactCard";
 import { FreshRetakesToggle } from "./FreshRetakesToggle";
 import { PublishModal } from "./PublishModal";
 import { usePublish } from "./publish";
-import { useOutlineAction, useRedo, useRetry, useStaging } from "./useStaging";
+import { useCancel, useOutlineAction, useRedo, useRetry, useStaging } from "./useStaging";
 
 export function StagingPage(): JSX.Element {
   const { moduleId = "" } = useParams();
   const { data, isPending, isError, refetch } = useStaging(moduleId);
   const redo = useRedo(moduleId);
   const retry = useRetry(moduleId);
+  const cancel = useCancel(moduleId);
   const outline = useOutlineAction(moduleId);
   const publish = usePublish(moduleId);
   const { toast } = useToast();
@@ -116,7 +117,7 @@ export function StagingPage(): JSX.Element {
                 <ArtifactCard
                   key={t}
                   artifact={artifact}
-                  busy={redo.isPending || retry.isPending || outline.isPending}
+                  busy={redo.isPending || retry.isPending || outline.isPending || cancel.isPending}
                   onRedo={(note, options, customPrompt) =>
                     redo.mutate(
                       { artifactId: artifact.id, note, options, customPrompt },
@@ -126,6 +127,11 @@ export function StagingPage(): JSX.Element {
                   onRetry={() =>
                     retry.mutate(artifact.id, {
                       onError: (err) => failed("Couldn’t retry", err),
+                    })
+                  }
+                  onCancel={() =>
+                    cancel.mutate(artifact.id, {
+                      onError: (err) => failed("Couldn’t cancel", err),
                     })
                   }
                   onOutline={(feedback) =>

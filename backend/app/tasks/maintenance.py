@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+import redis
 from sqlalchemy import select
 
 from app.api.deps import get_redis
@@ -13,7 +14,7 @@ from app.logging import get_logger
 from app.models.enums import SourceUploadStatus
 from app.models.source_upload import SourceUpload
 from app.pipeline.factory import get_content_provider
-from app.pipeline.reaper import reap_stale_jobs
+from app.pipeline.reaper import broker_job_ids, reap_stale_jobs, redispatch_lost_jobs
 from app.services.metrics import record_mcp_healthcheck
 from app.storage.service import get_storage
 from app.tasks.celery_app import celery_app
@@ -70,8 +71,25 @@ def purge_abandoned_uploads() -> int:
 
 @celery_app.task(name="app.tasks.reap_stale_jobs")
 def reap_stale_jobs_task() -> int:
-    """Fail generation jobs whose worker is gone (see `app.pipeline.reaper`)."""
+    """Send lost generation messages again, and fail jobs whose worker is gone (see
+    `app.pipeline.reaper`)."""
+    from app.tasks.generation import send_job
+
     settings = get_settings()
+    broker = redis.Redis.from_url(settings.celery_broker_url, decode_responses=True)
+    try:
+        with session_scope() as session:
+            redispatched = redispatch_lost_jobs(
+                session,
+                after=dt.timedelta(seconds=settings.job_redispatch_after_sec),
+                in_broker=lambda ids: broker_job_ids(broker, ids),
+                send=send_job,
+                max_redispatches=settings.job_max_redispatches,
+            )
+    finally:
+        broker.close()
+    if redispatched:
+        log.warning("reap_stale_jobs.redispatched", jobs=redispatched)
     with session_scope() as session:
         resolved = reap_stale_jobs(
             session,

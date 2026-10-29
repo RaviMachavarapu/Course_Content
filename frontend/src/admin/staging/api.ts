@@ -111,6 +111,13 @@ export const stagingApi = {
       method: "POST",
     }),
 
+  /** Stop waiting for a stuck generation; the card shows a retryable error. */
+  cancel: (artifactId: string) =>
+    apiFetch<{ id: string; status: string; last_error: string | null }>(
+      `/api/admin/artifacts/${artifactId}/cancel`,
+      { method: "POST" },
+    ),
+
   inspect: (artifactId: string, version?: string) =>
     apiFetch<InspectResponse>(
       `/api/admin/artifacts/${artifactId}${version ? `?version=${version}` : ""}`,

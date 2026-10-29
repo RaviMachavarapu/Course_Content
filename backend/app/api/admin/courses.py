@@ -6,6 +6,7 @@ import contextlib
 import re
 import unicodedata
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Response, status
 from pydantic import ValidationError
@@ -239,8 +240,7 @@ def create_module(
     # last step that can fail: moving files (compensated on error)
     _claim_uploads(db, course.id, module, uploads)
 
-    dispatch = [(str(j.artifact_id), str(j.job_id), j.type.value) for j in jobs]
-    background.add_task(_dispatch_all, dispatch)
+    background.add_task(_dispatch_all, [j.dispatch for j in jobs])
 
     db.refresh(module)
     return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
@@ -331,14 +331,12 @@ def _page_count(upload: SourceUpload) -> int:
         ) from None
 
 
-def _dispatch_all(items: list[tuple[str, str, str]]) -> None:
-    from app.tasks.generation import generate_artifact_task
+def _dispatch_all(payloads: list[dict[str, Any]]) -> None:
+    """After the commit: send the jobs' stored messages (a lost one is sent again by
+    the reaper)."""
+    from app.tasks.generation import dispatch_jobs
 
-    for artifact_id, job_id, artifact_type in items:
-        generate_artifact_task.apply_async(
-            kwargs={"artifact_id": artifact_id, "job_id": job_id},
-            queue="audio" if artifact_type == "audio_overview" else "text",
-        )
+    dispatch_jobs(payloads)
 
 
 def _get_module(db: Session, module_id: uuid.UUID) -> Module:
@@ -396,9 +394,7 @@ def regenerate_module(
     except orchestrator.ArtifactBusy as exc:  # Re-run all twice / while generating
         raise APIError(status.HTTP_409_CONFLICT, "module_busy", str(exc)) from None
     db.flush()
-    background.add_task(
-        _dispatch_all, [(str(j.artifact_id), str(j.job_id), j.type.value) for j in jobs]
-    )
+    background.add_task(_dispatch_all, [j.dispatch for j in jobs])
     db.refresh(module)
     return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
 
