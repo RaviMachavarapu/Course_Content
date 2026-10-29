@@ -1,5 +1,6 @@
-# Dependencies and build output
+# Dependencies and build output (the web image builds frontend/dist itself)
 node_modules/
+frontend/dist/
 
 # Secrets and local environment
 .env
