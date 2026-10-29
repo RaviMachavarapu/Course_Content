@@ -211,16 +211,12 @@ test("published course shows in the catalog and opens", async ({ page }) => {
 
   await page.getByTestId("btn-qz5").click(); // Retake (a fresh set may take a moment to prepare)
   const retakeFirst = page.getByText(/^Question 1 of \d+$/);
-  const unavailable = page.getByText(/New questions aren.t available right now/);
-  await expect(retakeFirst.or(unavailable)).toBeVisible({ timeout: 60_000 });
-  // Soft, so the rest of the walk still runs when the retake set can't be
-  // prepared (the test still fails): see .superpowers/e2e-2026-10-29/e2e-infra-report.md
-  await expect.soft(retakeFirst, "retake serves a fresh question set").toBeVisible();
-  if (await retakeFirst.isVisible()) {
-    const retakeCount = Number((await retakeFirst.textContent())!.match(/of (\d+)/)![1]);
-    await answerAllQuestions(page, retakeCount);
-    await expect(page.getByTestId("quiz-score")).toBeVisible();
-  }
+  await expect(retakeFirst).toBeVisible({ timeout: 60_000 });
+  // owner decision 7: a retake has as many questions as the reviewed quiz
+  const retakeCount = Number((await retakeFirst.textContent())!.match(/of (\d+)/)![1]);
+  expect(retakeCount).toBe(qCount);
+  await answerAllQuestions(page, retakeCount);
+  await expect(page.getByTestId("quiz-score")).toBeVisible();
   await page.getByTestId("btn-qz6").click(); // Back to module
   await expect(page).toHaveURL(new RegExp(`/learn/[a-z0-9-]+$`));
 

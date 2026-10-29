@@ -22,6 +22,11 @@ x-e2e-env: &e2e-env
   MCP_ENDPOINT: http://e2e-no-mcp.invalid:9
   PUBLIC_BASE_URL: http://localhost:5174
   CORS_ORIGINS: http://localhost:5174
+  # Every browser of the suite shares one client IP (the Playwright container),
+  # and the lockout specs fail on purpose: a per-IP budget of 100 failures per
+  # 5 min would lock out the parallel specs (--repeat-each). The per-IP limit
+  # itself is covered by the backend suite (owner decision 8).
+  LOGIN_RATE_LIMIT: 5000/5m
 
 services:
   postgres:

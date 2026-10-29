@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end tests on an isolated, throwaway stack.
 #
-#   scripts/e2e.sh [--grep RE] [--project student|admin] [--repeat-each N] [--keep]
+#   scripts/e2e.sh [--grep RE] [--project student|admin|mobile] [--repeat-each N] [--keep]
 #                  [-- extra playwright args]
 #
 # Brings up the dev stack as compose project `shikshak-e2e` with

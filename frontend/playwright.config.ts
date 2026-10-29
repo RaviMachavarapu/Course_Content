@@ -29,5 +29,16 @@ export default defineConfig({
       testMatch: /admin-.*\.spec\.ts$/,
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      // phone width (review S22): Chromium at 375 px with touch
+      name: "mobile",
+      testMatch: /mobile-.*\.spec\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 375, height: 812 },
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
   ],
 });
