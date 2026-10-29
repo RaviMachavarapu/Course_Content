@@ -1,9 +1,10 @@
 """Login rate limiting counts failures only (review 2026-10-28).
 
-The limiter keys on the real client IP (`request.client.host`, which uvicorn's
-proxy-headers support fills in from the trusted proxy's X-Forwarded-For) and on
-the email. Successful logins never use up the budget, and a success clears the
-email's failure count.
+The per-IP limit keys on the real client IP (`request.client.host`, which
+uvicorn's proxy-headers support fills in from the trusted proxy's
+X-Forwarded-For). Successful logins never use up the budget. The per-email side
+is now a growing delay, not a hard block (login protection 2026-10-29; covered
+in depth by test_login_protection.py).
 """
 
 from __future__ import annotations
@@ -66,14 +67,14 @@ def test_failures_are_limited_per_ip(limited: TestClient) -> None:
     )
 
 
-def test_failures_are_limited_per_email_across_ips(limited: TestClient) -> None:
+def test_failures_are_delayed_per_email_across_ips(limited: TestClient) -> None:
+    """After the free failures (5), the email is delayed from any address."""
     _register(limited, "target@example.com")
-    for i in range(3):
+    for i in range(6):
         other = TestClient(limited.app, client=(f"10.0.0.{i}", 50000))
         assert _login(other, "target@example.com", "wrong-pass") == status.HTTP_401_UNAUTHORIZED
-    assert _login(limited, "target@example.com", "wrong-pass") == (
-        status.HTTP_429_TOO_MANY_REQUESTS
-    )
+    other = TestClient(limited.app, client=("10.0.1.1", 50000))
+    assert _login(other, "target@example.com", "wrong-pass") == (status.HTTP_429_TOO_MANY_REQUESTS)
 
 
 def test_one_ip_failing_does_not_lock_out_other_ips(limited: TestClient) -> None:

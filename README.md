@@ -46,6 +46,20 @@ Configuration comes from the environment set in `docker-compose.yml`
 `backend/.env` (copy of `backend/.env.example`, git-ignored) is optional and
 only fills in values the compose file does not set.
 
+Login protection (both areas; see `docs/superpowers/specs/2026-10-29-login-protection.md`):
+
+- `LOGIN_RATE_LIMIT` (default `100/15m`): failed logins per client IP; successes never count.
+- `LOGIN_FREE_FAILURES` (5), `LOGIN_FAILURE_WINDOW_SEC` (900), `LOGIN_DELAY_BASE_SEC` (2),
+  `LOGIN_DELAY_MAX_SEC` (60): per email, after 5 failures in 15 minutes each further
+  attempt waits 2, 4, 8 … 60 s (429 with `retry_after`) instead of a hard lock-out.
+- `DEVICE_COOKIE_SECRET`, `DEVICE_COOKIE_MAX_AGE_DAYS` (180), `LOGIN_DEVICE_FREE_FAILURES`
+  (10): a browser that has signed in before carries a signed `sdp_device_<area>` cookie and
+  is not held up by failures elsewhere. **`DEVICE_COOKIE_SECRET` must be set to a long
+  random value outside dev** (the app refuses to start otherwise); changing it only signs
+  everyone's devices out of the trusted state.
+- `REGISTER_RATE_LIMIT` (`100/1h`) and `PASSWORD_RESET_RATE_LIMIT` (`30/1h`) per client IP;
+  reset mail is capped at 3 per hour per address.
+
 - Student app: http://localhost:5173
 - Admin app:   http://localhost:5173/admin/login
 - API docs:    http://localhost:8000/api/docs

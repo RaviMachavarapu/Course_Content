@@ -20,6 +20,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.logging import get_logger
@@ -36,13 +37,20 @@ class APIError(Exception):
         *,
         headers: dict[str, str] | None = None,
         fields: list[dict[str, Any]] | None = None,
+        extra: dict[str, Any] | None = None,
+        background: BackgroundTask | None = None,
     ) -> None:
+        """`extra` adds fields to the error object (e.g. ``retry_after``);
+        `background` runs after the error response is sent (e.g. a mail that
+        must not change the response or its timing)."""
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.headers = headers
         self.fields = fields
+        self.extra = extra
+        self.background = background
 
 
 def _fields(exc: ValidationError | RequestValidationError) -> list[dict[str, Any]]:
@@ -69,11 +77,14 @@ def _envelope(code: str, message: str, **extra: Any) -> dict[str, Any]:
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(APIError)
     async def _api_error(_: Request, exc: APIError) -> JSONResponse:
-        extra = {"fields": exc.fields} if exc.fields is not None else {}
+        extra = dict(exc.extra or {})
+        if exc.fields is not None:
+            extra["fields"] = exc.fields
         return JSONResponse(
             status_code=exc.status_code,
             content=_envelope(exc.code, exc.message, **extra),
             headers=exc.headers,
+            background=exc.background,
         )
 
     @app.exception_handler(StarletteHTTPException)

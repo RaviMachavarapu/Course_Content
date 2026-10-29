@@ -19,6 +19,7 @@ ContentProviderName = Literal["fixture", "notebooklm"]
 _DEV_DB_CREDENTIALS = "shikshak:shikshak@"
 _DEV_PUBLIC_BASE_URL = "http://localhost:5173"
 _DEV_SMTP_URL = "smtp://mailhog:1025"
+_DEV_DEVICE_COOKIE_SECRET = "dev-only-device-cookie-secret-change-me"
 
 
 class Settings(BaseSettings):
@@ -67,13 +68,26 @@ class Settings(BaseSettings):
     # ---- auth ----
     admin_session_ttl_hours: int = 8
     student_session_ttl_days: int = 30
-    #: failed logins, per client IP and per email (successes don't count)
-    login_rate_limit: str = "10/5m"
+    #: failed logins per client IP, sliding window (successes don't count);
+    #: beyond it 429 until the oldest failure leaves the window
+    login_rate_limit: str = "100/15m"
+    #: per-email (and per-device) failures are counted over this sliding window
+    login_failure_window_sec: int = 900
+    #: failures per email with no delay; from the next failure on, the next
+    #: attempt waits base, 2*base, 4*base … seconds (capped at max)
+    login_free_failures: int = 5
+    #: the same, for attempts carrying a valid trusted-device cookie
+    login_device_free_failures: int = 10
+    login_delay_base_sec: int = 2
+    login_delay_max_sec: int = 60
+    #: signs the trusted-device cookie (sdp_device_<scope>); required outside dev
+    device_cookie_secret: str = _DEV_DEVICE_COOKIE_SECRET
+    device_cookie_max_age_days: int = 180
     #: register attempts per client IP (each one costs an Argon2 hash)
-    register_rate_limit: str = "30/1h"
+    register_rate_limit: str = "100/1h"
     #: password-reset requests per client IP (429 beyond); per email the cap is
     #: silent (still 202, no more mail) — see auth.password_reset
-    password_reset_rate_limit: str = "10/1h"
+    password_reset_rate_limit: str = "30/1h"
     password_reset_enabled: bool = True
 
     # ---- email ----
@@ -97,8 +111,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _no_dev_defaults_outside_dev(self) -> Settings:
-        """Staging/prod must not run on the dev database password or send reset
-        links to localhost; prod must not "send" reset mail into mailhog."""
+        """Staging/prod must not run on the dev database password, sign device
+        cookies with the dev secret, or send reset links to localhost; prod
+        must not "send" reset mail into mailhog."""
         if self.app_env == "dev":
             return self
         problems: list[str] = []
@@ -106,6 +121,8 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL uses the dev credentials")
         if self.public_base_url.rstrip("/") == _DEV_PUBLIC_BASE_URL:
             problems.append("PUBLIC_BASE_URL is the dev default (reset links would point there)")
+        if self.device_cookie_secret in {"", _DEV_DEVICE_COOKIE_SECRET}:
+            problems.append("DEVICE_COOKIE_SECRET is unset or the dev default")
         if self.is_prod and self.password_reset_enabled and self.smtp_url == _DEV_SMTP_URL:
             problems.append("SMTP_URL is the dev mailhog (or set PASSWORD_RESET_ENABLED=false)")
         if problems:

@@ -108,6 +108,7 @@ def test_hsts_emitted_in_prod(monkeypatch: pytest.MonkeyPatch) -> None:
         database_url="postgresql+psycopg://app:real-pw@db:5432/shikshak",
         public_base_url="https://learn.example.org",
         smtp_url="smtps://mailer:pw@smtp.example.org",
+        device_cookie_secret="a-long-random-production-secret-value",
     )
     monkeypatch.setattr("app.config.get_settings", lambda: prod)
     with TestClient(create_app(prod)) as prod_client:

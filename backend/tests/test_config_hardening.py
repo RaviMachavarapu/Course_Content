@@ -15,6 +15,7 @@ _REAL = {
     "database_url": "postgresql+psycopg://app:s3cr3t-pw@db.internal:5432/shikshak",
     "public_base_url": "https://learn.example.org",
     "smtp_url": "smtps://mailer:pw@smtp.example.org",
+    "device_cookie_secret": "a-long-random-production-secret-value",
 }
 
 
@@ -52,6 +53,17 @@ def test_prod_refuses_the_dev_mail_relay_while_reset_is_on() -> None:
         app_env="prod", password_reset_enabled=False, **{**_REAL, "smtp_url": "smtp://mailhog:1025"}
     )
     assert off.password_reset_enabled is False
+
+
+@pytest.mark.parametrize("env", ["staging", "prod"])
+@pytest.mark.parametrize("secret", ["dev-only-device-cookie-secret-change-me", ""])
+def test_device_cookie_secret_must_be_set_outside_dev(env: str, secret: str) -> None:
+    with pytest.raises(ValidationError, match="DEVICE_COOKIE_SECRET"):
+        _settings(app_env=env, **{**_REAL, "device_cookie_secret": secret})
+
+
+def test_dev_has_a_device_cookie_secret_default() -> None:
+    assert _settings(app_env="dev").device_cookie_secret
 
 
 def test_session_secret_is_gone() -> None:

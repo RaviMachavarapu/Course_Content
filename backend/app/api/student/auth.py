@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
+    ClockDep,
     CurrentStudent,
     DbDep,
     RateLimiterDep,
@@ -110,8 +111,9 @@ def login(
     response: Response,
     db: DbDep,
     store: SessionStoreDep,
-    limiter: RateLimiterDep,
+    redis_client: RedisDep,
     settings: SettingsDep,
+    clock: ClockDep,
 ) -> UserEnvelope:
     user = login_flow(
         scope="student",
@@ -122,8 +124,9 @@ def login(
         response=response,
         db=db,
         store=store,
-        limiter=limiter,
+        redis_client=redis_client,
         settings=settings,
+        clock=clock,
     )
     return _envelope(user)
 

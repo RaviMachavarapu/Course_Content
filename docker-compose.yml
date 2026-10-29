@@ -16,6 +16,8 @@ x-backend-env: &backend-env
   LOGIN_RATE_LIMIT: 100/5m
   REGISTER_RATE_LIMIT: 300/1h
   PASSWORD_RESET_RATE_LIMIT: 100/1h
+  # dev only (the config guard refuses this value outside APP_ENV=dev)
+  DEVICE_COOKIE_SECRET: dev-only-device-cookie-secret-change-me
 
 # Published ports are bound to 127.0.0.1: the dev stack runs with default
 # credentials (and, with the override, the owner's Google session), so nothing

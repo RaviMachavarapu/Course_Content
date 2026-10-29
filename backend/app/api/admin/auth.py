@@ -14,6 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
 from app.api.deps import (
+    ClockDep,
     CurrentAdmin,
     DbDep,
     RateLimiterDep,
@@ -45,8 +46,9 @@ def login(
     response: Response,
     db: DbDep,
     store: SessionStoreDep,
-    limiter: RateLimiterDep,
+    redis_client: RedisDep,
     settings: SettingsDep,
+    clock: ClockDep,
 ) -> UserEnvelope:
     user = login_flow(
         scope="admin",
@@ -57,8 +59,9 @@ def login(
         response=response,
         db=db,
         store=store,
-        limiter=limiter,
+        redis_client=redis_client,
         settings=settings,
+        clock=clock,
     )
     return _envelope(user)
 
