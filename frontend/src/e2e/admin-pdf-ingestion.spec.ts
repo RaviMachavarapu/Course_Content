@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * PDF-only module: no link, one uploaded PDF. Requires the stack running with
@@ -25,7 +26,7 @@ test("admin creates a PDF-only module and artifacts become ready", async ({ page
   await expect(row.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await expect(row.getByRole("progressbar")).toHaveCount(0, { timeout: 30_000 });
 
-  await page.getByLabel("Course title").fill(`PDF E2E ${Date.now()}`);
+  await page.getByLabel("Course title").fill(`PDF E2E ${uniqueMarker()}`);
   await page.getByLabel("Module title").fill("PDF Module");
   // fast fixture types only: uncheck everything except the ones asserted below
   const wanted = ["flashcards", "quiz", "report"];

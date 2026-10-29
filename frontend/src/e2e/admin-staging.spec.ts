@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * T026 — Staging Review + Inspect. Requires the stack + a seeded admin.
@@ -19,7 +20,7 @@ test("redo regenerates only the chosen artifact", async ({ page }) => {
 
   // ingest with only the fast fixture types
   await page.getByLabel("Link (optional)").fill("https://www.youtube.com/watch?v=stg");
-  await page.getByLabel("Course title").fill(`Staging E2E ${Date.now()}`);
+  await page.getByLabel("Course title").fill(`Staging E2E ${uniqueMarker()}`);
   await page.getByLabel("Module title").fill("Staging Module");
   for (const t of ["slide_deck", "infographic"]) {
     await page.getByTestId(`type-${t}`).uncheck();
@@ -29,18 +30,21 @@ test("redo regenerates only the chosen artifact", async ({ page }) => {
 
   // wait for the four requested cards to reach a resolved state
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 30_000 });
+  // Redo is disabled while a card generates: all six enabled = nothing in flight
+  await expect(page.locator('[data-testid="btn-sr4"]:enabled')).toHaveCount(6);
 
   // Report card: redo with an instruction
   await page.getByRole("button", { name: "Redo Report" }).click();
   await page.getByRole("textbox").fill("Trim to one page");
   await page.getByTestId("btn-sr7").click();
 
-  // it flips to Generating, the others do not
-  await expect(page.getByText("Generating…")).toHaveCount(1);
-
-  // after it settles, the Report card shows rev 2
+  // the Report card settles on rev 2 and no other card regenerates. (The
+  // fixture provider can finish a redo before the next staging poll, so the
+  // transient "Generating…" state is not asserted.)
+  const reportCard = page.getByRole("button", { name: "Redo Report" }).locator("xpath=../..");
+  await expect(reportCard.getByText("rev 2")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 30_000 });
-  await expect(page.getByText("rev 2")).toBeVisible();
+  await expect(page.getByText(/^rev \d+$/)).toHaveCount(1);
 
   // Inspect the report → version history has two entries, redo note stored
   await page
@@ -61,5 +65,7 @@ test("redo regenerates only the chosen artifact", async ({ page }) => {
   await page.getByTestId("btn-publish-confirm").click();
 
   // the four ready cards now show the Published chip
-  await expect(page.locator('[data-status="published"]')).toHaveCount(4);
+  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(
+    4,
+  );
 });

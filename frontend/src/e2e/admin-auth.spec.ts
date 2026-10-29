@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * T012 — admin login + route protection. Requires the stack up and a seeded
@@ -26,7 +27,7 @@ test("admin can sign in and land on ingestion", async ({ page }) => {
 
 test("a student is blocked from /admin/* with a student 404 (US-N3)", async ({ page }) => {
   // sign in as a fresh student
-  const email = `e2e+adm${Date.now()}@example.com`;
+  const email = `e2e+adm${uniqueMarker()}@example.com`;
   await page.goto("/register");
   await page.getByLabel("Display name").fill("Blocked Student");
   await page.getByLabel("Email").fill(email);

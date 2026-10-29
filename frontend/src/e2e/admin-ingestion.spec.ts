@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * T025 — Ingestion Portal. Requires the stack up + a seeded admin.
@@ -18,9 +19,11 @@ async function login(page: import("@playwright/test").Page): Promise<void> {
 test("admin ingests a new source and lands on staging", async ({ page }) => {
   await login(page);
 
-  await expect(page.getByText(/NotebookLM: (Connected|Disconnected|Fixture \(dev\))/)).toBeVisible();
+  await expect(
+    page.getByText(/NotebookLM: (Connected|Disconnected|Fixture \(dev\))/),
+  ).toBeVisible();
 
-  const unique = `E2E Course ${Date.now()}`;
+  const unique = `E2E Course ${uniqueMarker()}`;
   await page.getByLabel("Link (optional)").fill("https://www.youtube.com/watch?v=e2e");
   await page.getByLabel("Course title").fill(unique);
   await page.getByLabel("Module title").fill("E2E Module");

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * T042 / spec.md §7 AC5 — the full student flow, scripted end-to-end in one
@@ -17,7 +18,7 @@ const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "dev-admin-password-123
 test("AC5: register -> catalog -> consume all six -> progress reflected", async ({ page }) => {
   test.setTimeout(180_000); // slide_deck's LibreOffice cold start on the worker
 
-  const marker = Date.now();
+  const marker = uniqueMarker();
   const courseTitle = `AC5 Acceptance ${marker}`;
 
   // --- admin: publish a course with all six artifact types ---
@@ -36,7 +37,9 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
 
   await page.getByTestId("btn-sr3").click();
   await page.getByTestId("btn-publish-confirm").click();
-  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(6);
+  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(
+    6,
+  );
 
   await page.getByTestId("btn-ig9").click();
   await page.getByRole("button", { name: "Log out" }).click();

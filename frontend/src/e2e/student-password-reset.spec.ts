@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * O6 — password reset, driven end-to-end through the real UI and the real
@@ -33,7 +34,7 @@ async function latestLinkFor(address: string): Promise<string> {
 }
 
 test("student can request and complete a real password reset", async ({ page }) => {
-  const email = `e2e+reset${Date.now()}@example.com`;
+  const email = `e2e+reset${uniqueMarker()}@example.com`;
   const oldPassword = "e2e-old-strong-pw-1";
   const newPassword = "e2e-new-strong-pw-2";
 

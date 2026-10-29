@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * T029 — Settings (A4). Requires the stack + a seeded admin.
@@ -28,7 +29,7 @@ test("edit a prompt version and manage admins", async ({ page }) => {
   const startVersion = Number((await versionLabel.textContent())!.match(/v(\d+)/)![1]);
 
   const quizBox = page.getByLabel("Quiz prompt");
-  await quizBox.fill(`${await quizBox.inputValue()}\nExtra guidance ${Date.now()}`);
+  await quizBox.fill(`${await quizBox.inputValue()}\nExtra guidance ${uniqueMarker()}`);
   await page.getByTestId("btn-st1-quiz").click();
 
   // the persisted version label bumps (more robust than the transient toast)
@@ -42,7 +43,7 @@ test("edit a prompt version and manage admins", async ({ page }) => {
 
   // Users tab — add an admin, then deactivate it
   await page.getByRole("tab", { name: "Users" }).click();
-  const newEmail = `e2e-admin-${Date.now()}@example.com`;
+  const newEmail = `e2e-admin-${uniqueMarker()}@example.com`;
   await page.getByTestId("btn-st5").click();
   await page.getByLabel("Email").fill(newEmail);
   await page.getByLabel("Display name").fill("E2E Admin");

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { uniqueMarker } from "./unique";
 
 /**
  * T011 happy path — register a brand-new student and land on the catalog.
@@ -6,7 +7,7 @@ import { expect, test } from "@playwright/test";
  * (default http://localhost:5173).
  */
 test("student can register and reach the catalog", async ({ page }) => {
-  const email = `e2e+${Date.now()}@example.com`;
+  const email = `e2e+${uniqueMarker()}@example.com`;
 
   await page.goto("/register");
   await page.getByLabel("Display name").fill("E2E Student");
