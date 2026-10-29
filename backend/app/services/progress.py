@@ -94,6 +94,14 @@ def record_artifact_progress(
 
 def course_percent(session: Session, *, user_id: uuid.UUID, course_id: uuid.UUID) -> int:
     """BR7, computed live: completed ÷ published artifacts of the course."""
+    done, total = _course_counts(session, user_id=user_id, course_id=course_id)
+    return round(100 * done / total) if total else 0
+
+
+def _course_counts(
+    session: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> tuple[int, int]:
+    """(completed, published) artifacts of the course for this student."""
     published_ids = set(
         session.scalars(
             select(Artifact.id)
@@ -103,7 +111,7 @@ def course_percent(session: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
     )
     total = len(published_ids)
     if not total:
-        return 0
+        return 0, 0
     done = (
         session.scalar(
             select(func.count())
@@ -116,7 +124,7 @@ def course_percent(session: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
         )
         or 0
     )
-    return round(100 * done / total)
+    return done, total
 
 
 def _recompute_course_progress(
@@ -126,23 +134,30 @@ def _recompute_course_progress(
     course_id: uuid.UUID,
     module_id: uuid.UUID,
 ) -> int:
-    percent = course_percent(session, user_id=user_id, course_id=course_id)
-    # upsert in one statement (two first writes in a course can't collide)
+    done, total = _course_counts(session, user_id=user_id, course_id=course_id)
+    percent = round(100 * done / total) if total else 0
+    # exact, not the rounded percentage (199 of 200 rounds to 100)
+    complete_now = _now() if total and done == total else None
+    # upsert in one statement (two first writes in a course can't collide);
+    # the badge stamp is kept once set (coalesce), whatever the percentage does
+    stmt = insert(CourseProgress).values(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        course_id=course_id,
+        percent_complete=percent,
+        last_module_id=module_id,
+        completed_at=complete_now,
+    )
     session.execute(
-        insert(CourseProgress)
-        .values(
-            id=uuid.uuid4(),
-            user_id=user_id,
-            course_id=course_id,
-            percent_complete=percent,
-            last_module_id=module_id,
-        )
-        .on_conflict_do_update(
+        stmt.on_conflict_do_update(
             constraint="uq_course_progress_user_course",
             set_={
                 "percent_complete": percent,
                 "last_module_id": module_id,
                 "updated_at": func.now(),
+                "completed_at": func.coalesce(
+                    CourseProgress.completed_at, stmt.excluded.completed_at
+                ),
             },
         )
     )

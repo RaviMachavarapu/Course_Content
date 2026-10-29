@@ -6,7 +6,7 @@ import datetime as dt
 import uuid
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import CurrentStudent, DbDep, current_student
@@ -125,37 +125,51 @@ def my_listening(db: DbDep, student: CurrentStudent) -> MyListeningResponse:
 
 
 def _course_complete_at(db: Session, user_id: uuid.UUID) -> dt.datetime | None:
-    """When the student first had every published artifact of some course
-    completed: the latest completion in that course (not a cached column whose
-    timestamp moves on every progress write). Derived live, so it agrees with
-    the catalog's percentage."""
-    rows = db.execute(
-        select(Module.course_id, Artifact.id)
-        .join(Artifact, Artifact.module_id == Module.id)
-        .where(
-            live_clause(),
-            Module.course_id.in_(
-                select(CourseProgress.course_id).where(CourseProgress.user_id == user_id)
-            ),
+    """When the student first earned "Course Complete" in any course. Once
+    earned it stays (owner decision 2026-10-29): the date is the stamp on
+    `course_progress.completed_at`, set by the progress write that completed
+    the course and never cleared. A course that became complete without a
+    progress write (a module the student hadn't finished was removed) is
+    stamped here the first time it is seen, with its latest completion."""
+    stamped = db.execute(
+        select(CourseProgress.id, CourseProgress.course_id, CourseProgress.completed_at).where(
+            CourseProgress.user_id == user_id
         )
     ).all()
-    completed: dict[uuid.UUID, dt.datetime] = {
-        artifact_id: at
-        for artifact_id, at in db.execute(
-            select(ArtifactProgress.artifact_id, ArtifactProgress.completed_at).where(
-                ArtifactProgress.user_id == user_id,
-                ArtifactProgress.completed_at.is_not(None),
+    earned = [at for _, _, at in stamped if at is not None]
+    unstamped = {course_id: row_id for row_id, course_id, at in stamped if at is None}
+    if unstamped:
+        rows = db.execute(
+            select(Module.course_id, Artifact.id)
+            .join(Artifact, Artifact.module_id == Module.id)
+            .where(live_clause(), Module.course_id.in_(unstamped))
+        ).all()
+        completed: dict[uuid.UUID, dt.datetime] = {
+            artifact_id: at
+            for artifact_id, at in db.execute(
+                select(ArtifactProgress.artifact_id, ArtifactProgress.completed_at).where(
+                    ArtifactProgress.user_id == user_id,
+                    ArtifactProgress.completed_at.is_not(None),
+                )
             )
-        )
-        if at is not None
-    }
-    by_course: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for course_id, artifact_id in rows:
-        by_course.setdefault(course_id, []).append(artifact_id)
-    earned: list[dt.datetime] = []
-    for artifact_ids in by_course.values():
-        if all(a in completed for a in artifact_ids):
-            earned.append(max(completed[a] for a in artifact_ids))
+            if at is not None
+        }
+        by_course: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for course_id, artifact_id in rows:
+            by_course.setdefault(course_id, []).append(artifact_id)
+        for course_id, artifact_ids in by_course.items():
+            if all(a in completed for a in artifact_ids):
+                at = max(completed[a] for a in artifact_ids)
+                db.execute(
+                    update(CourseProgress)
+                    .where(
+                        CourseProgress.id == unstamped[course_id],
+                        CourseProgress.completed_at.is_(None),
+                    )
+                    # a read: keep updated_at (it orders My Progress)
+                    .values(completed_at=at, updated_at=CourseProgress.updated_at)
+                )
+                earned.append(at)
     return min(earned, default=None)
 
 

@@ -149,7 +149,101 @@ def test_me_progress_and_badge_follow_newly_published_modules(
     catalog = client.get("/api/student/courses").json()["courses"]
     assert next(c for c in catalog if c["slug"] == course.slug)["percent_complete"] == 50
     assert me_percent() == 50  # without any new progress write
-    assert badge() is None  # agrees with the catalog
+    # the badge stays once earned, with its original date (owner decision 2026-10-29)
+    assert badge() == first
+    # a progress write at 50% doesn't revoke it or move the date either
+    client.put(f"/api/student/artifacts/{report.id}/progress", json={"slide_last_index": 2})
+    assert me_percent() == 50
+    assert badge() == first
+
+
+def test_course_complete_badge_survives_a_republished_deck(
+    client: TestClient, db_session: Session
+) -> None:
+    course = Course(title="Badge FC", slug=f"bfc-{uuid.uuid4()}")
+    module = _module(db_session, course, 0, [ArtifactType.flashcards])
+    deck = _artifact(module, ArtifactType.flashcards)
+    _student(client)
+    client.put(f"/api/student/artifacts/{deck.id}/progress", json={"completed": True})
+
+    def badge() -> dict[str, object] | None:
+        earned = client.get("/api/student/me/achievements").json()["earned"]
+        return next((b for b in earned if b["key"] == "course_complete"), None)
+
+    first = badge()
+    assert first is not None and first["earned_at"] is not None
+
+    orchestrator.run_artifact_generation(db_session, PROVIDER, deck.id, redo_note="new deck")
+    db_session.expire_all()
+    module = db_session.get(Module, module.id)
+    assert module is not None
+    publish_module(db_session, module)
+    db_session.flush()
+    assert client.get(f"/api/student/artifacts/{deck.id}").json()["completed"] is False
+    assert badge() == first
+
+    # completing the new deck later doesn't move the earned date
+    client.put(f"/api/student/artifacts/{deck.id}/progress", json={"completed": True})
+    assert badge() == first
+
+
+def test_course_complete_stamped_by_the_completing_write(
+    client: TestClient, db_session: Session
+) -> None:
+    course = Course(title="Stamp", slug=f"stamp-{uuid.uuid4()}")
+    module = _module(db_session, course, 0, [ArtifactType.report, ArtifactType.quiz])
+    report = _artifact(module, ArtifactType.report)
+    quiz = _artifact(module, ArtifactType.quiz)
+    _student(client)
+
+    def stamp() -> object:
+        db_session.expire_all()
+        return db_session.scalar(
+            select(CourseProgress.completed_at).where(CourseProgress.course_id == course.id)
+        )
+
+    client.put(f"/api/student/artifacts/{report.id}/progress", json={"completed": True})
+    assert stamp() is None  # 1 of 2
+    client.put(f"/api/student/artifacts/{quiz.id}/progress", json={"completed": True})
+    first = stamp()
+    assert first is not None
+    _module(db_session, course, 1, [ArtifactType.report])
+    client.put(f"/api/student/artifacts/{report.id}/progress", json={"slide_last_index": 3})
+    assert stamp() == first
+
+
+def test_course_complete_without_a_write_is_stamped_once_seen(
+    client: TestClient, db_session: Session
+) -> None:
+    """A course that became complete because an unfinished module was removed
+    gets its badge on the next look, and keeps it after more modules appear."""
+    course = Course(title="Removed", slug=f"rm-{uuid.uuid4()}")
+    m1 = _module(db_session, course, 0, [ArtifactType.report])
+    m2 = _module(db_session, course, 1, [ArtifactType.report])
+    report = _artifact(m1, ArtifactType.report)
+    _student(client)
+    client.put(f"/api/student/artifacts/{report.id}/progress", json={"completed": True})
+
+    def badge() -> dict[str, object] | None:
+        earned = client.get("/api/student/me/achievements").json()["earned"]
+        return next((b for b in earned if b["key"] == "course_complete"), None)
+
+    assert badge() is None
+    db_session.delete(m2)
+    db_session.flush()
+    first = badge()
+    assert first is not None
+    db_session.expire_all()
+    row = db_session.scalars(
+        select(CourseProgress).where(CourseProgress.course_id == course.id)
+    ).one()
+    done_at = db_session.scalar(
+        select(ArtifactProgress.completed_at).where(ArtifactProgress.artifact_id == report.id)
+    )
+    assert row.completed_at == done_at
+
+    _module(db_session, course, 2, [ArtifactType.report])
+    assert badge() == first
 
 
 # -- concurrent first writes (real connections, committed and cleaned up) -----
