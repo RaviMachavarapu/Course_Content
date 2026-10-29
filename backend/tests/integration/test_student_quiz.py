@@ -207,6 +207,7 @@ def _add_set(
     created_at: dt.datetime | None = None,
     heartbeat_at: dt.datetime | None = None,
     questions: list[dict[str, Any]] | None = None,
+    prepared_for: dict[str, str] | None = None,
 ) -> QuizQuestionSet:
     qs = QuizQuestionSet(
         artifact_id=uuid.UUID(ctx.quiz_id),
@@ -214,7 +215,9 @@ def _add_set(
         source=QuizSetSource.chat,
         status=status,
         questions=_chat_questions() if questions is None else questions,
-        validation_report={},
+        validation_report={
+            "prepared_for": prepared_for or {"language": "en", "difficulty": "medium"}
+        },
         heartbeat_at=heartbeat_at,
     )
     if created_at is not None:
@@ -854,3 +857,91 @@ def test_open_attempt_without_stored_order_keeps_the_stored_order(
     done = _complete(client, aid).json()
     assert done["score_percent"] == 100.0
     assert done["review"][0]["options"] == ctx.questions[0]["options"]
+
+
+# -- the quiz's language and difficulty (owner decision 2026-10-29) ------------------------
+
+
+def _set_quiz_options(db: Session, ctx: Ctx, **options: str) -> None:
+    quiz = db.get(Artifact, uuid.UUID(ctx.quiz_id))
+    assert quiz is not None
+    quiz.generation_options = {**quiz.generation_options, **options}
+    db.flush()
+
+
+@pytest.mark.parametrize("status", [QuizSetStatus.ready, QuizSetStatus.preparing])
+def test_a_set_for_another_language_is_discarded_and_the_retake_waits(
+    status: QuizSetStatus,
+    client: TestClient,
+    db_session: Session,
+    enqueued: list[tuple[str, str]],
+) -> None:
+    """The admin switched the quiz to Tamil after the student's English set was prepared:
+    the English set is never served; a Tamil one is prepared (202, not "unavailable")."""
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    english = _add_set(db_session, ctx, status, heartbeat_at=dt.datetime.now(dt.UTC))
+    _set_quiz_options(db_session, ctx, language="ta")
+    enqueued.clear()
+
+    resp = _start(client, ctx)
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["status"] == "preparing"
+    assert enqueued == [(ctx.quiz_id, str(ctx.student_id))]
+    db_session.refresh(english)
+    assert english.status is QuizSetStatus.failed
+    assert english.validation_report["discarded"] is True
+
+    # the next poll, before the task has inserted the new set, still says "preparing"
+    again = _start(client, ctx)
+    assert again.status_code == 202 and again.json()["status"] == "preparing"
+
+
+def test_a_set_without_a_recorded_language_is_discarded(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    """Sets prepared before this change (English prompt, no record) are replaced."""
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    legacy = _add_set(db_session, ctx, QuizSetStatus.ready)
+    legacy.validation_report = {}
+    db_session.flush()
+    assert _start(client, ctx).status_code == 202
+    db_session.refresh(legacy)
+    assert legacy.status is QuizSetStatus.failed
+
+
+def test_a_set_for_another_difficulty_is_discarded(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    _add_set(db_session, ctx, QuizSetStatus.ready)
+    _set_quiz_options(db_session, ctx, difficulty="hard")
+    assert _start(client, ctx).status_code == 202
+
+
+def test_a_set_for_the_quiz_language_and_difficulty_is_served(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    _set_quiz_options(db_session, ctx, language="hi", difficulty="easy")
+    hindi = _add_set(
+        db_session, ctx, QuizSetStatus.ready, prepared_for={"language": "hi", "difficulty": "easy"}
+    )
+    resp = _start(client, ctx)
+    assert resp.status_code == 201 and resp.json()["source"] == "chat"
+    assert _attempt_set(db_session, resp.json()["attempt_id"]).id == hindi.id
+
+
+def test_a_real_failure_after_a_discard_still_reports_unavailable(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    _add_set(db_session, ctx, QuizSetStatus.ready)
+    _set_quiz_options(db_session, ctx, language="kn")
+    assert _start(client, ctx).status_code == 202  # discarded
+    _add_set(db_session, ctx, QuizSetStatus.failed)  # then the Kannada preparation failed
+    assert _start(client, ctx).status_code == 409

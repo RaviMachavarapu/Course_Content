@@ -7,6 +7,9 @@ Flow: start (or resume) an attempt → check one answer at a time → complete.
   `app.tasks.quiz.prepare_quiz_set`); the set is marked `used` in the same commit
   that creates the attempt. With the module's fresh-retakes switch off, retakes
   reuse the Studio quiz.
+- A ready or preparing chat set prepared for another language or difficulty than the
+  quiz's current options is discarded first (`discard_stale_sets`); the student waits
+  for a new one ("Preparing new questions…").
 - Every started attempt enqueues preparation of the student's next set, after
   the commit.
 
@@ -53,7 +56,7 @@ from app.schemas.student import (
 )
 from app.services.progress import record_artifact_progress
 from app.services.quiz_generation import fill_blank_correct
-from app.tasks.quiz import enqueue_prepare, studio_questions
+from app.tasks.quiz import discard_stale_sets, enqueue_prepare, studio_questions
 
 router = APIRouter(
     prefix="/api/student",
@@ -245,6 +248,8 @@ def _latest_chat_status(
             QuizQuestionSet.artifact_id == artifact_id,
             QuizQuestionSet.user_id == user_id,
             QuizQuestionSet.source == QuizSetSource.chat,
+            # a set discarded for a changed language/difficulty is not a failure
+            ~QuizQuestionSet.validation_report.has_key("discarded"),
         )
         .order_by(desc(QuizQuestionSet.created_at))
         .limit(1)
@@ -309,6 +314,7 @@ def start_attempt(
 
     qs: QuizQuestionSet | None = None
     if previous > 0 and fresh:
+        discard_stale_sets(db, artifact, uid)
         qs = _chat_set(db, artifact.id, uid, QuizSetStatus.ready)
         if qs is None:
             preparing = _chat_set(db, artifact.id, uid, QuizSetStatus.preparing)

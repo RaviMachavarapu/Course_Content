@@ -867,3 +867,156 @@ def test_pdf_only_module_still_drops_a_quote_not_in_the_pdfs() -> None:
         source_text="the quick fox",
     )
     assert kept == [] and dropped[0]["reason"] == "quote: not found in the sources"
+
+
+# -- the quiz's language and difficulty (owner decision 2026-10-29) ----------------
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [("en", "English"), ("hi", "Hindi"), ("te", "Telugu"), ("ta", "Tamil"), ("kn", "Kannada"),
+     ("mr", "Marathi")],
+)  # fmt: skip
+def test_prompt_asks_for_everything_in_the_quiz_language(code: str, name: str) -> None:
+    p = qg.build_prompt(10, ["seen?"], language=code, difficulty="easy")
+    assert f"Write every question, option, answer, accepted answer and explanation in {name}," in p
+    # the proof quote stays verbatim, in the source's own language
+    assert "exactly as it is written in the source, in the source's own language" in p
+    assert f"never translate it into {name}" in p
+    assert "difficulty: easy: recall" in p
+
+
+@pytest.mark.parametrize("difficulty", ["easy", "medium", "hard"])
+def test_prompt_states_the_difficulty(difficulty: str) -> None:
+    p = qg.build_prompt(10, [], language="ta", difficulty=difficulty)
+    assert f"at this difficulty: {qg.DIFFICULTY_GUIDE[difficulty]}." in p
+
+
+def test_prompt_defaults_to_english_medium() -> None:
+    p = qg.build_prompt(10, [])
+    assert "explanation in English" in p and "difficulty: medium" in p
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (None, {"language": "en", "difficulty": "medium"}),
+        ({}, {"language": "en", "difficulty": "medium"}),
+        ({"language": "ta", "difficulty": "hard", "quantity": "more"},
+         {"language": "ta", "difficulty": "hard"}),
+        ({"language": "xx", "difficulty": "insane"}, {"language": "en", "difficulty": "medium"}),
+    ],
+)  # fmt: skip
+def test_prepared_for(options: dict[str, Any] | None, expected: dict[str, str]) -> None:
+    assert qg.prepared_for(options) == expected
+
+
+# -- non-Latin scripts: Tamil, Telugu, Kannada, Hindi and Marathi (Devanagari) -----------
+
+TAMIL = "தமிழ்"  # vowel sign + virama: combining marks
+HINDI = "प्रकाश संश्लेषण"
+TELUGU = "కిరణజన్య సంయోగక్రియ"
+KANNADA = "ದ್ಯುತಿಸಂಶ್ಲೇಷಣೆ"
+MARATHI = "प्रकाशसंश्लेषण"
+
+
+@pytest.mark.parametrize("word", [TAMIL, HINDI, TELUGU, KANNADA, MARATHI])
+def test_indic_words_stay_whole_when_normalised(word: str) -> None:
+    assert qg.normalize_text(f"«{word}»!") == word
+    assert qg._dup_key(word)[0] == word
+
+
+@pytest.mark.parametrize("word", [TAMIL, HINDI, TELUGU, KANNADA, MARATHI, "ऑक्सीजन", "நீர்"])
+def test_indic_answers_are_not_formulas(word: str) -> None:
+    assert not qg.is_formula_answer(word)
+    assert not qg.is_formula_answer(word + "।")
+    kept, dropped = qg.validate(
+        [blank(question="பதில் ____ ஆகும்.", answer=word, accepted_answers=[word + "।"])],
+        seen=[],
+        source_text=None,
+    )
+    assert len(kept) == 1, dropped
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("ऑक्सीजन।", "ऑक्सीजन"),  # danda is sentence punctuation
+        ("ऑक्सीजन ॥", "ऑक्सीजन"),
+        ("“ऑक्सीजन”.", "ऑक्सीजन"),
+        ("  நீர்  ", "நீர்"),
+        ("५०", "50"),  # Devanagari digits
+        ("௫௦", "50"),  # Tamil digits
+        ("౫౦ %", "50 %"),  # Telugu digits
+    ],
+)
+def test_normalize_answer_in_indic_scripts(typed: str, expected: str) -> None:
+    assert qg.normalize_answer(typed) == expected
+
+
+def test_indic_fill_blank_grading() -> None:
+    q = blank(question="जल हाइड्रोजन और ____ से बना है।", answer="ऑक्सीजन", accepted_answers=[])
+    assert qg.fill_blank_correct(q, "ऑक्सीजन।")
+    assert qg.fill_blank_correct(q, " ऑक्सीजन ")
+    assert not qg.fill_blank_correct(q, "हाइड्रोजन")
+    # a zero-width joiner / non-joiner typed by an Indic keyboard does not matter
+    mr = blank(answer="र्‍हास", accepted_answers=[])  # Marathi eyelash ra: र + ् + ZWJ
+    assert qg.fill_blank_correct(mr, "र्हास")
+    te = blank(answer="నోట్స్‌లో", accepted_answers=[])  # ZWNJ
+    assert qg.fill_blank_correct(te, "నోట్స్లో")
+    # a native-digit answer accepts ASCII digits and vice versa
+    n = blank(answer="१००", accepted_answers=[])
+    assert qg.fill_blank_correct(n, "100") and qg.fill_blank_correct(n, "१००।")
+    # mixed: an English term inside a Tamil answer keeps the usual case rules (spec 4.4)
+    dna = blank(answer="DNA மூலக்கூறு", accepted_answers=[])
+    assert qg.fill_blank_correct(dna, "DNA மூலக்கூறு।")
+    assert not qg.fill_blank_correct(dna, "dna மூலக்கூறு")  # inner capital: case matters
+    cell = blank(answer="Cell சவ்வு", accepted_answers=[])
+    assert qg.fill_blank_correct(cell, "cell சவ்வு")
+
+
+def test_indic_quote_matching() -> None:
+    source = "प्रकाश संश्लेषण में पौधे सूर्य के प्रकाश से भोजन बनाते हैं। यह क्लोरोफिल की मदद से होता है।"
+    ok = mcq(source_quote="पौधे सूर्य के प्रकाश से भोजन बनाते हैं।")
+    wrong = mcq(question="Other?", source_quote="पौधे चंद्रमा के प्रकाश से भोजन बनाते हैं")
+    kept, dropped = qg.validate([ok, wrong], seen=[], source_text=source)
+    assert [q["source_quote"] for q in kept] == [ok["source_quote"]]
+    assert reasons(dropped) == ["quote: not found in the sources"]
+    tamil = "ஒளிச்சேர்க்கையின் போது தாவரங்கள் கார்பன் டை ஆக்சைடை உறிஞ்சுகின்றன."
+    kept, _ = qg.validate(
+        [mcq(source_quote="தாவரங்கள் கார்பன் டை ஆக்சைடை உறிஞ்சுகின்றன")],
+        seen=[],
+        source_text=tamil,
+    )
+    assert len(kept) == 1
+
+
+def test_indic_near_duplicates() -> None:
+    seen = ["ஃபிக்ஸ்சர் குறிப்புகளின்படி 12 இன் வர்க்கம் என்ன?"]
+    same = mcq(question="ஃபிக்ஸ்சர் குறிப்புகளின்படி 12 இன் வர்க்கம் என்ன")
+    kept, dropped = qg.validate([same], seen=seen, source_text=None)
+    assert kept == [] and reasons(dropped)[0].startswith("duplicate")
+    # numbers in native digits are part of the signature: 5 vs 6 is not a duplicate
+    seen = ["५ का वर्ग क्या है?"]
+    kept, _ = qg.validate([mcq(question="६ का वर्ग क्या है?")], seen=seen, source_text=None)
+    assert len(kept) == 1
+
+
+def test_indic_mcq_options_distinct() -> None:
+    q = mcq(options=["நீர்", "நார்", "நிர்", "நேர்"], correct_index=0)
+    kept, dropped = qg.validate([q], seen=[], source_text=None)
+    assert len(kept) == 1, dropped
+
+
+@pytest.mark.parametrize("language", ["hi", "mr", "ta", "te", "kn"])
+def test_fixture_chat_answers_in_the_asked_language(language: str) -> None:
+    p = FixtureProvider()
+    nb = NotebookRef(notebook_id="fixture-nb-m-fixture-quiz-10")
+    answer = p.query(nb, qg.build_prompt(10, [], language=language))
+    questions = qg.parse_questions(answer)
+    kept, dropped = qg.validate(questions, seen=[], source_text=None)
+    assert len(kept) == 10 and dropped == []
+    assert all(not q["question"].isascii() for q in kept)
+    assert all(q["source_quote"].isascii() for q in kept)  # verbatim English source
+    blanks = [q for q in kept if q["type"] == "fill_blank"]
+    assert blanks and all(qg.fill_blank_correct(q, q["answer"]) for q in blanks)

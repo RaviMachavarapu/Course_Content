@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from pypdf import PdfReader
 
+from app.schemas.content_options import LANGUAGE_NAMES
 from app.storage import service as storage_service
 
 if TYPE_CHECKING:
@@ -53,7 +54,33 @@ BLANK = "____"
 FORMULA_REASON = "answer: formula — ask as multiple-choice"
 MIN_QUOTE_WORDS = 5
 MIN_QUOTE_CHARS = 20
-_NON_ALNUM_RE = re.compile(r"[\W_]+")
+
+
+def _mark_ranges() -> str:
+    """A regex class body of every combining mark (Unicode category M) in the BMP: the
+    vowel signs and viramas of Indic scripts. `re`'s `\\w` does not match them, so
+    without these "தமிழ்" would split into "தம ழ" (spec §4.3, non-Latin languages)."""
+    ranges: list[str] = []
+    start = prev = -2
+    for cp in range(0x300, 0x10000):
+        if unicodedata.category(chr(cp)).startswith("M"):
+            if cp != prev + 1:
+                if start >= 0:
+                    ranges.append(f"\\u{start:04x}-\\u{prev:04x}")
+                start = cp
+            prev = cp
+    ranges.append(f"\\u{start:04x}-\\u{prev:04x}")
+    return "".join(ranges)
+
+
+_MARKS = _mark_ranges()
+#: a run of characters that are neither word characters nor combining marks (or `_`)
+_NON_ALNUM_RE = re.compile(f"(?:[^\\w{_MARKS}]|_)+")
+#: zero-width characters typed (or not) inside Indic words: ZWSP, ZWNJ, ZWJ, word joiner,
+#: BOM — dropped before any comparison
+_ZERO_WIDTH_RE = re.compile("[\u200b-\u200d\u2060\ufeff]")
+#: sentence punctuation of Indic scripts: danda and double danda
+_DANDAS = "\u0964\u0965"
 _WS_RE = re.compile(r"\s+")
 _DELIMITERS = ("\\(", "\\)", "\\[", "\\]", "$")
 _LTX_WRAP_RE = re.compile(
@@ -71,7 +98,7 @@ _SYMBOL_WS_RE = re.compile(
     r"\s*([\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a=<>+/^-])\s*"
 )
 _SIGNATURE_RE = re.compile(
-    r"[0-9<>=+^_\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a\u0370-\u03ff]"
+    r"[\d<>=+^_\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a\u0370-\u03ff]"
 )
 _CONTROL_RE = re.compile(r"[\x00-\x09\x0b-\x1f]")
 #: a JSON `\n` escape directly followed by a letter: LaTeX `\nu`, `\neq`, `\nabla`
@@ -104,16 +131,43 @@ _SUB = dict(zip("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎", "0123456789+-=(
 # -- prompt ---------------------------------------------------------------------
 
 
-def build_prompt(n: int, avoid: list[str]) -> str:
-    """The chat query for `n` new questions (~60% MCQ). `avoid`: the student's seen
-    question texts, most recent first (at most `MAX_AVOID` are listed)."""
+#: what each admin-chosen quiz difficulty asks of the questions (QuizOptions.difficulty)
+DIFFICULTY_GUIDE = {
+    "easy": "easy: recall of facts, terms and definitions stated directly in the sources",
+    "medium": "medium: understanding and applying the ideas in the sources",
+    "hard": (
+        "hard: multi-step reasoning, analysis, and connecting ideas from different parts "
+        "of the sources"
+    ),
+}
+
+
+def prepared_for(options: dict[str, Any] | None) -> dict[str, str]:
+    """The language and difficulty a quiz's fresh sets are written in: the admin's choice
+    for the quiz (`Artifact.generation_options`, QuizOptions), defaults en / medium."""
+    options = options or {}
+    language = options.get("language")
+    difficulty = options.get("difficulty")
+    return {
+        "language": language if language in LANGUAGE_NAMES else "en",
+        "difficulty": difficulty if difficulty in DIFFICULTY_GUIDE else "medium",
+    }
+
+
+def build_prompt(
+    n: int, avoid: list[str], *, language: str = "en", difficulty: str = "medium"
+) -> str:
+    """The chat query for `n` new questions (~60% MCQ) written in `language` (a `Language`
+    code) at `difficulty` (easy / medium / hard; the quiz's admin-chosen options). `avoid`:
+    the student's seen question texts, most recent first (at most `MAX_AVOID` are listed)."""
     n_mcq = round(n * MCQ_SHARE)
     n_blank = n - n_mcq
+    name = LANGUAGE_NAMES.get(language, "English")
     parts = [
         f"Create {n} NEW quiz questions strictly from the sources: {n_mcq} multiple-choice "
         "(exactly 4 distinct options, exactly one correct) and "
         f"{n_blank} fill-in-the-blank (one blank written as ____; the answer is a single word, a "
-        "short phrase or a plain number taken from the source, never a formula, equation, "
+        "short phrase or a plain number stated in the source, never a formula, equation, "
         "chemical formula or symbol). Any question whose answer is a formula, equation, "
         "chemical formula or symbol must be multiple-choice instead. In accepted_answers list the "
         "common acceptable variants of a fill-in-the-blank answer (plural or singular, alternative "
@@ -121,7 +175,11 @@ def build_prompt(n: int, avoid: list[str]) -> str:
         "Write every formula, chemical formula and symbol in LaTeX between \\( and \\), "
         "copied exactly from the source. Because the answer is JSON, write every backslash "
         'inside a JSON string doubled, e.g. "\\\\(\\\\text{sp}^2\\\\)" for \\(\\text{sp}^2\\).',
-        "For each question include a short verbatim quote from the source that proves the answer.",
+        f"Write every question, option, answer, accepted answer and explanation in {name}, "
+        f"at this difficulty: {DIFFICULTY_GUIDE.get(difficulty, DIFFICULTY_GUIDE['medium'])}.",
+        "For each question include a short verbatim quote from the source that proves the answer; "
+        f"copy the quote exactly as it is written in the source, in the source's own language "
+        f"(never translate it into {name}).",
     ]
     seen = [_WS_RE.sub(" ", a).strip()[:300] for a in avoid[:MAX_AVOID] if a.strip()]
     if seen:
@@ -136,7 +194,7 @@ def build_prompt(n: int, avoid: list[str]) -> str:
         '{"type":"fill_blank","question":"... ____ ...","answer":"...","accepted_answers":["..."],'
         '"explanation":"...","source_quote":"..."}]'
     )
-    return " ".join(parts[:3]) + "\n\n" + "\n\n".join(parts[3:])
+    return " ".join(parts[:4]) + "\n\n" + "\n\n".join(parts[4:])
 
 
 # -- parse ----------------------------------------------------------------------
@@ -269,7 +327,7 @@ def _lower(s: str) -> str:
 def normalize_text(s: str) -> str:
     """LaTeX translated (unknown commands dropped), lowercase, every run of non-alphanumerics
     -> one space (quote matching)."""
-    text = _translate(unicodedata.normalize("NFKC", s), "drop")[0]
+    text = _translate(_fold(s), "drop")[0]
     return _NON_ALNUM_RE.sub(" ", _lower(text)).strip()
 
 
@@ -277,10 +335,11 @@ def _dup_key(s: str) -> tuple[str, str]:
     """(text key, signature) for duplicate detection. The key keeps ^ and comparison
     symbols; the signature is just digits, symbols and Greek letters in order, so
     `\\Delta G < 0` and `\\Delta G > 0` are never duplicates."""
-    text = _translate(unicodedata.normalize("NFKC", s), "drop")[0]
+    text = _translate(_fold(s), "drop")[0]
     text = _lower(text).replace("{", "").replace("}", "")
     text = re.sub(
-        r"[^\w<>=+^\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a]+",
+        f"[^\\w{_MARKS}"
+        r"<>=+^\u00b1\u2213\u2264\u2265\u2260\u2248\u00d7\u00b7\u00f7\u2192\u2190\u21cc\u221e\u00b0\u2202\u2207\u2211\u222b\u221a]+",
         " ",
         text,
     )
@@ -321,16 +380,26 @@ _CHAR_MAP = str.maketrans(
     }
 )
 _QUOTES = "\"'«»"
-_TRAILING_PUNCT = ".,;:!?" + _QUOTES
+_TRAILING_PUNCT = ".,;:!?" + _DANDAS + _QUOTES
 _LEADING_DOT_RE = re.compile(r"(?<![\w.])\.(?=\d)")
 _LETTER_DIGIT_RE = re.compile(r"[^\W\d_]\d")
 _FORMULA_CHARS = frozenset("$\\^_{}√/")
-_PLAIN_PUNCT = frozenset(" -+.,%°'")
+_PLAIN_PUNCT = frozenset(" -+.,%°'" + _DANDAS)
+
+
+def _fold(s: str) -> str:
+    """NFKC, zero-width characters dropped, every decimal digit (Devanagari ५, Tamil ௫,
+    Telugu ౫ ...) -> its ASCII digit."""
+    t = _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", s))
+    if t.isascii():
+        return t
+    return "".join(str(unicodedata.decimal(c)) if c.isdecimal() else c for c in t)
 
 
 def _canonical(s: str) -> str:
-    """NFKC, then curly quotes/apostrophes and primes -> straight, minus and en dash -> `-`."""
-    return unicodedata.normalize("NFKC", s).translate(_CHAR_MAP)
+    """`_fold`, then curly quotes/apostrophes and primes -> straight, minus and en dash
+    -> `-`."""
+    return _fold(s).translate(_CHAR_MAP)
 
 
 def _strip_trailing(t: str) -> str:

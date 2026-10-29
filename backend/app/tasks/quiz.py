@@ -18,6 +18,13 @@ retried with exponential back-off (30 s, 1, 2, 4, 8 min); the set stays `prepari
 meanwhile and is marked `failed` when the retries run out. Artifact status is never
 touched.
 
+Language and difficulty: a set is written in the language and at the difficulty the admin
+chose for the quiz (`Artifact.generation_options`), recorded on the set as
+`validation_report["prepared_for"]`. A `preparing` or `ready` set whose `prepared_for` no
+longer matches the quiz's options (or has none: prepared before this rule) is discarded
+(`failed`, `validation_report["discarded"]`) by `discard_stale_sets` — here before claiming,
+and by the student API before serving — and a new one is prepared.
+
 Heartbeat: the task stamps `heartbeat_at` on its set when it claims (or resumes) it,
 before each chat round and before scheduling a retry. A `preparing` set silent for
 `STALE_AFTER` (its worker died; `heartbeat_at`, else `created_at`) is failed and replaced
@@ -105,6 +112,8 @@ class _Job:
     source_text: str | None
     #: the module also has a link: quotes not in its PDFs are kept, flagged
     link_source: bool = False
+    language: str = "en"
+    difficulty: str = "medium"
 
 
 @dataclass
@@ -152,6 +161,54 @@ def seen_questions(
             if isinstance(t, str) and t.strip() and t not in texts:
                 texts.append(t)
     return texts if limit is None else texts[:limit]
+
+
+def wanted_for(artifact: Artifact) -> dict[str, str]:
+    """The language and difficulty the quiz's fresh sets must be prepared for."""
+    return qg.prepared_for(artifact.generation_options)
+
+
+def discard_stale_sets(db: Session, artifact: Artifact, user_id: uuid.UUID) -> int:
+    """Discard the student's `preparing`/`ready` chat sets prepared for another language or
+    difficulty than the quiz's current options (row-locked; a task still filling a discarded
+    set finds it no longer `preparing` and stops as "superseded"). Returns how many."""
+    wanted = wanted_for(artifact)
+    pending = db.scalars(
+        select(QuizQuestionSet)
+        .where(
+            QuizQuestionSet.artifact_id == artifact.id,
+            QuizQuestionSet.user_id == user_id,
+            QuizQuestionSet.source == QuizSetSource.chat,
+            QuizQuestionSet.status.in_([QuizSetStatus.preparing, QuizSetStatus.ready]),
+        )
+        .with_for_update()
+    ).all()
+    discarded = 0
+    for qs in pending:
+        report = qs.validation_report if isinstance(qs.validation_report, dict) else {}
+        had = report.get("prepared_for")
+        if had == wanted:
+            continue
+        was = f"{had['language']}/{had['difficulty']}" if isinstance(had, dict) else "unknown"
+        qs.status = QuizSetStatus.failed
+        qs.validation_report = {
+            **report,
+            "discarded": True,
+            "error": (
+                f"discarded: prepared for {was}; the quiz is now "
+                f"{wanted['language']}/{wanted['difficulty']}"
+            ),
+        }
+        discarded += 1
+        log.info(
+            "quiz.stale_set_discarded",
+            set_id=str(qs.id),
+            prepared_for=was,
+            wanted=f"{wanted['language']}/{wanted['difficulty']}",
+        )
+    if discarded:
+        db.flush()
+    return discarded
 
 
 def enqueue_prepare(artifact_id: uuid.UUID | str, user_id: uuid.UUID | str) -> None:
@@ -250,8 +307,11 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
         existing = db.get(QuizQuestionSet, set_id, with_for_update=True)
         if existing is None or existing.status is not QuizSetStatus.preparing:
             raise _Done("exists")
-        existing.heartbeat_at = func.now()
-        return set_id
+        artifact = db.get(Artifact, aid)
+        if artifact is None or not discard_stale_sets(db, artifact, uid):
+            existing.heartbeat_at = func.now()
+            return set_id
+        # the quiz's language/difficulty changed meanwhile: prepare a new set instead
 
     artifact = db.get(Artifact, aid)
     if artifact is None or artifact.type is not ArtifactType.quiz:
@@ -259,7 +319,9 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
     if not artifact.module.quiz_fresh_retakes:
         raise _Done("off")
 
-    new_id = _insert_preparing(db, aid, uid)
+    discard_stale_sets(db, artifact, uid)
+    wanted = wanted_for(artifact)
+    new_id = _insert_preparing(db, aid, uid, wanted)
     if new_id is not None:
         return new_id
     pending = db.scalars(
@@ -280,15 +342,18 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
     pending.validation_report = {"error": "abandoned: preparation did not finish"}
     db.flush()
     log.warning("quiz.abandoned_set_replaced", set_id=str(pending.id))
-    new_id = _insert_preparing(db, aid, uid)
+    new_id = _insert_preparing(db, aid, uid, wanted)
     if new_id is None:
         raise _Done("exists")
     return new_id
 
 
-def _insert_preparing(db: Session, aid: uuid.UUID, uid: uuid.UUID) -> uuid.UUID | None:
-    """Insert a `preparing` chat set; None when one is already preparing or ready (a
-    concurrent insert waits for the other transaction, then does nothing)."""
+def _insert_preparing(
+    db: Session, aid: uuid.UUID, uid: uuid.UUID, wanted: dict[str, str]
+) -> uuid.UUID | None:
+    """Insert a `preparing` chat set for `wanted` (language, difficulty); None when one is
+    already preparing or ready (a concurrent insert waits for the other transaction, then
+    does nothing)."""
     stmt = (
         pg_insert(QuizQuestionSet)
         .values(
@@ -298,7 +363,7 @@ def _insert_preparing(db: Session, aid: uuid.UUID, uid: uuid.UUID) -> uuid.UUID 
             source=QuizSetSource.chat,
             status=QuizSetStatus.preparing,
             questions=[],
-            validation_report={},
+            validation_report={"prepared_for": wanted},
             heartbeat_at=func.now(),
         )
         .on_conflict_do_nothing(
@@ -340,6 +405,9 @@ def _load_job(db: Session, set_id: uuid.UUID, aid: uuid.UUID, uid: uuid.UUID) ->
     if artifact is None:  # deleted meanwhile; the set went with it (cascade)
         raise _Done("skipped")
     module = artifact.module
+    qs = db.get(QuizQuestionSet, set_id)
+    recorded = qs.validation_report.get("prepared_for") if qs is not None else None
+    wanted = qg.prepared_for(recorded if isinstance(recorded, dict) else None)
     source_text = qg.module_source_text(module) if module.notebooklm_notebook_id else None
     return _Job(
         set_id=set_id,
@@ -348,6 +416,8 @@ def _load_job(db: Session, set_id: uuid.UUID, aid: uuid.UUID, uid: uuid.UUID) ->
         notebook_id=module.notebooklm_notebook_id,
         source_text=source_text,
         link_source=bool(module.source_url),
+        language=wanted["language"],
+        difficulty=wanted["difficulty"],
     )
 
 
@@ -391,7 +461,8 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
     report: dict[str, Any] = {"requested": job.n, "seen": len(job.seen), "rounds": []}
 
     _beat_or_stop(job.set_id)
-    parsed = qg.parse_questions(provider.query(nb, qg.build_prompt(job.n, job.seen)))
+    style = {"language": job.language, "difficulty": job.difficulty}
+    parsed = qg.parse_questions(provider.query(nb, qg.build_prompt(job.n, job.seen, **style)))
     kept, dropped, unverified = _validate(job, parsed, job.seen)
     report["rounds"].append(_round(1, job.n, parsed, kept, dropped, unverified))
 
@@ -400,7 +471,7 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
         kept_texts = [q["question"] for q in kept]
         _beat_or_stop(job.set_id)
         try:
-            answer = provider.query(nb, qg.build_prompt(short, kept_texts + job.seen))
+            answer = provider.query(nb, qg.build_prompt(short, kept_texts + job.seen, **style))
         except (ProviderError, httpx.TransportError) as exc:
             if len(kept) < qg.min_served(job.n):
                 raise  # transient: retry the whole preparation; otherwise the set fails
@@ -443,5 +514,6 @@ def _write(set_id: uuid.UUID, result: _Result) -> bool:
             return False
         qs.status = QuizSetStatus.ready if result.ready else QuizSetStatus.failed
         qs.questions = result.questions if result.ready else []
-        qs.validation_report = result.report
+        recorded = qs.validation_report.get("prepared_for") if qs.validation_report else None
+        qs.validation_report = {**result.report, "prepared_for": recorded}
         return True

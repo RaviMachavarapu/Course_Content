@@ -30,7 +30,8 @@ behaves exactly as before.
   fails at once ("not available right now").
 - `[fixture:quiz=N]`: the Studio quiz has N questions (1-30) and chat draws from
   a pool of 60 questions, skipping any it is told to avoid, so many retakes work
-  (a link-only module: the pool's quotes aren't in an uploaded PDF).
+  (a link-only module: the pool's quotes aren't in an uploaded PDF). The questions are
+  written in the language the prompt asks for (the quiz's language option).
 - `[fixture:typeset-down]`: the typeset service counts as unavailable for this
   module's PDFs (retried with back-off, then "gave up"; the artifact stays ready).
 
@@ -263,15 +264,54 @@ _POOL = range(10, 70)
 _STUDIO = range(70, 100)
 
 
-def _pool_question(i: int) -> dict[str, Any]:
+#: the pool's question texts in the quiz languages (mcq, fill-blank, explanation); the proof
+#: quote stays the English fixture sentence, as the prompt asks (verbatim from the source)
+_POOL_TEXTS: dict[str, tuple[str, str, str]] = {
+    "English": (
+        "What is {i} squared, per the fixture notes?",
+        "In the fixture notes, {i} squared is ____.",
+        "In the fixture notes, the number {i} squared is {sq}.",
+    ),
+    "Hindi": (
+        "फ़िक्स्चर नोट्स के अनुसार {i} का वर्ग क्या है?",
+        "फ़िक्स्चर नोट्स में {i} का वर्ग ____ है।",
+        "फ़िक्स्चर नोट्स में {i} का वर्ग {sq} है।",
+    ),
+    "Marathi": (
+        "फिक्स्चर नोट्सनुसार {i} चा वर्ग किती आहे?",
+        "फिक्स्चर नोट्समध्ये {i} चा वर्ग ____ आहे.",
+        "फिक्स्चर नोट्समध्ये {i} चा वर्ग {sq} आहे.",
+    ),
+    "Tamil": (
+        "ஃபிக்ஸ்சர் குறிப்புகளின்படி {i} இன் வர்க்கம் என்ன?",
+        "ஃபிக்ஸ்சர் குறிப்புகளில் {i} இன் வர்க்கம் ____ ஆகும்.",
+        "ஃபிக்ஸ்சர் குறிப்புகளில் {i} இன் வர்க்கம் {sq} ஆகும்.",
+    ),
+    "Telugu": (
+        "ఫిక్స్చర్ నోట్స్ ప్రకారం {i} యొక్క వర్గం ఎంత?",
+        "ఫిక్స్చర్ నోట్స్‌లో {i} యొక్క వర్గం ____.",
+        "ఫిక్స్చర్ నోట్స్‌లో {i} యొక్క వర్గం {sq}.",
+    ),
+    "Kannada": (
+        "ಫಿಕ್ಸ್ಚರ್ ಟಿಪ್ಪಣಿಗಳ ಪ್ರಕಾರ {i} ರ ವರ್ಗ ಎಷ್ಟು?",
+        "ಫಿಕ್ಸ್ಚರ್ ಟಿಪ್ಪಣಿಗಳಲ್ಲಿ {i} ರ ವರ್ಗ ____ ಆಗಿದೆ.",
+        "ಫಿಕ್ಸ್ಚರ್ ಟಿಪ್ಪಣಿಗಳಲ್ಲಿ {i} ರ ವರ್ಗ {sq} ಆಗಿದೆ.",
+    ),
+}
+_LANGUAGE_ASKED = re.compile(r"accepted answer and explanation in (\w+),")
+
+
+def _pool_question(i: int, language: str = "English") -> dict[str, Any]:
+    ask, blank, explain = _POOL_TEXTS.get(language, _POOL_TEXTS["English"])
     fact = f"In the fixture notes, the number {i} squared is {i * i}."
+    explanation = explain.format(i=i, sq=i * i)
     if i % 5 == 0:
         return {
             "type": "fill_blank",
-            "question": f"In the fixture notes, {i} squared is ____.",
+            "question": blank.format(i=i),
             "answer": str(i * i),
             "accepted_answers": [],
-            "explanation": fact,
+            "explanation": explanation,
             "source_quote": fact,
         }
     options = [str(i * i + d) for d in (0, 1, 2, 3)]
@@ -279,19 +319,24 @@ def _pool_question(i: int) -> dict[str, Any]:
     options = options[shift:] + options[:shift]
     return {
         "type": "mcq",
-        "question": f"What is {i} squared, per the fixture notes?",
+        "question": ask.format(i=i),
         "options": options,
         "correct_index": options.index(str(i * i)),
-        "explanation": fact,
+        "explanation": explanation,
         "source_quote": fact,
     }
 
 
 def _chat_answer(prompt: str) -> str:
+    """`[fixture:quiz=N]` chat: N pool questions not in the prompt's avoid list, written in
+    the language the prompt asks for (English, Hindi, Marathi, Tamil, Telugu, Kannada)."""
     wanted = re.search(r"Create (\d+) NEW", prompt)
     n = int(wanted.group(1)) if wanted else 10
-    fresh = [q for q in map(_pool_question, _POOL) if q["question"] not in prompt]
-    return "Here are your questions:\n" + json.dumps(fresh[:n], indent=2)
+    asked = _LANGUAGE_ASKED.search(prompt)
+    language = asked.group(1) if asked else "English"
+    pool = (_pool_question(i, language) for i in _POOL)
+    fresh = [q for q in pool if q["question"] not in prompt]
+    return "Here are your questions:\n" + json.dumps(fresh[:n], ensure_ascii=False, indent=2)
 
 
 def _studio_quiz_html(n: int) -> str:

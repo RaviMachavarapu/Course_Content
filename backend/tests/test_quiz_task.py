@@ -39,6 +39,8 @@ from app.services.quiz_generation import SourceTextUnavailable
 from app.tasks import quiz
 
 _rng = random.Random(7)
+#: what a quiz with default options (and the `setup` quiz) has its sets prepared for
+EN = {"prepared_for": {"language": "en", "difficulty": "medium"}}
 
 
 def _word() -> str:
@@ -636,6 +638,7 @@ def test_an_abandoned_preparing_set_is_replaced(
         user_id=user.id,
         source=QuizSetSource.chat,
         status=QuizSetStatus.preparing,
+        validation_report=EN,
         created_at=dt.datetime.now(tz=dt.UTC) - quiz.STALE_AFTER - dt.timedelta(minutes=1),
     )
     db_session.add(old)
@@ -659,6 +662,7 @@ def test_a_recent_preparing_set_is_left_alone(
             user_id=user.id,
             source=QuizSetSource.chat,
             status=QuizSetStatus.preparing,
+            validation_report=EN,
         )
     )
     db_session.commit()
@@ -1012,10 +1016,10 @@ def test_concurrent_claims_on_separate_connections_insert_one_set(db_engine: sa.
     try:
         first, second = factory(), factory()
         got: dict[str, uuid.UUID | None] = {}
-        assert quiz._insert_preparing(first, artifact.id, user.id) is not None
+        assert quiz._insert_preparing(first, artifact.id, user.id, EN["prepared_for"]) is not None
 
         def claim() -> None:
-            got["second"] = quiz._insert_preparing(second, artifact.id, user.id)
+            got["second"] = quiz._insert_preparing(second, artifact.id, user.id, EN["prepared_for"])
             second.commit()
 
         thread = threading.Thread(target=claim)
@@ -1067,6 +1071,7 @@ def _preparing(
         source=QuizSetSource.chat,
         status=QuizSetStatus.preparing,
         heartbeat_at=heartbeat_at,
+        validation_report=EN,
     )
     if created_at is not None:
         qs.created_at = created_at
@@ -1332,3 +1337,172 @@ def test_after_a_republish_the_next_preparation_follows_the_new_studio_count(
     assert "Create 4 NEW quiz questions" in chat.prompts[0]
     newest = [s for s in _sets(db_session, artifact, user) if s.status is QuizSetStatus.ready]
     assert len(newest) == 1 and len(newest[0].questions) == 4
+
+
+# -- language and difficulty: the admin's choice for the quiz (owner decision 2026-10-29) --
+
+
+def _set_options(db: Session, artifact: Artifact, **options: str) -> None:
+    artifact.generation_options = {"quantity": "standard", **options}
+    db.commit()
+
+
+def test_the_prompt_asks_for_the_quiz_language_and_difficulty(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    _set_options(db_session, artifact, language="ta", difficulty="hard")
+    chat = FakeChat(answer([bad(), *[mcq() for _ in range(9)]]), answer([mcq()]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    assert len(chat.prompts) == 2  # the re-ask is in the same language and difficulty
+    for prompt in chat.prompts:
+        assert "explanation in Tamil" in prompt
+        assert "difficulty: hard" in prompt
+        assert "never translate it into Tamil" in prompt
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.validation_report["prepared_for"] == {"language": "ta", "difficulty": "hard"}
+
+
+def test_default_options_prepare_english_medium(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    assert artifact.generation_options == {}
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+    assert "explanation in English" in chat.prompts[0]
+    assert "difficulty: medium" in chat.prompts[0]
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.validation_report["prepared_for"] == EN["prepared_for"]
+
+
+@pytest.mark.parametrize("status", [QuizSetStatus.ready, QuizSetStatus.preparing])
+@pytest.mark.parametrize(
+    "report",
+    [{}, EN, {"prepared_for": {"language": "ta", "difficulty": "medium"}}],
+    ids=["unrecorded", "english", "tamil-medium"],
+)
+def test_a_pending_set_for_another_language_or_difficulty_is_replaced(
+    status: QuizSetStatus,
+    report: dict[str, Any],
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sets prepared before the admin chose Tamil / hard (or before sets recorded what they
+    were prepared for) are discarded and a new one is prepared."""
+    artifact, user = setup
+    _set_options(db_session, artifact, language="ta", difficulty="hard")
+    old = QuizQuestionSet(
+        artifact_id=artifact.id,
+        user_id=user.id,
+        source=QuizSetSource.chat,
+        status=status,
+        questions=[mcq() for _ in range(10)] if status is QuizSetStatus.ready else [],
+        validation_report=report,
+        heartbeat_at=_ago(0),
+    )
+    db_session.add(old)
+    db_session.commit()
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    by_status = {qs.status: qs for qs in _sets(db_session, artifact, user)}
+    assert set(by_status) == {QuizSetStatus.failed, QuizSetStatus.ready}
+    discarded = by_status[QuizSetStatus.failed]
+    assert discarded.id == old.id
+    assert discarded.validation_report["discarded"] is True
+    assert "the quiz is now ta/hard" in discarded.validation_report["error"]
+    assert by_status[QuizSetStatus.ready].validation_report["prepared_for"] == {
+        "language": "ta",
+        "difficulty": "hard",
+    }
+    assert "explanation in Tamil" in chat.prompts[0]
+
+
+def test_a_matching_pending_set_is_kept(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    _set_options(db_session, artifact, language="hi", difficulty="easy")
+    db_session.add(
+        QuizQuestionSet(
+            artifact_id=artifact.id,
+            user_id=user.id,
+            source=QuizSetSource.chat,
+            status=QuizSetStatus.ready,
+            questions=[mcq() for _ in range(10)],
+            validation_report={"prepared_for": {"language": "hi", "difficulty": "easy"}},
+        )
+    )
+    db_session.commit()
+    chat = FakeChat()
+    assert _run(monkeypatch, chat, artifact, user) == "exists"
+    assert chat.prompts == []
+
+
+def test_a_retry_after_the_language_changed_prepares_a_new_set(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, user = setup
+    old = _preparing(db_session, artifact, user, heartbeat_at=_ago(0))
+    _set_options(db_session, artifact, language="te", difficulty="medium")
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    assert _run(monkeypatch, chat, artifact, user, set_id=str(old.id), retries=1) == "ready"
+
+    db_session.refresh(old)
+    assert old.status is QuizSetStatus.failed and old.validation_report["discarded"] is True
+    assert "explanation in Telugu" in chat.prompts[0]
+
+
+def test_a_live_task_whose_set_was_discarded_for_a_new_language_writes_nothing(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The admin switches the quiz to Marathi while chat is answering in English: the
+    student API discards the set; the task's result is thrown away ("superseded")."""
+    artifact, user = setup
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    def switch() -> None:
+        with scope() as db:
+            a = db.get(Artifact, artifact.id)
+            assert a is not None
+            a.generation_options = {"language": "mr", "difficulty": "medium"}
+            db.flush()
+            assert quiz.discard_stale_sets(db, a, user.id) == 1
+
+    chat.on_query = switch
+    assert _run(monkeypatch, chat, artifact, user) == "superseded"
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.failed and qs.questions == []
+    assert qs.validation_report["discarded"] is True
+
+
+def test_fixture_chat_answers_in_the_quiz_language(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end with the fixture provider's `[fixture:quiz=N]` chat: a Tamil quiz's
+    fresh set is in Tamil, its proof quotes stay the English source sentences."""
+    from app.pipeline.fixture import FixtureProvider
+
+    artifact, user = setup
+    artifact.module.notebooklm_notebook_id = "fixture-nb-m-fixture-quiz-10"
+    _set_options(db_session, artifact, language="ta", difficulty="easy")
+    provider = FixtureProvider()
+    monkeypatch.setattr(quiz, "get_content_provider", lambda: provider)
+    task = quiz.prepare_quiz_set
+    task.push_request(retries=0)
+    try:
+        assert task.run(artifact_id=str(artifact.id), user_id=str(user.id)) == "ready"
+    finally:
+        task.pop_request()
+    [qs] = _sets(db_session, artifact, user)
+    assert len(qs.questions) == 10
+    for q in qs.questions:
+        assert "வர்க்கம்" in q["question"]
+        assert q["source_quote"].startswith("In the fixture notes")
