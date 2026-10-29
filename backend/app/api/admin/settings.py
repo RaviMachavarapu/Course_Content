@@ -13,12 +13,14 @@ Generation Prompts (BTN-ST1/ST2) and NotebookLM (BTN-ST3) already have routers
 from __future__ import annotations
 
 import uuid
+from typing import Protocol
 
 from fastapi import APIRouter, status
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.admin import ADMIN_DEPENDENCIES
-from app.api.deps import CurrentAdmin, DbDep
+from app.api.deps import CurrentAdmin, DbDep, SessionStoreDep
 from app.auth.hashing import hash_password
 from app.auth.passwords import validate_password_strength
 from app.errors import APIError
@@ -62,9 +64,17 @@ def create_admin(body: AdminUserCreateRequest, db: DbDep, _: CurrentAdmin) -> Ad
     return AdminUserOut.model_validate(user)
 
 
+class _Revoker(Protocol):
+    def revoke_user(self, user_id: str) -> None: ...
+
+
 @router.patch("/api/admin/users/{user_id}", response_model=AdminUserOut)
 def set_admin_active(
-    user_id: uuid.UUID, body: AdminUserPatchRequest, db: DbDep, admin: CurrentAdmin
+    user_id: uuid.UUID,
+    body: AdminUserPatchRequest,
+    db: DbDep,
+    admin: CurrentAdmin,
+    store: SessionStoreDep,
 ) -> AdminUserOut:
     user = db.get(User, user_id)
     if user is None or user.role is not UserRole.admin:
@@ -75,9 +85,37 @@ def set_admin_active(
             "cannot_deactivate_self",
             "You cannot deactivate your own account.",
         )
-    user.is_active = body.is_active
+    if not body.is_active:
+        _deactivate(db, user, admin, store)
+    else:
+        user.is_active = True
     db.flush()
     return AdminUserOut.model_validate(user)
+
+
+def _deactivate(db: Session, user: User, admin: User, store: _Revoker) -> None:
+    """Lock every active admin (in id order, so two of these can't deadlock)
+    before deciding: two admins deactivating each other at once would
+    otherwise leave none. The acting admin must still be active once the
+    locks are held."""
+    active = db.scalars(
+        select(User)
+        .where(User.role == UserRole.admin, User.is_active.is_(True))
+        .order_by(User.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    remaining = [u for u in active if u.id != user.id]
+    if not remaining or all(u.id != admin.id for u in remaining):
+        raise APIError(
+            status.HTTP_409_CONFLICT,
+            "last_active_admin",
+            "At least one admin must stay active.",
+        )
+    user.is_active = False
+    # their open sessions end now, and stay ended if the account is
+    # reactivated later (a stolen laptop's session must not come back)
+    store.revoke_user(str(user.id))
 
 
 # -- audio overview defaults ---------------------------------------------------
