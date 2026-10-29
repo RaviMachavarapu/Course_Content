@@ -81,7 +81,7 @@ describe("AdminLoginPage", () => {
 describe("AdminLoginPage rate limit countdown", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("counts down from retry_after, disables submit, re-enables at 0, offers a reset", async () => {
+  it("counts down from retry_after, disables submit, re-enables at 0, keeps one reset link outside the box", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const u = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     mockFetch({
@@ -102,10 +102,12 @@ describe("AdminLoginPage rate limit countdown", () => {
     expect(alert).not.toHaveAttribute("aria-live");
     expect(alert).toHaveTextContent("Too many attempts — try again in 0:08");
     expect(screen.getByTestId("btn-al1")).toBeDisabled();
-    expect(within(alert).getByRole("link", { name: /forgot password/i })).toHaveAttribute(
-      "href",
-      "/admin/forgot-password",
-    );
+    // no link inside the countdown box; screen readers still find the one reset link
+    expect(within(alert).queryByRole("link")).not.toBeInTheDocument();
+    const resetLinks = screen.getAllByRole("link", { name: /forgot password/i });
+    expect(resetLinks).toHaveLength(1);
+    expect(resetLinks[0]).toHaveAttribute("href", "/admin/forgot-password");
+    expect(resetLinks[0]).toHaveAttribute("data-testid", "btn-al2");
 
     await act(() => vi.advanceTimersByTimeAsync(3000));
     expect(screen.getByTestId("rate-limit-countdown")).toHaveTextContent("try again in 0:05");
