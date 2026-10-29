@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { imageSize } from "./imageSize";
 import { InfographicViewer } from "./InfographicViewer";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -153,5 +154,41 @@ describe("InfographicViewer PDF link", () => {
     renderViewer();
     await screen.findByTestId("btn-if5");
     expect(screen.queryByTestId("btn-if6")).toBeNull();
+  });
+});
+
+describe("InfographicViewer orientations", () => {
+  function loaded(img: HTMLElement, width: number, height: number) {
+    Object.defineProperty(img, "naturalWidth", { value: width, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: height, configurable: true });
+    fireEvent.load(img);
+  }
+
+  it.each([
+    ["landscape", 2752, 1536, "51.958rem"],
+    ["square", 2048, 2048, "29rem"],
+    ["portrait", 1536, 2752, "16.186rem"],
+  ])("fits a %s image in the frame at zoom 1", async (_name, w, h, maxWidth) => {
+    installFetch();
+    renderViewer();
+    const img = await screen.findByTestId("infographic-image");
+    loaded(img, w, h);
+    await waitFor(() => expect(img.style.maxWidth).toBe(maxWidth));
+    expect(img.style.width).toBe("100%");
+  });
+
+  it("zoom scales a portrait image's cap too", async () => {
+    installFetch();
+    renderViewer();
+    const img = await screen.findByTestId("infographic-image");
+    loaded(img, 1536, 2752);
+    await userEvent.click(screen.getByTestId("btn-if1"));
+    expect(img.style.width).toBe("125%");
+    expect(img.style.maxWidth).toBe("20.233rem");
+  });
+
+  it("imageSize has no cap before the image has loaded", () => {
+    expect(imageSize(1, null)).toEqual({ width: "100%" });
+    expect(imageSize(2, 1)).toEqual({ width: "200%", maxWidth: "58rem" });
   });
 });

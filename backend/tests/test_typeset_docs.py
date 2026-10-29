@@ -432,6 +432,23 @@ def test_infographic_markdown_with_image() -> None:
     assert doc.title == "Infographic"
 
 
+@pytest.mark.parametrize(
+    ("size", "attribute"),
+    [((2752, 1536), ""), ((2048, 2048), ""), ((1536, 2752), "{height=78%}")],
+    ids=["landscape", "square", "portrait"],
+)
+def test_infographic_orientations(size: tuple[int, int], attribute: str) -> None:
+    """Landscape and square images are fitted to the text width by pandoc; a portrait one
+    gets a height (a share of the text height) so the title, image and caption share page
+    1 instead of the image being pushed onto a page of its own (seen: 3 pages)."""
+    buf = io.BytesIO()
+    Image.new("RGB", size, "white").save(buf, "PNG")
+    doc = build_infographic(
+        INFOGRAPHIC, [StoredImage(MediaFileKind.infographic_png, None, buf.getvalue())]
+    )
+    assert doc.markdown.startswith(f"# Infographic\n\n![](infographic.png){attribute}\n\n")
+
+
 def test_infographic_without_png_omits_the_image() -> None:
     doc = build_infographic({"caption": "Only text", "description": None}, [])
     assert doc.markdown == "# Infographic\n\nOnly text\n"

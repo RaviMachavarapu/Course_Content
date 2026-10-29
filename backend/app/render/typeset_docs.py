@@ -654,6 +654,26 @@ def build_quiz(
     return _doc(title or "Quiz", blocks, {})
 
 
+#: an image taller than this (height / width) would, at the full text width, push the title
+#: or caption off its page (A4, 2 cm margins: 17 x 25.7 cm): a portrait infographic
+TALL_IMAGE_RATIO = 1.2
+#: its height then: a share of the text height, leaving room for the title on page 1
+TALL_IMAGE_HEIGHT = "78%"
+
+
+def _tall_image_size(data: bytes) -> str:
+    """Pandoc size attribute for a tall (portrait) image, else ''. Landscape and square
+    images are fitted to the text width by pandoc itself."""
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            width, height = im.size
+    except Exception:  # unreadable: pandoc fits it (or prints the alt text)
+        return ""
+    if width and height / width > TALL_IMAGE_RATIO:
+        return "{height=" + TALL_IMAGE_HEIGHT + "}"
+    return ""
+
+
 def build_infographic(
     content_json: dict[str, Any], media: Sequence[StoredImage], *, title: str | None = None
 ) -> TypesetDoc:
@@ -665,7 +685,7 @@ def build_infographic(
         (prepared,) = _prepare_images([("infographic", png.data)])
         if prepared:
             images[prepared[0]] = prepared[1]
-            blocks.append(f"![]({prepared[0]})")
+            blocks.append(f"![]({prepared[0]}){_tall_image_size(prepared[1])}")
     blocks.append(text_to_markdown(c.caption))
     blocks.append(text_to_markdown(c.description or ""))
     return _doc(title or "Infographic", blocks, images)

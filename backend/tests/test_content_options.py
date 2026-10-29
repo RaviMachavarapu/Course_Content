@@ -108,3 +108,15 @@ def test_report_language_is_only_choosable_for_a_custom_report() -> None:
 @pytest.mark.parametrize("style", ["auto", "kawaii", "scientific", "bento_grid"])
 def test_infographic_visual_styles(style: str) -> None:
     assert validate_options(ArtifactType.infographic, {"style": style})["style"] == style
+
+
+@pytest.mark.parametrize("orientation", ["landscape", "portrait", "square"])
+def test_infographic_orientations(orientation: str) -> None:
+    opts = validate_options(ArtifactType.infographic, {"orientation": orientation})
+    assert opts["orientation"] == orientation
+
+
+def test_infographic_orientation_defaults_to_landscape_and_rejects_others() -> None:
+    assert validate_options(ArtifactType.infographic, {})["orientation"] == "landscape"
+    with pytest.raises(ValidationError):
+        validate_options(ArtifactType.infographic, {"orientation": "panorama"})

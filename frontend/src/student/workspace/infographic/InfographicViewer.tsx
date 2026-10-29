@@ -3,6 +3,7 @@ import { Button, ErrorState, Icon, Skeleton } from "@/components";
 import { PdfDownloadLink } from "@/components/PdfDownloadLink";
 import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
+import { imageSize } from "./imageSize";
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
@@ -25,6 +26,7 @@ export function InfographicViewer({
   const progress = useArtifactProgress(artifactId, slug);
   const frameRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
+  const [ratio, setRatio] = useState<number | null>(null);
 
   // opening the infographic counts as viewed
   useEffect(() => {
@@ -95,7 +97,11 @@ export function InfographicViewer({
             src={imageUrl}
             alt={content.caption || "Infographic"}
             data-testid="infographic-image"
-            style={{ width: `${zoom * 100}%`, transition: "width 150ms" }}
+            onLoad={(e) => {
+              const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+              if (w > 0 && h > 0) setRatio(w / h);
+            }}
+            style={{ ...imageSize(zoom, ratio), transition: "width 150ms, max-width 150ms" }}
             className="mx-auto max-w-none"
           />
         )}
