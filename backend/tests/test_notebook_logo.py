@@ -146,6 +146,56 @@ def test_slide_lines_just_above_the_mark_are_kept() -> None:
     assert result.size[1] >= top - 2  # the line (rows top-4..top-3) stays
 
 
+@pytest.mark.parametrize("bg", [DARK, LIGHT], ids=["dark", "light"])
+@pytest.mark.parametrize("gap", [6, 9, 12])
+@pytest.mark.parametrize("footer", ["line", "text"])
+def test_a_footer_above_the_mark_on_a_plain_background_is_not_a_plate(
+    bg: tuple[int, int, int], gap: int, footer: str
+) -> None:
+    """PR #2 review finding 4: a slide's footer line (or text) 6-12 rows above the mark, in
+    its columns, over a plain background: no plate (the rows between are the background),
+    so the strip is cropped, not covered."""
+    image = _slide(bg)
+    top, _ = _logo(image)
+    fg = (0, 0, 0) if sum(bg) > 380 else (230, 240, 255)
+    draw = ImageDraw.Draw(image)
+    if footer == "line":
+        draw.line((0, top - gap - 1, 1376, top - gap - 1), fill=fg, width=2)
+    else:
+        text = "Footer text running across the corner of the slide"
+        left, t, right, b = draw.textbbox((0, 0), text, font=_font(14))
+        draw.text(
+            (1376 - (right - left) - 4, top - gap - (b - t) - t), text, fill=fg, font=_font(14)
+        )
+    box = nl.find_logo(image)
+    assert box is not None
+    assert not nl.is_plate(image, box, nl.plate_top(image, box))
+    result = nl.strip_logo(_png(image))
+    assert not result.covered
+    assert result.cropped > 0 and result.size[1] >= top - 3
+
+
+def test_a_synthetic_plate_over_content_is_covered() -> None:
+    """NotebookLM's plate geometry on a synthetic slide: a lighter rounded band from ~9 rows
+    above the mark to ~9 below, wider than the mark, over text on the same rows."""
+    image = _slide(DARK)
+    top, bottom = _logo(image)
+    box = nl.find_logo(image)
+    assert box is not None
+    draw = ImageDraw.Draw(image)
+    draw.text((900, top - 2), "Slide text on the same rows", fill=(230, 240, 255), font=_font(16))
+    draw.rounded_rectangle(
+        (box.left - 8, box.top - 9, min(1375, box.right + 6), box.bottom + 9),
+        radius=6,
+        fill=(36, 84, 136),
+    )
+    _logo(image)  # the mark again, on the plate
+    box = nl.find_logo(image)
+    assert box is not None
+    assert nl.is_plate(image, box, nl.plate_top(image, box))
+    assert nl.strip_logo(_png(image)).covered
+
+
 # -- corners cut from real NotebookLM output (module 2, 2026-10-28) ---------------------
 
 

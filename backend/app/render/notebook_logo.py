@@ -267,6 +267,65 @@ def plate_min_rows(box: LogoBox) -> int:
     return max(4, box.height // 2)
 
 
+def _area_color(
+    px: object, xs: range, ys: range, size: tuple[int, int]
+) -> tuple[int, int, int] | None:
+    """The median colour of the pixels in columns `xs` x rows `ys` (clipped to the image);
+    None when that is empty."""
+    w, h = size
+    colors = [
+        px[x, y]  # type: ignore[index]
+        for y in ys
+        if 0 <= y < h
+        for x in xs
+        if 0 <= x < w
+    ]
+    if not colors:
+        return None
+    return (
+        _median([c[0] for c in colors]),
+        _median([c[1] for c in colors]),
+        _median([c[2] for c in colors]),
+    )
+
+
+def _near(a: tuple[int, int, int], b: tuple[int, int, int]) -> bool:
+    return max(abs(a[i] - b[i]) for i in range(3)) <= PLATE_DIFF
+
+
+def is_plate(image: Image.Image, box: LogoBox, plate: int) -> bool:
+    """Whether rows `plate`..`box.top - 1` are NotebookLM's plate behind the mark, not just
+    the background below a slide's footer line or text (PR #2 review finding 4). The plate
+    (slides: a lighter rounded band from ~9 rows above the mark to ~9 below, a few pixels
+    wider than the mark) must:
+    - be at least `plate_min_rows` high above the mark (and at most the walk's reach);
+    - differ from the background just above it (a band of about the mark's height, over the
+      mark's columns, above the plate's top edge): a footer line over a plain background
+      has the same colour on both sides;
+    - continue below the mark (its bottom padding) and to the left of the mark's columns
+      (the plate is wider than the mark)."""
+    above = box.top - plate
+    if above < plate_min_rows(box) or above > int(box.height * 1.5) + 2:
+        return False
+    rgb = image.convert("RGB")
+    px = rgb.load()
+    assert px is not None
+    size = rgb.size
+    cols = range(box.left, box.right + 1)
+    shade = _area_color(px, cols, range(plate, box.top), size)
+    # skip the plate's edge row (anti-aliased); a line of the slide's own a row or two
+    # thick is a minority of this band, so its median is the background
+    background = _area_color(px, cols, range(plate - 2 - box.height, plate - 1), size)
+    pad = max(2, box.height // 4)
+    below = _area_color(px, cols, range(box.bottom + 2, box.bottom + 2 + pad), size)
+    left = _area_color(
+        px, range(box.left - 2 - pad, box.left - 2), range(box.top, box.bottom + 1), size
+    )
+    if shade is None or background is None or below is None or left is None:
+        return False
+    return not _near(shade, background) and _near(shade, below) and _near(shade, left)
+
+
 #: margin (px) around the mark's box that is covered with the plate's colour
 COVER_PAD = 2
 
@@ -299,7 +358,7 @@ def strip_logo(png: bytes, *, label: str = "") -> Stripped:
         box = find_logo(im)
         if box is not None:
             plate = plate_top(im, box)
-            if box.top - plate >= plate_min_rows(box):
+            if is_plate(im, box, plate):
                 covered = cover_logo(im, box, plate)
                 log.info("notebook_logo.covered", image=label, rows=f"{box.top}-{box.bottom}")
                 return Stripped(_png(covered), 0, covered.size, covered=True)
