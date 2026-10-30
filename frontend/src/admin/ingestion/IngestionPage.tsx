@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Card, CardBody, Icon, Input, Select } from "@/components";
 import { ApiError } from "@/lib/api";
 import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
@@ -10,18 +10,10 @@ import {
   type PromptsByType,
 } from "../generationOptions";
 import { ARTIFACT_LABELS, ARTIFACT_TYPES, type ArtifactType } from "../api";
-import { StatusChip, StatusDot } from "../AdminStatus";
-import { SourceSummary } from "../SourceSummary";
 import { sourceUrlError } from "../sourceValidation";
 import { PdfPicker, type PickedFile } from "./PdfPicker";
 import { uploadPdf } from "./chunkedUpload";
-import {
-  ModuleCreateError,
-  useCourses,
-  useIngest,
-  useMcpStatus,
-  useRecentPipeline,
-} from "../useAdminApi";
+import { ModuleCreateError, useCourses, useIngest, useMcpStatus } from "../useAdminApi";
 
 type Target = "new" | "existing";
 
@@ -31,7 +23,6 @@ export function IngestionPage(): JSX.Element {
   const scopedCourseId = searchParams.get("course") ?? "";
   const mcp = useMcpStatus();
   const courses = useCourses();
-  const pipeline = useRecentPipeline(5);
   const ingest = useIngest();
   const urlRef = useRef<HTMLInputElement>(null);
   const focusForm = searchParams.get("focus") === "form";
@@ -406,78 +397,6 @@ export function IngestionPage(): JSX.Element {
           </form>
         </CardBody>
       </Card>
-
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-headline-md text-headline-md">Recent Pipeline</h2>
-          <Link
-            to="/admin/pipeline"
-            data-testid="btn-ig11"
-            className="font-label-md text-label-md text-primary underline underline-offset-4"
-          >
-            View all
-          </Link>
-        </div>
-
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-body-md">
-              <thead className="border-b border-outline-variant font-label-sm text-label-sm text-on-surface-variant">
-                <tr>
-                  <th className="px-4 py-2">Source</th>
-                  <th className="px-4 py-2">Date</th>
-                  <th className="px-4 py-2">Artifacts</th>
-                  <th className="px-4 py-2">Status</th>
-                  <th className="px-4 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(pipeline.data?.rows ?? []).map((row) => (
-                  <tr key={row.module_id} className="border-b border-outline-variant/60">
-                    <td className="px-4 py-3">
-                      <div className="font-label-md text-label-md">{row.module_title}</div>
-                      <SourceSummary sourceUrl={row.source_url} files={row.source_files} />
-                    </td>
-                    <td className="px-4 py-3 text-label-sm text-on-surface-variant">
-                      {new Date(row.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        {row.dots.map((d) => (
-                          <StatusDot
-                            key={d.type}
-                            status={d.status}
-                            title={`${d.type}: ${d.status}`}
-                          />
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusChip status={row.global_status} />
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        to={`/admin/modules/${row.module_id}/staging`}
-                        data-testid="btn-ig10"
-                        className="font-label-md text-label-md text-primary underline underline-offset-4"
-                      >
-                        Open staging
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-                {pipeline.data && pipeline.data.rows.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-on-surface-variant">
-                      Nothing generated yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </section>
     </div>
   );
 }

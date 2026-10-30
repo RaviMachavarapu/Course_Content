@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
 import { uniqueMarker } from "./unique";
 
 /**
@@ -48,10 +49,7 @@ test("slide viewer: navigate, notes, complete on last slide", async ({ page }) =
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  await page
-    .locator('[data-testid="course-card"]', { hasText: courseTitle })
-    .getByTestId("btn-ct7")
-    .click();
+  await page.goto(`/learn/${await courseSlug(page.context(), courseTitle)}`);
   await expect(page).toHaveURL(/\/learn\/slides-e2e-/);
 
   // open Slides (BTN-WS4)

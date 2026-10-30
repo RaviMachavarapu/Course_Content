@@ -20,14 +20,6 @@ export function useRecentJobs() {
   });
 }
 
-export function useRecentPipeline(limit = 5) {
-  return useQuery({
-    queryKey: ["admin", "pipeline", "recent", limit],
-    queryFn: () => adminApi.pipeline({ page_size: limit }),
-    refetchInterval: 5_000,
-  });
-}
-
 export function usePipeline(params: { page: number; status?: string; q?: string }) {
   return useQuery({
     queryKey: ["admin", "pipeline", params],

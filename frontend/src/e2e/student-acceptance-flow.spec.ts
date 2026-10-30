@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
 import { uniqueMarker } from "./unique";
 
 /**
@@ -54,9 +55,7 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  const card = page.locator('[data-testid="course-card"]', { hasText: courseTitle });
-  await expect(card).toBeVisible();
-  await card.getByTestId("btn-ct7").click();
+  await page.goto(`/learn/${await courseSlug(page.context(), courseTitle)}`);
   await expect(page).toHaveURL(/\/learn\//);
 
   // consume all six — a light touch per type (real per-button depth lives

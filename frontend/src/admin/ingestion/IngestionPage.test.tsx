@@ -70,7 +70,7 @@ describe("IngestionPage", () => {
       screen.getByRole("heading", { name: /Create New AI Course Module/i }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("btn-ig6")).toHaveTextContent(/Generate Course Material/i);
-    expect(screen.getByRole("heading", { name: /Recent Pipeline/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Recent Pipeline/i })).not.toBeInTheDocument();
   });
 
   it("blocks submit with validation and does not call the API", async () => {

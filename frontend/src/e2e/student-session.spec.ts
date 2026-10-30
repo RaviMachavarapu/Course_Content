@@ -122,17 +122,8 @@ test("session and CSRF cookie both gone: Session ended, then back to the lesson 
   await expect(page).toHaveURL(new RegExp(`/learn/${slug}/0/report$`));
 });
 
-test("catalog search with no hits, and a course link that doesn't exist", async ({
-  page,
-  context,
-}) => {
+test("a course link that doesn't exist", async ({ page, context }) => {
   await registerStudent(context);
-  await page.goto("/catalog");
-  await expect(page.locator('[data-testid="course-card"]', { hasText: courseTitle })).toBeVisible();
-  await page.getByLabel("Search courses").first().fill("zz-no-course-is-called-this-zz");
-  await expect(page.getByText("No courses match your filters")).toBeVisible();
-  await expect(page.getByTestId("course-card")).toHaveCount(0);
-
   await page.goto("/learn/no-such-course-slug-e2e");
   await expect(page.getByText("Course not available")).toBeVisible();
 });

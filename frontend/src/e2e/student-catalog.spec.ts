@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
 import { uniqueMarker } from "./unique";
 
 /**
@@ -81,9 +82,9 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  const card = page.locator('[data-testid="course-card"]', { hasText: courseTitle });
-  await expect(card).toBeVisible();
-  await expect(card.getByText("0% Complete")).toBeVisible();
+  // the catalog lists no courses (owner, 2026-10-30)
+  await expect(page.getByTestId("course-card")).toHaveCount(0);
+  const slug = await courseSlug(page.context(), courseTitle);
 
   // student nav (BTN-CT2..4): Catalog / My Listening / Achievements
   const studentNav = page.getByRole("navigation");
@@ -94,16 +95,8 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await studentNav.getByRole("link", { name: "Catalog", exact: true }).click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  // search narrows to our course
-  await page.getByLabel("Search courses").first().fill(courseTitle);
-  await expect(page.getByTestId("course-card")).toHaveCount(1);
-
-  // category chip filters too
-  await page.getByRole("button", { name: "E2E Topics" }).click();
-  await expect(card).toBeVisible();
-
-  // Start Learning routes into the workspace shell
-  await card.getByTestId("btn-ct7").click();
+  // a direct course link opens the workspace shell
+  await page.goto(`/learn/${slug}`);
   await expect(page).toHaveURL(/\/learn\/catalog-e2e-/);
   await expect(page.getByTestId("btn-ws1")).toContainText("Course Overview");
   await expect(page.getByTestId("btn-ws2")).toContainText("Back to Dashboard");
@@ -231,14 +224,9 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await expect(page).toHaveURL(new RegExp(`${learnBase}$`));
   await expect(page.getByText("100% Complete")).toBeVisible();
 
-  // Back to Dashboard returns to the catalog, now at 100%
+  // Back to Dashboard returns to the catalog
   await page.getByTestId("btn-ws2").click();
   await expect(page).toHaveURL(/\/catalog$/);
-  await expect(
-    page
-      .locator('[data-testid="course-card"]', { hasText: courseTitle })
-      .getByText("100% Complete"),
-  ).toBeVisible();
 
   // Progress dashboard reflects the real record (T039)
   await page.goto("/progress");

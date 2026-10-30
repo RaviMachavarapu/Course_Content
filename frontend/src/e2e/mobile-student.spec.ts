@@ -28,7 +28,7 @@ test("student pages at 375 px: no sideways scroll, Log out reachable", async ({
   const slug = await courseSlug(context, courseTitle);
 
   await page.goto("/catalog");
-  await expect(page.locator('[data-testid="course-card"]', { hasText: courseTitle })).toBeVisible();
+  await expect(page.getByTestId("btn-ct5")).toBeVisible();
   await expectNoHorizontalScroll(page);
 
   // the sidebar is a drawer here: open it, navigate, it closes

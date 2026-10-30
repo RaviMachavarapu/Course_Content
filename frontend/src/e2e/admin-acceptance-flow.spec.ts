@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
 import { uniqueMarker } from "./unique";
 
 /**
@@ -99,5 +100,8 @@ test("AC4: ingest -> 6 generated -> redo one -> publish module -> publish course
   await page.getByLabel("Confirm password").fill("ac4-strong-pw-1234");
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
-  await expect(page.locator('[data-testid="course-card"]', { hasText: courseTitle })).toBeVisible();
+  // the catalog lists no courses (owner, 2026-10-30): the student API and a direct link do
+  const slug = await courseSlug(page.context(), courseTitle);
+  await page.goto(`/learn/${slug}`);
+  await expect(page.getByTestId("btn-ws1")).toContainText("Course Overview");
 });
