@@ -574,14 +574,17 @@ def _plan_logo_strip(version: ArtifactVersion) -> _LogoPlan:
     replace: list[tuple[MediaFile, bytes]] = []
     notes: list[str] = []
     slide_data: list[bytes] = []
-    cropped = already = missing = 0
+    cropped = already = missing = covered = 0
     rows: list[int] = []
     for m in images:
         data = storage.open(m.storage_key)
         result = notebook_logo.strip_logo(data, label=m.storage_key)
-        if result.cropped:
+        if result.changed:
             cropped += 1
-            rows.append(result.cropped)
+            if result.covered:
+                covered += 1
+            else:
+                rows.append(result.cropped)
             replace.append((m, result.data))
         elif result.already:
             already += 1
@@ -590,10 +593,12 @@ def _plan_logo_strip(version: ArtifactVersion) -> _LogoPlan:
         if m.kind is MediaFileKind.slide_png:
             slide_data.append(result.data)
     if images:
-        detail = f"{cropped}/{len(images)} image(s) cropped"
+        detail = f"{cropped}/{len(images)} image(s) cleaned"
         if rows:
             span = str(rows[0]) if min(rows) == max(rows) else f"{min(rows)}-{max(rows)}"
-            detail += f" ({span} rows off the bottom)"
+            detail += f" ({len(rows)} cropped, {span} rows off the bottom)"
+        if covered:
+            detail += f", {covered} with the mark covered (it sat over content)"
         if already:
             detail += f", {already} already clean"
         if missing:

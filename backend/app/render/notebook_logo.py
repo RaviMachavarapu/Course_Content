@@ -2,9 +2,10 @@
 
 NotebookLM stamps a small "Gemini Notebook" mark in the bottom-right corner of every slide
 image and infographic (slides 1376x768: rows ~749-756, x ~1270-1365; a 1536x2752
-infographic: rows ~2725-2739, x ~1334-1525). Owner decision 2026-10-29: crop the whole
-image just above the mark (the bottom strip goes), never paint over it. SynthID is not
-touched.
+infographic: rows ~2725-2739, x ~1334-1525). Owner decisions 2026-10-29: crop the whole
+image just above the mark (the bottom strip goes); but where NotebookLM drew the mark on
+its lighter plate over the slide's content (text on the same rows), cover only the mark
+with the plate's colour so no text is clipped. SynthID is not touched.
 
 Detection (`find_logo_top`), pure Pillow: in the bottom-right corner band (the bottom
 `MAX_CROP_SHARE` of the height, the right `REGION_WIDTH_SHARE` of the width) a pixel is
@@ -183,8 +184,7 @@ def plate_top(image: Image.Image, box: LogoBox) -> int:
     content (slides: ~9 rows above an 8-row mark, a slightly lighter shade), else
     `box.top - 1`. Walks up from the row above the mark while each row is uniform with
     the row below it (over the mark's columns), for at most 1.5 mark heights + 2 rows; when
-    no edge is found within that (a plain or slowly shaded background) there is no plate.
-    Only rows uniform with the plate are ever added, so content is not cut."""
+    no edge is found within that (a plain or slowly shaded background) there is no plate."""
     rgb = image.convert("RGB")
     px = rgb.load()
     assert px is not None
@@ -217,12 +217,12 @@ def plate_top(image: Image.Image, box: LogoBox) -> int:
 
 
 def crop_height(image: Image.Image) -> int | None:
-    """The height to crop the image to (the rows above the mark and its plate, if any), or
-    None when no mark is found or the crop would take more than `MAX_CROP_SHARE`."""
+    """The height to crop the image to (the rows above the mark), or None when no mark is
+    found or the crop would take more than `MAX_CROP_SHARE`."""
     box = find_logo(image)
     if box is None:
         return None
-    keep = plate_top(image, box)
+    keep = box.top - 1
     if image.size[1] - keep > image.size[1] * MAX_CROP_SHARE + 1 or keep <= 0:
         return None
     return keep
@@ -230,7 +230,7 @@ def crop_height(image: Image.Image) -> int | None:
 
 #: PNG text chunk marking an image this module already cropped (re-runs skip it)
 MARK_KEY = "shikshak-notebook-logo"
-MARK_VALUE = "cropped"
+MARK_VALUE = "cropped"  # also set on a covered image
 
 
 def is_marked(image: Image.Image) -> bool:
@@ -248,20 +248,61 @@ def _png(image: Image.Image) -> bytes:
 @dataclass(frozen=True)
 class Stripped:
     data: bytes
-    #: rows removed from the bottom (0: unchanged)
+    #: rows removed from the bottom (0: not cropped)
     cropped: int
     size: tuple[int, int]
-    #: already cropped by an earlier run (marked): unchanged
+    #: already cleaned by an earlier run (marked): unchanged
     already: bool = False
+    #: the mark sat on its plate over content: covered with the plate's colour, not cropped
+    covered: bool = False
+
+    @property
+    def changed(self) -> bool:
+        return self.cropped > 0 or self.covered
+
+
+def plate_min_rows(box: LogoBox) -> int:
+    """A plate is a band of this many uniform rows above the mark (NotebookLM's: ~9 over an
+    8-row mark); a slide's own line a few rows above the mark is not one."""
+    return max(4, box.height // 2)
+
+
+#: margin (px) around the mark's box that is covered with the plate's colour
+COVER_PAD = 2
+
+
+def cover_logo(image: Image.Image, box: LogoBox, plate: int) -> Image.Image:
+    """`image` with the mark's box (plus `COVER_PAD`) filled with the plate's colour (the
+    median of the plate's rows above the mark, over the mark's columns)."""
+    rgb = image.convert("RGB")
+    px = rgb.load()
+    assert px is not None
+    shades = [px[x, y] for y in range(plate, box.top) for x in range(box.left, box.right + 1)]
+    color = tuple(_median([c[i] for c in shades]) for i in range(3))  # type: ignore[index]
+    w, h = rgb.size
+    left, top = max(0, box.left - COVER_PAD), max(0, box.top - COVER_PAD)
+    right, bottom = min(w - 1, box.right + COVER_PAD), min(h - 1, box.bottom + COVER_PAD)
+    rgb.paste(color, (left, top, right + 1, bottom + 1))
+    return rgb
 
 
 def strip_logo(png: bytes, *, label: str = "") -> Stripped:
-    """`png` with the bottom strip holding the mark cropped off (and marked, so a later run
-    leaves it alone); unchanged (logged) when no mark is found or it was cropped before."""
+    """`png` with the mark removed (and marked, so a later run leaves it alone): the bottom
+    strip holding it is cropped off; but when the mark sits on its plate over content (the
+    slide's text runs on the same rows, so a crop would clip it) only the mark is covered
+    with the plate's colour (owner decision 2026-10-29). Unchanged (logged) when no mark is
+    found or it was cleaned before."""
     with Image.open(io.BytesIO(png)) as im:
         im.load()
         if is_marked(im):
             return Stripped(png, 0, im.size, already=True)
+        box = find_logo(im)
+        if box is not None:
+            plate = plate_top(im, box)
+            if box.top - plate >= plate_min_rows(box):
+                covered = cover_logo(im, box, plate)
+                log.info("notebook_logo.covered", image=label, rows=f"{box.top}-{box.bottom}")
+                return Stripped(_png(covered), 0, covered.size, covered=True)
         keep = crop_height(im)
         if keep is None:
             log.info("notebook_logo.not_found", image=label, size=f"{im.size[0]}x{im.size[1]}")
@@ -396,7 +437,7 @@ def strip_pptx(pptx: bytes, *, label: str = "") -> tuple[bytes, int]:
             except Exception as exc:  # an unreadable picture: leave it
                 log.warning("notebook_logo.picture_unreadable", pptx=label, error=str(exc))
                 continue
-            if not result.cropped:
+            if not result.changed:
                 continue
             element = shape._element
             old_rid = element.blip_rId

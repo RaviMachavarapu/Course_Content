@@ -105,7 +105,7 @@ def strip_notebook_logo(blobs: list[MediaBlob]) -> list[MediaBlob]:
             except Exception as exc:  # unreadable image: store it as downloaded
                 log.warning("notebook_logo.image_unreadable", image=label, error=str(exc))
             else:
-                if result.cropped:
+                if result.changed:
                     cropped += 1
                     blob = replace(blob, data=result.data, mime="image/png")
         out.append(blob)

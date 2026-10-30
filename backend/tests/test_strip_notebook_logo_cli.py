@@ -75,7 +75,7 @@ def test_a_slide_deck_is_cleaned_in_place(
 
     [(label, outcome)] = [(k, v) for k, v in results.items() if str(version.id) in k]
     assert "slide_deck r1" in label
-    assert outcome.startswith("cleaned: 2/2 image(s) cropped")
+    assert outcome.startswith("cleaned: 2/2 image(s) cleaned")
     assert "deck PDF rebuilt" in outcome and "2 PPTX picture(s) cropped" in outcome
     assert queued == [f"pdf:{version.id}"]
     after = _files(db_session, version)
@@ -99,7 +99,7 @@ def test_a_slide_deck_is_cleaned_in_place(
     # a second run finds nothing to do
     queued.clear()
     again = dict(cli.strip_notebook_logo(db_session))
-    assert again[label].startswith("unchanged: 0/2 image(s) cropped, 2 already clean")
+    assert again[label].startswith("unchanged: 0/2 image(s) cleaned, 2 already clean")
     assert queued == []
     assert {k: m.storage_key for k, m in _files(db_session, version).items()} == {
         k: m.storage_key for k, m in after.items()
@@ -112,7 +112,7 @@ def test_an_infographic_is_cleaned(
     version = _old_version(db_session, ArtifactType.infographic)
     results = dict(cli.strip_notebook_logo(db_session))
     [outcome] = [v for k, v in results.items() if str(version.id) in k]
-    assert outcome.startswith("cleaned: 1/1 image(s) cropped")
+    assert outcome.startswith("cleaned: 1/1 image(s) cleaned")
     [png] = list(_files(db_session, version).values())
     assert png.kind is MediaFileKind.infographic_png
     with Image.open(io.BytesIO(media_storage.open(png.storage_key))) as im:
@@ -125,7 +125,7 @@ def test_dry_run_writes_nothing(db_session: Session, queued: list[str]) -> None:
     before = {k: m.storage_key for k, m in _files(db_session, version).items()}
     results = dict(cli.strip_notebook_logo(db_session, dry_run=True))
     [outcome] = [v for k, v in results.items() if str(version.id) in k]
-    assert outcome.startswith("would clean: 2/2 image(s) cropped")
+    assert outcome.startswith("would clean: 2/2 image(s) cleaned")
     assert "replaces 4 file(s) (deck_pdf, pptx, slide_png)" in outcome
     assert {k: m.storage_key for k, m in _files(db_session, version).items()} == before
     assert queued == []
@@ -139,7 +139,7 @@ def test_images_without_the_mark_are_left_alone(db_session: Session, queued: lis
     )
     results = dict(cli.strip_notebook_logo(db_session))
     [outcome] = [v for k, v in results.items() if str(version.id) in k]
-    assert outcome == "unchanged: 0/1 image(s) cropped, 1 without the mark (kept)"
+    assert outcome == "unchanged: 0/1 image(s) cleaned, 1 without the mark (kept)"
     assert queued == []
 
 

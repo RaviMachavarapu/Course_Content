@@ -164,13 +164,39 @@ def test_real_slide_mark_on_a_plain_background() -> None:
     assert nl.crop_height(image) == 748
 
 
-def test_real_slide_mark_on_its_plate_goes_with_the_plate() -> None:
-    """Over content NotebookLM puts the mark on a lighter rounded plate (rows 740-765):
-    the crop goes above the plate so no trace of it is left."""
+def test_real_slide_mark_on_its_plate_is_covered_not_cropped() -> None:
+    """Over content NotebookLM puts the mark on a lighter rounded plate (rows 740-765), and
+    the slide's text runs on the same rows, so any crop would clip it. Owner decision
+    2026-10-29: there, cover just the mark with the plate's colour; the image keeps its
+    size and every text line stays whole."""
     image = _real("slide_corner_plate.png", (1376, 768))
     box = nl.find_logo(image)
     assert box is not None and box.top == 749
-    assert nl.crop_height(image) == 740
+    assert nl.plate_top(image, box) == 740
+
+    result = nl.strip_logo(_png(image))
+    assert result.covered and result.cropped == 0 and result.changed
+    assert result.size == (1376, 768)
+    with Image.open(io.BytesIO(result.data)) as out:
+        out = out.convert("RGB")
+        assert nl.find_logo(out) is None  # the mark is gone
+        # the mark's box is one flat colour now: the plate's
+        colors = {
+            out.getpixel((x, y))
+            for x in range(box.left, box.right + 1)
+            for y in range(box.top, box.bottom + 1)
+        }
+        assert len(colors) == 1
+        # rows above the plate are untouched
+        assert all(out.getpixel((x, 700)) == image.getpixel((x, 700)) for x in range(0, 1376, 25))
+    # a second run leaves it alone
+    assert nl.strip_logo(result.data).already
+
+
+def test_real_slide_mark_on_a_plain_background_is_cropped() -> None:
+    result = nl.strip_logo(_png(_real("slide_corner_plain.png", (1376, 768))))
+    assert result.cropped == 20 and not result.covered and result.changed
+    assert result.size == (1376, 748)
 
 
 def test_real_infographic_mark() -> None:
