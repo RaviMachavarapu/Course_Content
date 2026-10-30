@@ -36,6 +36,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pypdf import PdfReader
 
 from app.logging import get_logger
+from app.models.enums import MediaFileKind
 
 log = get_logger("render.notebook_logo")
 
@@ -542,3 +543,108 @@ def strip_pptx(pptx: bytes, *, label: str = "") -> tuple[bytes, int]:
     out = io.BytesIO()
     prs.save(out)
     return out.getvalue(), cropped
+
+
+# -- a version's media: the one implementation behind generation and the CLI -------------
+
+#: the images that carry the mark
+LOGO_IMAGE_KINDS = (MediaFileKind.slide_png, MediaFileKind.infographic_png)
+
+
+@dataclass(frozen=True)
+class MediaItem:
+    """One stored file of a version: its kind, page and bytes (`label` for logs)."""
+
+    kind: MediaFileKind
+    data: bytes
+    page_index: int | None = None
+    label: str = ""
+
+
+@dataclass
+class CleanedMedia:
+    """What cleaning a version's media changed."""
+
+    #: per input item, in order: the new bytes, or None when unchanged
+    new_data: list[bytes | None]
+    #: one-line summaries (images cleaned, deck PDF rebuilt or kept, PPTX pictures)
+    notes: list[str]
+
+    @property
+    def changed(self) -> bool:
+        return any(d is not None for d in self.new_data)
+
+
+def clean_media(items: Sequence[MediaItem], *, tolerant: bool) -> CleanedMedia:
+    """Remove the mark from a version's media (owner decision 2026-10-29): every slide PNG
+    and the infographic PNG (`strip_logo`); NotebookLM's deck PDF is rebuilt from the slide
+    images when any SLIDE image changed (its pages are those images); the PPTX's slide
+    pictures are cropped. `tolerant` (generation): an image or document that can't be read
+    is kept as it is and logged, cleaning never fails; otherwise (the CLI) the error is
+    raised, so the version is reported as failed and left untouched."""
+    new: list[bytes | None] = [None] * len(items)
+    notes: list[str] = []
+    cleaned = already = missing = covered = 0
+    rows: list[int] = []
+    images = [i for i, it in enumerate(items) if it.kind in LOGO_IMAGE_KINDS]
+    for i in images:
+        it = items[i]
+        label = it.label or f"{it.kind.value}.{it.page_index or 0}"
+        try:
+            result = strip_logo(it.data, label=label)
+        except Exception as exc:
+            if not tolerant:
+                raise
+            log.warning("notebook_logo.image_unreadable", image=label, error=str(exc))
+            missing += 1
+            continue
+        if result.changed:
+            cleaned += 1
+            new[i] = result.data
+            if result.covered:
+                covered += 1
+            else:
+                rows.append(result.cropped)
+        elif result.already:
+            already += 1
+        else:
+            missing += 1
+    if images:
+        detail = f"{cleaned}/{len(images)} image(s) cleaned"
+        if rows:
+            span = str(rows[0]) if min(rows) == max(rows) else f"{min(rows)}-{max(rows)}"
+            detail += f" ({len(rows)} cropped, {span} rows off the bottom)"
+        if covered:
+            detail += f", {covered} with the mark covered (it sat over content)"
+        if already:
+            detail += f", {already} already clean"
+        if missing:
+            detail += f", {missing} without the mark (kept)"
+        notes.append(detail)
+
+    slides = sorted(
+        (i for i, it in enumerate(items) if it.kind is MediaFileKind.slide_png),
+        key=lambda i: items[i].page_index or 0,
+    )
+    slides_changed = any(new[i] is not None for i in slides)
+    slide_pngs = [new[i] or items[i].data for i in slides]
+    for i, it in enumerate(items):
+        label = it.label or it.kind.value
+        try:
+            if it.kind is MediaFileKind.deck_pdf and slides_changed:
+                rebuilt = rebuild_deck_pdf(it.data, slide_pngs, label=label)
+                if rebuilt != it.data:
+                    new[i] = rebuilt
+                    notes.append("deck PDF rebuilt from the cropped slides")
+                else:
+                    notes.append("deck PDF kept (not one image per slide)")
+            elif it.kind is MediaFileKind.pptx:
+                pptx, pictures = strip_pptx(it.data, label=label)
+                if pictures:
+                    new[i] = pptx
+                    notes.append(f"{pictures} PPTX picture(s) cropped")
+        except Exception as exc:
+            if not tolerant:
+                raise
+            log.warning("notebook_logo.document_kept", kind=it.kind.value, error=str(exc))
+    return CleanedMedia(new, notes)

@@ -42,7 +42,7 @@ from app.db.session import session_scope
 from app.models.artifact import Artifact
 from app.models.artifact_version import ArtifactVersion
 from app.models.course import Course
-from app.models.enums import ArtifactType, MediaFileKind
+from app.models.enums import ArtifactType
 from app.models.media_file import MediaFile
 from app.models.module import Module
 from app.models.user import User, UserRole, normalize_email
@@ -553,7 +553,6 @@ def _cmd_rebuild_pdfs(args: argparse.Namespace) -> int:
 # -- strip-notebook-logo -------------------------------------------------------------
 
 _LOGO_TYPES = (ArtifactType.slide_deck, ArtifactType.infographic)
-_LOGO_IMAGE_KINDS = (MediaFileKind.slide_png, MediaFileKind.infographic_png)
 
 
 @dataclass
@@ -565,63 +564,24 @@ class _LogoPlan:
 
 
 def _plan_logo_strip(version: ArtifactVersion) -> _LogoPlan:
+    """`notebook_logo.clean_media` (the same cleaning as generation) on the version's
+    stored files; an unreadable file fails the version (nothing is written)."""
     storage = get_storage()
     files = list(version.media_files)
-    slides = sorted(
-        (m for m in files if m.kind is MediaFileKind.slide_png), key=lambda m: m.page_index or 0
-    )
-    images = slides + [m for m in files if m.kind is MediaFileKind.infographic_png]
-    replace: list[tuple[MediaFile, bytes]] = []
-    notes: list[str] = []
-    slide_data: list[bytes] = []
-    cropped = already = missing = covered = 0
-    rows: list[int] = []
-    for m in images:
-        data = storage.open(m.storage_key)
-        result = notebook_logo.strip_logo(data, label=m.storage_key)
-        if result.changed:
-            cropped += 1
-            if result.covered:
-                covered += 1
-            else:
-                rows.append(result.cropped)
-            replace.append((m, result.data))
-        elif result.already:
-            already += 1
-        else:
-            missing += 1
-        if m.kind is MediaFileKind.slide_png:
-            slide_data.append(result.data)
-    if images:
-        detail = f"{cropped}/{len(images)} image(s) cleaned"
-        if rows:
-            span = str(rows[0]) if min(rows) == max(rows) else f"{min(rows)}-{max(rows)}"
-            detail += f" ({len(rows)} cropped, {span} rows off the bottom)"
-        if covered:
-            detail += f", {covered} with the mark covered (it sat over content)"
-        if already:
-            detail += f", {already} already clean"
-        if missing:
-            detail += f", {missing} without the mark (kept)"
-        notes.append(detail)
-    slides_cropped = any(m.kind is MediaFileKind.slide_png for m, _ in replace)
-    for m in files:
-        if m.kind is MediaFileKind.deck_pdf and slides_cropped:
-            pdf = storage.open(m.storage_key)
-            rebuilt = notebook_logo.rebuild_deck_pdf(pdf, slide_data, label=m.storage_key)
-            if rebuilt != pdf:
-                replace.append((m, rebuilt))
-                notes.append("deck PDF rebuilt from the cropped slides")
-            else:
-                notes.append("deck PDF kept (not one image per slide)")
-        elif m.kind is MediaFileKind.pptx:
-            pptx, pictures = notebook_logo.strip_pptx(
-                storage.open(m.storage_key), label=m.storage_key
+    cleaned = notebook_logo.clean_media(
+        [
+            notebook_logo.MediaItem(
+                kind=m.kind,
+                data=storage.open(m.storage_key),
+                page_index=m.page_index,
+                label=m.storage_key,
             )
-            if pictures:
-                replace.append((m, pptx))
-                notes.append(f"{pictures} PPTX picture(s) cropped")
-    return _LogoPlan(replace, notes)
+            for m in files
+        ],
+        tolerant=False,
+    )
+    replace = [(m, data) for m, data in zip(files, cleaned.new_data, strict=True) if data]
+    return _LogoPlan(replace, cleaned.notes)
 
 
 def _store_logo_plan(session: Session, version: ArtifactVersion, plan: _LogoPlan) -> list[str]:
@@ -633,7 +593,7 @@ def _store_logo_plan(session: Session, version: ArtifactVersion, plan: _LogoPlan
     stale: list[str] = []
     try:
         for old, data in plan.replace:
-            mime = "image/png" if old.kind in _LOGO_IMAGE_KINDS else old.mime_type
+            mime = "image/png" if old.kind in notebook_logo.LOGO_IMAGE_KINDS else old.mime_type
             key = media_key(
                 course_id=module.course_id,
                 module_id=module.id,
@@ -697,7 +657,7 @@ def strip_notebook_logo(session: Session, *, dry_run: bool = False) -> list[tupl
             f"{module.course.title} / {module.title} / {version.artifact.type.value} "
             f"r{version.revision} [{version.id}]"
         )
-        if not any(m.kind in _LOGO_IMAGE_KINDS for m in version.media_files):
+        if not any(m.kind in notebook_logo.LOGO_IMAGE_KINDS for m in version.media_files):
             results.append((label, "skipped (no images)"))
             continue
         try:

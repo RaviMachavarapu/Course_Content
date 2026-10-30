@@ -431,3 +431,50 @@ def test_the_band_medians_are_computed_once_per_image(monkeypatch: pytest.Monkey
     monkeypatch.setattr(nl, "_band", lambda *a: calls.append(1) or real(*a))
     assert nl.find_logo(image) == nl.LogoBox(left=1270, top=749, right=1365, bottom=756)
     assert len(calls) == 1
+
+
+# -- one implementation for generation and the CLI (PR #2 review finding 9) -------------
+
+
+def test_the_deck_pdf_is_rebuilt_only_when_a_slide_image_changed() -> None:
+    """A changed infographic (or nothing changed among the slides) leaves the deck PDF."""
+    slides = [_png(_slide(DARK))]  # no mark: unchanged
+    info = Image.new("RGB", (1536, 2752), LIGHT)
+    _logo(info, scale=2.0)
+    deck = nl.images_pdf(slides)
+    items = [
+        nl.MediaItem(MediaFileKind.slide_png, slides[0], page_index=0),
+        nl.MediaItem(MediaFileKind.infographic_png, _png(info)),
+        nl.MediaItem(MediaFileKind.deck_pdf, deck),
+    ]
+    cleaned = nl.clean_media(items, tolerant=False)
+    assert cleaned.new_data[0] is None and cleaned.new_data[1] is not None
+    assert cleaned.new_data[2] is None
+    assert not any("deck PDF" in n for n in cleaned.notes)
+
+
+def test_clean_media_strict_raises_on_an_unreadable_image() -> None:
+    items = [nl.MediaItem(MediaFileKind.infographic_png, b"\x89PNG not really")]
+    with pytest.raises(Exception):  # noqa: B017 - whatever Pillow raises
+        nl.clean_media(items, tolerant=False)
+    assert nl.clean_media(items, tolerant=True).new_data == [None]
+
+
+def test_generation_and_the_cli_share_clean_media(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.cli as cli_module
+    from app.pipeline import renderers
+
+    assert cli_module.notebook_logo is renderers.notebook_logo is nl
+    assert not hasattr(cli_module, "_LOGO_IMAGE_KINDS")
+    assert not hasattr(renderers, "_LOGO_IMAGE_KINDS")
+    calls: list[bool] = []
+    real = nl.clean_media
+    monkeypatch.setattr(
+        nl,
+        "clean_media",
+        lambda items, *, tolerant: calls.append(tolerant) or real(items, tolerant=tolerant),
+    )
+    strip_notebook_logo(
+        [MediaBlob(MediaFileKind.slide_png, _png(_slide(DARK)), "image/png", page_index=0)]
+    )
+    assert calls == [True]
