@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -241,7 +242,10 @@ def _png(image: Image.Image) -> bytes:
     info = PngInfo()
     info.add_text(MARK_KEY, MARK_VALUE)
     out = io.BytesIO()
-    image.save(out, "PNG", pnginfo=info)
+    extra = {}
+    if "transparency" in image.info:  # a palette/L/RGB image's tRNS colour
+        extra["transparency"] = image.info["transparency"]
+    image.save(out, "PNG", pnginfo=info, **extra)
     return out.getvalue()
 
 
@@ -332,17 +336,28 @@ COVER_PAD = 2
 
 def cover_logo(image: Image.Image, box: LogoBox, plate: int) -> Image.Image:
     """`image` with the mark's box (plus `COVER_PAD`) filled with the plate's colour (the
-    median of the plate's rows above the mark, over the mark's columns)."""
-    rgb = image.convert("RGB")
-    px = rgb.load()
+    median of the plate's rows above the mark, over the mark's columns), in the image's own
+    mode: alpha (RGBA/LA) is the plate's too, so transparent areas stay transparent; a
+    palette image is filled with the plate's most common palette index (its palette and
+    transparency are kept)."""
+    out = image.copy()
+    px = out.load()
     assert px is not None
     shades = [px[x, y] for y in range(plate, box.top) for x in range(box.left, box.right + 1)]
-    color = tuple(_median([c[i] for c in shades]) for i in range(3))  # type: ignore[index]
-    w, h = rgb.size
+    color: float | tuple[int, ...]
+    if out.mode in ("P", "PA"):  # a median of palette indices means nothing
+        indices = [s[0] if isinstance(s, tuple) else s for s in shades]
+        color = Counter(indices).most_common(1)[0][0]
+    elif isinstance(shades[0], int | float):  # one band (L, I, F)
+        color = _median([int(s) for s in shades])  # type: ignore[arg-type]
+    else:  # RGB, RGBA, LA, ...: per band, alpha included
+        bands = len(shades[0])
+        color = tuple(_median([c[i] for c in shades]) for i in range(bands))  # type: ignore[index]
+    w, h = out.size
     left, top = max(0, box.left - COVER_PAD), max(0, box.top - COVER_PAD)
     right, bottom = min(w - 1, box.right + COVER_PAD), min(h - 1, box.bottom + COVER_PAD)
-    rgb.paste(color, (left, top, right + 1, bottom + 1))
-    return rgb
+    out.paste(color, (left, top, right + 1, bottom + 1))
+    return out
 
 
 def strip_logo(png: bytes, *, label: str = "") -> Stripped:

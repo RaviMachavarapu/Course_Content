@@ -243,6 +243,52 @@ def test_real_slide_mark_on_its_plate_is_covered_not_cropped() -> None:
     assert nl.strip_logo(result.data).already
 
 
+def test_cover_keeps_an_rgba_image_and_its_transparency() -> None:
+    """PR #2 review finding 5: covering the mark keeps the image's mode; transparent areas
+    stay transparent and the cover is the plate's colour with its alpha."""
+    image = _real("slide_corner_plate.png", (1376, 768)).convert("RGBA")
+    alpha = Image.new("L", image.size, 255)
+    ImageDraw.Draw(alpha).rectangle((0, 0, 99, 99), fill=0)  # a transparent corner
+    ImageDraw.Draw(alpha).rectangle((1200, 735, 1375, 767), fill=230)  # translucent plate
+    image.putalpha(alpha)
+    box = nl.find_logo(image)
+    assert box is not None
+
+    result = nl.strip_logo(_png(image))
+    assert result.covered
+    with Image.open(io.BytesIO(result.data)) as out:
+        assert out.mode == "RGBA"
+        assert out.getpixel((10, 10))[3] == 0
+        assert out.getpixel((500, 300)) == image.getpixel((500, 300))
+        cover = {
+            out.getpixel((x, y))
+            for x in range(box.left, box.right + 1)
+            for y in range(box.top, box.bottom + 1)
+        }
+        assert len(cover) == 1
+        [color] = cover
+        assert color[3] == 230
+        assert max(abs(color[i] - (36, 84, 136)[i]) for i in range(3)) <= 8
+
+
+def test_cover_keeps_a_palette_image() -> None:
+    image = _real("slide_corner_plate.png", (1376, 768)).convert("P", palette=Image.ADAPTIVE)
+    box = nl.find_logo(image)
+    assert box is not None
+    result = nl.strip_logo(_png(image))
+    assert result.covered
+    with Image.open(io.BytesIO(result.data)) as out:
+        assert out.mode == "P"
+        assert out.getpalette() == image.getpalette()
+        assert out.getpixel((500, 300)) == image.getpixel((500, 300))
+        cover = {
+            out.getpixel((x, y))
+            for x in range(box.left, box.right + 1)
+            for y in range(box.top, box.bottom + 1)
+        }
+        assert len(cover) == 1
+
+
 def test_real_slide_mark_on_a_plain_background_is_cropped() -> None:
     result = nl.strip_logo(_png(_real("slide_corner_plain.png", (1376, 768))))
     assert result.cropped == 20 and not result.covered and result.changed
