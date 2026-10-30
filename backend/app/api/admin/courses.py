@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import re
 import unicodedata
 import uuid
@@ -237,8 +236,10 @@ def create_module(
     except ValidationError as exc:  # the admin's generation options
         raise invalid_input(exc) from None
     db.flush()
-    # last step that can fail: moving files (compensated on error)
-    _claim_uploads(db, course.id, module, uploads)
+    # moving the files, then committing, are the last steps that can fail: both are
+    # compensated (the files go back to the uploads, which stay claimable)
+    moved = _claim_uploads(db, course.id, module, uploads)
+    _commit_or_restore(db, moved)
 
     background.add_task(_dispatch_all, [j.dispatch for j in jobs])
 
@@ -278,9 +279,33 @@ def _safe_stem(file_name: str) -> str:
     return cleaned or "file"
 
 
+def _restore(moved: list[tuple[str, str]]) -> None:
+    """Move claimed files back to their uploads' keys (best effort, newest first)."""
+    storage = get_storage()
+    for original, new in reversed(moved):
+        try:
+            storage.move(new, original)
+        except Exception as exc:  # pragma: no cover - logged, the purge cleans up
+            log.error("uploads.restore_failed", key=new, original=original, error=str(exc))
+
+
+def _commit_or_restore(db: Session, moved: list[tuple[str, str]]) -> None:
+    """Commit the new module and its source rows now (not after the response, in
+    `get_db`), so a failed commit can put the moved files back: the rows roll back to
+    the uploads' old keys, and the admin's retry finds the files there."""
+    try:
+        db.commit()
+    except BaseException:
+        db.rollback()
+        _restore(moved)
+        raise
+
+
 def _claim_uploads(
     db: Session, course_id: uuid.UUID, module: Module, uploads: list[SourceUpload]
-) -> None:
+) -> list[tuple[str, str]]:
+    """Move each upload's file to the module's sources and add its row (flushed); returns
+    the moves made, (original key, new key), for `_commit_or_restore`."""
     storage = get_storage()
     # read every page count before moving anything, so a damaged file fails the
     # request with nothing half-moved
@@ -311,10 +336,9 @@ def _claim_uploads(
     except BaseException:
         # the request will roll back the DB; put the files back so the uploads
         # (which revert to `complete`) are still claimable
-        for original, new in reversed(moved):
-            with contextlib.suppress(Exception):
-                storage.move(new, original)
+        _restore(moved)
         raise
+    return moved
 
 
 def _page_count(upload: SourceUpload) -> int:

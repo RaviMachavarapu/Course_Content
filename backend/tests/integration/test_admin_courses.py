@@ -468,6 +468,57 @@ def test_move_failure_restores_files(
     assert ok.status_code == 201, ok.text
 
 
+def test_a_failed_commit_puts_the_files_back_and_a_retry_succeeds(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #2 review finding 6: the files are moved in the request, the rows committed after
+    it. When that commit fails, the rows roll back and the files go back to the uploads, so
+    the admin's retry claims them (no orphans, no "missing upload")."""
+    from sqlalchemy.exc import OperationalError
+
+    from app.models.module_source_file import ModuleSourceFile
+    from app.models.source_upload import SourceUpload
+    from app.storage.service import get_storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    u1 = _upload(client, h, "a.pdf", _pdf_bytes())
+    u2 = _upload(client, h, "b.pdf", _pdf_bytes())
+    db_session.commit()
+
+    real_commit = db_session.commit
+    calls = {"n": 0}
+
+    def failing_commit() -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OperationalError("COMMIT", {}, Exception("connection lost"))
+        real_commit()
+
+    monkeypatch.setattr(db_session, "commit", failing_commit)
+    try:
+        r = _post_module(client, h, cid, upload_ids=[u1, u2])
+        assert r.status_code >= 500
+    except OperationalError:
+        pass  # the test client re-raises unhandled server errors
+    assert calls["n"] == 1
+
+    storage = get_storage()
+    assert storage.exists(f"uploads/{u1}.pdf") and storage.exists(f"uploads/{u2}.pdf")
+    db_session.expire_all()
+    for uid in (u1, u2):
+        row = db_session.get(SourceUpload, uuid.UUID(uid))
+        assert row is not None and row.status.value == "complete"
+    assert db_session.query(ModuleSourceFile).count() == 0
+
+    ok = _post_module(client, h, cid, upload_ids=[u1, u2])
+    assert ok.status_code == 201, ok.text
+    files = ok.json()["module"]["source_files"]
+    assert len(files) == 2
+    for sf in db_session.query(ModuleSourceFile).all():
+        assert storage.exists(sf.storage_key)
+
+
 # -- module delete: status + files (review 2026-10-28) -------------------------
 def _generated_module(client: TestClient, db: Session, h: dict[str, str], cid: str, **extra):  # type: ignore[no-untyped-def]
     from app.models.module import Module
