@@ -863,10 +863,59 @@ def test_open_attempt_without_stored_order_keeps_the_stored_order(
 
 
 def _set_quiz_options(db: Session, ctx: Ctx, **options: str) -> None:
+    """The admin published a quiz version made with `options` (retakes follow the
+    PUBLISHED version's options, owner decision 2026-10-30)."""
     quiz = db.get(Artifact, uuid.UUID(ctx.quiz_id))
     assert quiz is not None
     quiz.generation_options = {**quiz.generation_options, **options}
+    published = next(v for v in quiz.versions if v.id == quiz.published_version_id)
+    published.generation_options = {**(published.generation_options or {}), **options}
     db.flush()
+
+
+def test_an_unpublished_redo_in_another_language_keeps_serving_the_published_ones(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    """A Redo to Tamil was queued (the artifact's options changed) and its version is
+    stored but not published: the English set is still served."""
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    english = _add_set(db_session, ctx, QuizSetStatus.ready)
+    quiz = db_session.get(Artifact, uuid.UUID(ctx.quiz_id))
+    assert quiz is not None
+    orchestrator.enqueue_artifact_regeneration(
+        db_session, quiz.id, redo_note="tamil", options={"language": "ta"}
+    )
+    orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, redo_note="tamil")
+    db_session.expire_all()
+
+    resp = _start(client, ctx)
+    assert resp.status_code == 201, resp.text
+    assert _attempt_set(db_session, resp.json()["attempt_id"]).id == english.id
+
+
+def test_publishing_a_version_in_another_language_discards_the_ready_set(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    _finish(client, db_session, _start(client, ctx).json()["attempt_id"])
+    english = _add_set(db_session, ctx, QuizSetStatus.ready)
+    quiz = db_session.get(Artifact, uuid.UUID(ctx.quiz_id))
+    assert quiz is not None
+    orchestrator.enqueue_artifact_regeneration(
+        db_session, quiz.id, redo_note="tamil", options={"language": "ta"}
+    )
+    orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, redo_note="tamil")
+    db_session.expire_all()
+    module = db_session.get(Module, ctx.module_id)
+    assert module is not None
+    publish_module(db_session, module)
+    db_session.flush()
+
+    assert _start(client, ctx).status_code == 202
+    db_session.refresh(english)
+    assert english.status is QuizSetStatus.failed
+    assert "the quiz is now ta/medium" in english.validation_report["error"]
 
 
 @pytest.mark.parametrize("status", [QuizSetStatus.ready, QuizSetStatus.preparing])

@@ -745,6 +745,10 @@ def _generate(session: Session, provider: ContentProvider, plan: _Plan) -> Artif
             "redo_note": plan.studio_request.get("redo_note"),
             "template_id": plan.studio_request.get("template_id"),
             "template_version": plan.studio_request.get("template_version"),
+            # the options sent with that request; a request remembered before they
+            # were recorded falls back to the artifact's (best available)
+            "generation_options": plan.studio_request.get("generation_options")
+            or _sent_options(plan),
         }
         options: dict[str, Any] = {}  # nothing is sent
     else:
@@ -752,6 +756,7 @@ def _generate(session: Session, provider: ContentProvider, plan: _Plan) -> Artif
         # Stored options may predate a schema change: fill defaults, reject what
         # NotebookLM doesn't offer, before anything is sent.
         options = validate_options(plan.kind, plan.generation_options)
+        plan.request["generation_options"] = options  # recorded on the version
 
     plan.progress()
     # Once per module: the notebook with the module's link and PDFs, all ready.
@@ -812,6 +817,15 @@ def _generate(session: Session, provider: ContentProvider, plan: _Plan) -> Artif
     return _store_version(session, plan, raw, content_json, content_html, blobs)
 
 
+def _sent_options(plan: _Plan) -> dict[str, Any] | None:
+    """The artifact's options as a request would send them (None if they no longer
+    validate)."""
+    try:
+        return validate_options(plan.kind, plan.generation_options)
+    except ValueError:
+        return None
+
+
 def _store_version(
     session: Session,
     plan: _Plan,
@@ -844,6 +858,7 @@ def _store_version(
         content_json=content_json,
         content_html=content_html,
         notebooklm_artifact_id=str(raw.extras.get("artifact_id") or "") or None,
+        generation_options=plan.request.get("generation_options"),
     )
     session.add(version)
     session.flush()

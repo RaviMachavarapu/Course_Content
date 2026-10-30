@@ -163,15 +163,28 @@ def seen_questions(
     return texts if limit is None else texts[:limit]
 
 
+def published_options(artifact: Artifact) -> dict[str, Any]:
+    """The generation options of the quiz's PUBLISHED version (owner decision 2026-10-30:
+    retakes follow the published quiz; a Redo, failed or not yet published, changes
+    nothing). Falls back to the artifact's options when the published version has none
+    recorded (or nothing is published)."""
+    version = next((v for v in artifact.versions if v.id == artifact.published_version_id), None)
+    if version is not None and version.generation_options:
+        return dict(version.generation_options)
+    return dict(artifact.generation_options or {})
+
+
 def wanted_for(artifact: Artifact) -> dict[str, str]:
-    """The language and difficulty the quiz's fresh sets must be prepared for."""
-    return qg.prepared_for(artifact.generation_options)
+    """The language and difficulty the quiz's fresh sets must be prepared for: those of
+    the published quiz version."""
+    return qg.prepared_for(published_options(artifact))
 
 
 def discard_stale_sets(db: Session, artifact: Artifact, user_id: uuid.UUID) -> int:
     """Discard the student's `preparing`/`ready` chat sets prepared for another language or
-    difficulty than the quiz's current options (row-locked; a task still filling a discarded
-    set finds it no longer `preparing` and stops as "superseded"). Returns how many."""
+    difficulty than the published quiz version's options (row-locked; a task still filling a
+    discarded set finds it no longer `preparing` and stops as "superseded"). Returns how
+    many."""
     wanted = wanted_for(artifact)
     pending = db.scalars(
         select(QuizQuestionSet)

@@ -144,7 +144,7 @@ DIFFICULTY_GUIDE = {
 
 def prepared_for(options: dict[str, Any] | None) -> dict[str, str]:
     """The language and difficulty a quiz's fresh sets are written in: the admin's choice
-    for the quiz (`Artifact.generation_options`, QuizOptions), defaults en / medium."""
+    for the quiz (QuizOptions, as recorded on the published version), defaults en / medium."""
     options = options or {}
     language = options.get("language")
     difficulty = options.get("difficulty")

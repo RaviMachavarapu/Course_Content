@@ -8,7 +8,7 @@ Flow: start (or resume) an attempt → check one answer at a time → complete.
   that creates the attempt. With the module's fresh-retakes switch off, retakes
   reuse the Studio quiz.
 - A ready or preparing chat set prepared for another language or difficulty than the
-  quiz's current options is discarded first (`discard_stale_sets`); the student waits
+  published quiz version's options is discarded first (`discard_stale_sets`); the student waits
   for a new one ("Preparing new questions…").
 - Every started attempt enqueues preparation of the student's next set, after
   the commit.

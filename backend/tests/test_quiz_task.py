@@ -1506,3 +1506,24 @@ def test_fixture_chat_answers_in_the_quiz_language(
     for q in qs.questions:
         assert "வர்க்கம்" in q["question"]
         assert q["source_quote"].startswith("In the fixture notes")
+
+
+def test_a_queued_redo_in_another_language_does_not_change_the_prepared_set(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retakes follow the PUBLISHED version's options (owner decision 2026-10-30): the
+    artifact's options already say Tamil (a Redo is queued), the published version was
+    made in English, so the set is prepared in English."""
+    artifact, user = setup
+    published = db_session.get(ArtifactVersion, artifact.published_version_id)
+    assert published is not None
+    published.generation_options = {"quantity": "standard", "language": "en", "difficulty": "easy"}
+    _set_options(db_session, artifact, language="ta", difficulty="hard")
+    chat = FakeChat(answer([mcq() for _ in range(10)]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    assert "explanation in English" in chat.prompts[0]
+    assert "difficulty: easy" in chat.prompts[0]
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.validation_report["prepared_for"] == {"language": "en", "difficulty": "easy"}

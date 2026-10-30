@@ -364,3 +364,127 @@ def test_retry_after_a_timeout_resumes_the_notebooklm_artifact(
     resp = client.post(f"/api/admin/artifacts/{report.id}/redo", json={}, headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
     assert sent[-1]["kwargs"]["resume"] is False
+
+
+# -- the options each version was made with (PR #2 review finding 1, owner 2026-10-30) --
+def _quiz(db: Session) -> Artifact:
+    module = _module_with_generated(db, [ArtifactType.quiz])
+    return next(a for a in module.artifacts if a.type is ArtifactType.quiz)
+
+
+def _version(db: Session, version_id: uuid.UUID | None) -> ArtifactVersion:
+    assert version_id is not None
+    version = db.get(ArtifactVersion, version_id)
+    assert version is not None
+    return version
+
+
+def _publish(db: Session, artifact: Artifact) -> None:
+    from app.services.publish import publish_module
+
+    db.refresh(artifact)
+    publish_module(db, artifact.module)
+    db.flush()
+    db.expire_all()
+
+
+def test_a_version_records_the_options_it_was_generated_with(db_session: Session) -> None:
+    quiz = _quiz(db_session)
+    v1 = _version(db_session, quiz.current_version_id)
+    assert v1.generation_options == {
+        "quantity": "standard",
+        "difficulty": "medium",
+        "language": "en",
+    }
+
+
+def test_retakes_follow_the_published_version_not_a_redo_until_it_is_published(
+    db_session: Session,
+) -> None:
+    from app.tasks.quiz import wanted_for
+
+    quiz = _quiz(db_session)
+    _publish(db_session, quiz)
+    quiz = db_session.get(Artifact, quiz.id)
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}
+
+    # the Redo with Tamil / hard is queued: the artifact's options change at once ...
+    orchestrator.enqueue_artifact_regeneration(
+        db_session, quiz.id, redo_note="tamil", options={"language": "ta", "difficulty": "hard"}
+    )
+    db_session.expire_all()
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.generation_options["language"] == "ta"
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}  # ... retakes don't
+
+    # ... the new version is stored but not published: still the published one's
+    v2 = orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, redo_note="tamil")
+    db_session.expire_all()
+    assert v2 is not None
+    assert _version(db_session, v2.id).generation_options == {
+        "quantity": "standard",
+        "difficulty": "hard",
+        "language": "ta",
+    }
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.published_version_id != v2.id
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}
+
+    # publishing it switches retakes
+    _publish(db_session, quiz)
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.published_version_id == v2.id
+    assert wanted_for(quiz) == {"language": "ta", "difficulty": "hard"}
+
+
+def test_a_failed_redo_does_not_change_retakes(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tasks.quiz import wanted_for
+
+    quiz = _quiz(db_session)
+    _publish(db_session, quiz)
+    orchestrator.enqueue_artifact_regeneration(
+        db_session, quiz.id, redo_note="hindi", options={"language": "hi"}
+    )
+
+    def boom(*a: Any, **k: Any) -> Any:
+        raise orchestrator.ProviderError("NotebookLM said no")
+
+    monkeypatch.setattr(PROVIDER, "generate", boom)
+    with pytest.raises(orchestrator.ProviderError):
+        orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, redo_note="hindi")
+    db_session.expire_all()
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.status is ArtifactStatus.error
+    assert quiz.generation_options["language"] == "hi"
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}
+
+
+def test_a_resumed_run_records_the_options_sent_with_the_request(db_session: Session) -> None:
+    """Retry after a timeout: the version records the options sent when NotebookLM was
+    asked, not the artifact's options if they changed meanwhile."""
+    quiz = _quiz(db_session)
+    quiz.status = ArtifactStatus.error
+    quiz.notebooklm_studio_id = "nb-artifact-1"
+    sent = {"quantity": "fewer", "difficulty": "easy", "language": "te"}
+    quiz.studio_request = {"focus_prompt": "p", "redo_note": None, "generation_options": sent}
+    quiz.generation_options = {"quantity": "more", "difficulty": "hard", "language": "kn"}
+    db_session.flush()
+    version = orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, resume=True)
+    assert version is not None
+    assert _version(db_session, version.id).generation_options == sent
+
+
+def test_a_published_version_without_recorded_options_falls_back_to_the_artifact(
+    db_session: Session,
+) -> None:
+    from app.tasks.quiz import wanted_for
+
+    quiz = _quiz(db_session)
+    _publish(db_session, quiz)
+    quiz = db_session.get(Artifact, quiz.id)
+    _version(db_session, quiz.published_version_id).generation_options = None
+    quiz.generation_options = {"language": "mr", "difficulty": "easy"}
+    db_session.flush()
+    assert wanted_for(quiz) == {"language": "mr", "difficulty": "easy"}

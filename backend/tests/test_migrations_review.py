@@ -249,3 +249,31 @@ def test_one_active_job_per_artifact_migration_cancels_the_older_duplicates(
             state="queued",
             attempts=0,
         )
+
+
+def test_version_generation_options_backfill_and_downgrade(
+    scratch_db: tuple[AlembicConfig, Engine],
+) -> None:
+    """PR #2 review finding 1: existing versions get their artifact's current options
+    (best available); the downgrade drops the column."""
+    cfg, engine = scratch_db
+    command.upgrade(cfg, "b7d2e4f6a813")
+    with engine.begin() as conn:
+        module_id = _module(conn, _course(conn, "opts"))
+        artifact_id = _artifact(conn, module_id, published=True, kind="quiz")
+        conn.execute(
+            sa.text("UPDATE artifact SET generation_options = :o WHERE id = :a"),
+            {"o": '{"language": "ta", "difficulty": "hard"}', "a": artifact_id},
+        )
+    command.upgrade(cfg, "a3f9c1d5e7b2")
+    with engine.connect() as conn:
+        options = conn.scalar(
+            sa.text("SELECT generation_options FROM artifact_version WHERE artifact_id = :a"),
+            {"a": artifact_id},
+        )
+    assert options == {"language": "ta", "difficulty": "hard"}
+    command.downgrade(cfg, "b7d2e4f6a813")
+    with engine.connect() as conn:
+        cols = sa.inspect(conn).get_columns("artifact_version")
+    assert "generation_options" not in {c["name"] for c in cols}
+    command.upgrade(cfg, "head")
