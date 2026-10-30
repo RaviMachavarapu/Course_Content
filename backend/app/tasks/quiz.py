@@ -157,10 +157,12 @@ def seen_questions(
     )
     groups = [s.questions for s in sets] + [studio_questions(artifact)]
     texts: list[str] = []
+    listed: set[str] = set()
     for questions in groups:
         for q in questions:
             t = q.get("question") if isinstance(q, dict) else None
-            if isinstance(t, str) and t.strip() and t not in texts:
+            if isinstance(t, str) and t.strip() and t not in listed:
+                listed.add(t)
                 texts.append(t)
     return texts if limit is None else texts[:limit]
 

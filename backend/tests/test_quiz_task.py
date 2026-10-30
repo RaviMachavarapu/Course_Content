@@ -1567,3 +1567,36 @@ def test_a_pdf_module_with_an_unreadable_pdf_keeps_unfound_quotes_and_flags_them
     assert flag["reason"] == "quote not verified (some PDFs could not be read)"
     [dropped] = first["dropped"]  # a missing quote is still dropped
     assert dropped["reason"] == "quote: missing"
+
+
+def test_seen_questions_dedup_keeps_order_on_a_large_history(
+    db_session: Session, setup: tuple[Artifact, User]
+) -> None:
+    """PR #2 review finding 10: order-preserving dedup with a set (a long history with
+    repeats is listed once each, most recent first, quickly)."""
+    import time
+
+    artifact, user = setup
+    now = dt.datetime.now(tz=dt.UTC)
+    pool = [mcq() for _ in range(3000)]
+    newer, older = pool[:2000], pool[1000:]  # 1000 questions repeated across the two
+    for i, questions in enumerate([older, newer]):
+        db_session.add(
+            QuizQuestionSet(
+                artifact_id=artifact.id,
+                user_id=user.id,
+                source=QuizSetSource.chat,
+                status=QuizSetStatus.used,
+                questions=questions,
+                created_at=now - dt.timedelta(days=2 - i),
+            )
+        )
+    db_session.commit()
+
+    start = time.perf_counter()
+    seen = quiz.seen_questions(db_session, artifact, user.id)
+    elapsed = time.perf_counter() - start
+
+    studio = [q["question"] for q in quiz.studio_questions(artifact)]
+    assert seen == [q["question"] for q in pool] + studio
+    assert elapsed < 1.0

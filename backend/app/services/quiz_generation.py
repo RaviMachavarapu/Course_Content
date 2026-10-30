@@ -16,11 +16,13 @@ Question shapes kept by `validate` (extra keys are dropped):
 from __future__ import annotations
 
 import bisect
+import functools
 import json
 import logging
 import re
 import unicodedata
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -332,6 +334,7 @@ def normalize_text(s: str) -> str:
     return _NON_ALNUM_RE.sub(" ", _lower(text)).strip()
 
 
+@functools.lru_cache(maxsize=8192)
 def _dup_key(s: str) -> tuple[str, str]:
     """(text key, signature) for duplicate detection. The key keeps ^ and comparison
     symbols; the signature is just digits, symbols and Greek letters in order, so
@@ -594,6 +597,38 @@ class _SourceIndex:
         return squashed in self.squashed
 
 
+class _SeenIndex:
+    """Duplicate keys (`_dup_key`) sorted by text length, for the near-duplicate rule: two
+    questions are near-duplicates when their signatures don't differ at equal length and
+    `SequenceMatcher(None, new, seen).ratio() >= DUPLICATE_RATIO`. The ratio is at most
+    2*min(la, lb)/(la + lb), so only seen texts within the matching length window can
+    reach it; within it, `quick_ratio` (another upper bound) rules most out before the
+    full `ratio`. Exactly the same rule, without comparing against every seen question."""
+
+    def __init__(self, keys: Iterable[tuple[str, str]] = ()) -> None:
+        self._keys = sorted(keys, key=lambda k: len(k[0]))
+        self._lens = [len(k[0]) for k in self._keys]
+
+    def add(self, key: tuple[str, str]) -> None:
+        at = bisect.bisect_right(self._lens, len(key[0]))
+        self._lens.insert(at, len(key[0]))
+        self._keys.insert(at, key)
+
+    def has_near_duplicate(self, norm: tuple[str, str]) -> bool:
+        la, r = len(norm[0]), DUPLICATE_RATIO
+        # 2*min(la, lb)/(la + lb) >= r  <=>  la*r/(2-r) <= lb <= la*(2-r)/r (a hair of slack
+        # for float rounding: a wider window only costs a comparison)
+        lo = bisect.bisect_left(self._lens, la * r / (2 - r) - 1e-6)
+        hi = bisect.bisect_right(self._lens, la * (2 - r) / r + 1e-6)
+        for text, sig in self._keys[lo:hi]:
+            if len(norm[1]) == len(sig) and norm[1] != sig:
+                continue
+            sm = SequenceMatcher(None, norm[0], text)
+            if sm.quick_ratio() >= r and sm.ratio() >= r:
+                return True
+        return False
+
+
 #: validation_report flag on a kept question whose quote isn't in the module's PDFs
 UNVERIFIED_REASON = "quote not verified (link source)"
 #: the same, when some of the module's PDFs could not be read (the quote may be in one)
@@ -623,7 +658,7 @@ def validate(
     PDFs could not be read is treated the same way (`unverified_reason` then says so).
     """
     index = _SourceIndex(source_text) if source_text is not None else None
-    taken = [_dup_key(s) for s in seen]
+    taken = _SeenIndex(_dup_key(s) for s in seen)
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
 
@@ -637,11 +672,7 @@ def validate(
             dropped.append({"index": i, "question": shown, "reason": reason})
             continue
         norm = _dup_key(q["question"])
-        if any(
-            not (len(norm[1]) == len(t[1]) and norm[1] != t[1])
-            and SequenceMatcher(None, norm[0], t[0]).ratio() >= DUPLICATE_RATIO
-            for t in taken
-        ):
+        if taken.has_near_duplicate(norm):
             dropped.append(
                 {
                     "index": i,
@@ -661,7 +692,7 @@ def validate(
         if problem:
             dropped.append({"index": i, "question": shown, "reason": problem})
             continue
-        taken.append(norm)
+        taken.add(norm)
         kept.append(q)
     return kept, dropped
 

@@ -1046,3 +1046,70 @@ def test_fixture_chat_answers_in_the_asked_language(language: str) -> None:
     assert all(q["source_quote"].isascii() for q in kept)  # verbatim English source
     blanks = [q for q in kept if q["type"] == "fill_blank"]
     assert blanks and all(qg.fill_blank_correct(q, q["answer"]) for q in blanks)
+
+
+# -- a large seen list (PR #2 review finding 10) -----------------------------------------
+
+
+def _random_question(rng: Any) -> str:
+    words = ["".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(rng.randint(3, 9)))]
+    words += [
+        "".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(rng.randint(2, 9)))
+        for _ in range(rng.randint(4, 14))
+    ]
+    return " ".join(words).capitalize() + "?"
+
+
+def _brute_force_duplicate(question: str, seen: list[str]) -> bool:
+    """The duplicate rule as first written: every seen question, SequenceMatcher each."""
+    from difflib import SequenceMatcher
+
+    norm = qg._dup_key(question)
+    return any(
+        not (len(norm[1]) == len(t[1]) and norm[1] != t[1])
+        and SequenceMatcher(None, norm[0], t[0]).ratio() >= qg.DUPLICATE_RATIO
+        for t in (qg._dup_key(s) for s in seen)
+    )
+
+
+def test_validate_against_a_large_seen_list_is_fast_and_exact() -> None:
+    import random
+    import time
+
+    rng = random.Random(10)
+    seen = [_random_question(rng) for _ in range(4000)]
+    deep = seen[3456]
+    checked = [
+        deep.replace("?", " here?"),  # a near-duplicate of a question deep in the list
+        deep[:-1] + "s?",
+        "Which value of \\(\\Delta G\\) makes the reaction spontaneous, below 0?",
+        *[_random_question(rng) for _ in range(5)],
+    ]
+    fresh = [_random_question(rng) for _ in range(25)]  # random words: never duplicates
+    questions = [mcq(question=c) for c in checked + fresh]
+
+    start = time.perf_counter()
+    kept, dropped = qg.validate(questions, seen=seen, source_text=None)
+    elapsed = time.perf_counter() - start
+
+    # the rule as first written, on the questions whose answer matters
+    expected_dup = {c for c in checked if _brute_force_duplicate(c, seen)}
+    assert checked[0] in expected_dup and checked[1] in expected_dup
+    assert {d["question"] for d in dropped} == expected_dup
+    assert len(kept) == len(questions) - len(expected_dup)
+    # comparing each against all 4000 took ~5 s
+    assert elapsed < 1.5, f"validate took {elapsed:.2f}s against {len(seen)} seen questions"
+
+
+def test_near_duplicate_index_matches_the_rule_on_close_lengths() -> None:
+    """Lengths on both sides of the 0.85 bound: the index never skips a duplicate."""
+    import random
+
+    rng = random.Random(3)
+    base = "what is the main product of the reaction between ethanol and acetic acid"
+    seen = [base[: rng.randint(40, len(base))] + "x" * rng.randint(0, 20) for _ in range(300)]
+    for _ in range(200):
+        cut = rng.randint(30, len(base))
+        cand = base[:cut] + "y" * rng.randint(0, 25) + "?"
+        kept, dropped = qg.validate([mcq(question=cand)], seen=seen, source_text=None)
+        assert bool(dropped) == _brute_force_duplicate(cand, seen), cand
