@@ -75,21 +75,35 @@ def _median(values: list[int]) -> int:
     return s[len(s) // 2]
 
 
-def _ink_mask(pixels: list[tuple[int, int, int]], w: int, h: int, diff: int) -> list[list[bool]]:
-    """`h` rows of `w` flags: the pixel differs (max channel) from its row's and its
-    column's median colour by more than `diff`."""
+@dataclass(frozen=True)
+class _Band:
+    """The corner band's pixels by row, with each row's and column's median colour
+    (computed once; thresholded at `INK_DIFF` and at `EDGE_DIFF`)."""
+
+    rows: list[list[tuple[int, int, int]]]
+    row_med: list[tuple[int, ...]]
+    col_med: list[tuple[int, ...]]
+
+
+def _band(pixels: list[tuple[int, int, int]], w: int, h: int) -> _Band:
     rows = [pixels[y * w : (y + 1) * w] for y in range(h)]
     row_med = [tuple(_median([p[c] for p in row]) for c in range(3)) for row in rows]
     col_med = [
         tuple(_median([rows[y][x][c] for y in range(h)]) for c in range(3)) for x in range(w)
     ]
+    return _Band(rows, row_med, col_med)
+
+
+def _ink_mask(band: _Band, diff: int) -> list[list[bool]]:
+    """One row of flags per band row: the pixel differs (max channel) from its row's and
+    its column's median colour by more than `diff`."""
 
     def far(p: tuple[int, int, int], m: tuple[int, ...]) -> bool:
         return max(abs(p[0] - m[0]), abs(p[1] - m[1]), abs(p[2] - m[2])) > diff
 
     return [
-        [far(rows[y][x], row_med[y]) and far(rows[y][x], col_med[x]) for x in range(w)]
-        for y in range(h)
+        [far(p, band.row_med[y]) and far(p, band.col_med[x]) for x, p in enumerate(row)]
+        for y, row in enumerate(band.rows)
     ]
 
 
@@ -103,7 +117,8 @@ def find_logo(image: Image.Image) -> LogoBox | None:
         return None
     x0, y0 = width - band_w, height - band_h
     region = image.convert("RGB").crop((x0, y0, width, height))
-    mask = _ink_mask(_pixels(region), band_w, band_h, INK_DIFF)
+    band = _band(_pixels(region), band_w, band_h)
+    mask = _ink_mask(band, INK_DIFF)
 
     # the lowest cluster of ink rows: grown upwards while each row's ink stays within the
     # cluster's columns (the slide's own content above the mark is not part of it); one
@@ -139,7 +154,7 @@ def find_logo(image: Image.Image) -> LogoBox | None:
     box = LogoBox(left=x0 + left, top=y0 + top, right=x0 + right, bottom=y0 + bottom)
     if not _looks_like_logo(box, ink, width, height):
         return None
-    return _refine_top(box, x0, y0, band_w, band_h, region)
+    return _refine_top(box, x0, y0, band)
 
 
 def _looks_like_logo(box: LogoBox, ink: int, width: int, height: int) -> bool:
@@ -155,16 +170,9 @@ def _looks_like_logo(box: LogoBox, ink: int, width: int, height: int) -> bool:
     )
 
 
-def _refine_top(
-    box: LogoBox,
-    x0: int,
-    y0: int,
-    band_w: int,
-    band_h: int,
-    region: Image.Image,
-) -> LogoBox:
+def _refine_top(box: LogoBox, x0: int, y0: int, band: _Band) -> LogoBox:
     """Move the top up over the mark's faint anti-aliased edge (at most 2 rows)."""
-    faint = _ink_mask(_pixels(region), band_w, band_h, EDGE_DIFF)
+    faint = _ink_mask(band, EDGE_DIFF)
     top = box.top - y0
     for _ in range(2):
         row = top - 1

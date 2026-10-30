@@ -420,3 +420,14 @@ def test_strip_notebook_logo_without_a_mark_keeps_the_deck() -> None:
         MediaBlob(MediaFileKind.deck_pdf, deck, "application/pdf"),
     ]
     assert strip_notebook_logo(blobs) == blobs
+
+
+def test_the_band_medians_are_computed_once_per_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR #2 review finding 8: the row/column medians are computed once and thresholded
+    twice (ink, then the faint edge), with the same result."""
+    image = _real("slide_corner_plain.png", (1376, 768))
+    calls: list[int] = []
+    real = nl._band
+    monkeypatch.setattr(nl, "_band", lambda *a: calls.append(1) or real(*a))
+    assert nl.find_logo(image) == nl.LogoBox(left=1270, top=749, right=1365, bottom=756)
+    assert len(calls) == 1
