@@ -198,3 +198,59 @@ def test_purge_deletes_old_unclaimed_only(
     assert media_storage.exists(keys["claimed"])
     assert db_session.get(SourceUpload, uuid.UUID(ids["recent"])) is not None
     assert media_storage.exists(keys["recent"])
+
+
+# -- the chunk size cap is enforced while reading (PR #2 review finding 7) ---------------
+
+
+def test_an_oversized_chunk_is_413_and_nothing_is_written(
+    client: TestClient,
+    db_session: Session,
+    media_storage: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.admin import uploads as uploads_api
+
+    monkeypatch.setattr(uploads_api, "MAX_CHUNK_BYTES", 64)
+    h = _login(client, db_session)
+    uid = _create(client, h, len(PDF))
+    r = _put(client, h, uid, 0, PDF[:65])
+    assert r.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    assert r.json()["error"]["code"] == "chunk_too_large"
+    assert client.get(f"/api/admin/uploads/{uid}").json()["received_bytes"] == 0
+    # the upload resumes with chunks within the cap
+    assert _put(client, h, uid, 0, PDF[:64]).status_code == 200
+    assert _put(client, h, uid, 64, PDF[64:]).json() == {"received_bytes": len(PDF)}
+
+
+class _StreamingRequest:
+    """A request whose body arrives in 1 KiB pieces, endlessly; counts what was read."""
+
+    def __init__(self, content_length: str | None = None) -> None:
+        self.headers = {} if content_length is None else {"content-length": content_length}
+        self.read = 0
+
+    async def stream(self):  # type: ignore[no-untyped-def]
+        while True:
+            self.read += 1024
+            yield b"x" * 1024
+
+
+def test_the_body_is_read_with_a_running_cap() -> None:
+    """413 as soon as the bytes read exceed the cap: an endless body is not buffered."""
+    import asyncio
+
+    from app.api.admin.uploads import _read_capped
+    from app.errors import APIError
+
+    req = _StreamingRequest()
+    with pytest.raises(APIError) as caught:
+        asyncio.run(_read_capped(req, 10 * 1024))  # type: ignore[arg-type]
+    assert caught.value.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    assert req.read <= 11 * 1024
+
+    # a declared Content-Length over the cap is refused before reading anything
+    declared = _StreamingRequest(content_length=str(10 * 1024 + 1))
+    with pytest.raises(APIError):
+        asyncio.run(_read_capped(declared, 10 * 1024))  # type: ignore[arg-type]
+    assert declared.read == 0

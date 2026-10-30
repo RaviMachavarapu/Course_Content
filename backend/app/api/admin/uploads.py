@@ -107,6 +107,25 @@ def _apply_chunk(
     return received
 
 
+def _too_large() -> APIError:
+    return APIError(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Chunk too big")
+
+
+async def _read_capped(request: Request, cap: int) -> bytes:
+    """The request body, read as it streams in; 413 as soon as it exceeds `cap` bytes (or
+    when the declared Content-Length does), so an oversized chunk is never buffered whole.
+    Nothing is written for a refused chunk: the client resumes at the recorded offset."""
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > cap:
+        raise _too_large()
+    body = bytearray()
+    async for piece in request.stream():
+        body += piece
+        if len(body) > cap:
+            raise _too_large()
+    return bytes(body)
+
+
 @router.put("/uploads/{upload_id}", response_model=UploadProgress)
 async def put_chunk(
     upload_id: uuid.UUID,
@@ -115,9 +134,7 @@ async def put_chunk(
     admin: CurrentAdmin,
     offset: int = Query(ge=0),
 ) -> UploadProgress | JSONResponse:
-    data = await request.body()  # read first: no lock is held while awaiting
-    if len(data) > MAX_CHUNK_BYTES:
-        raise APIError(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "chunk_too_large", "Chunk too big")
+    data = await _read_capped(request, MAX_CHUNK_BYTES)  # first: no lock held while awaiting
     result = await run_in_threadpool(_apply_chunk, db, admin, upload_id, offset, data)
     if isinstance(result, JSONResponse):
         return result
