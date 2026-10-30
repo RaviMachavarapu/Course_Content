@@ -22,6 +22,13 @@ test.beforeAll(async () => {
   await c.admin.dispose();
 });
 
+/** Titles in the signed-in student's progress record (the page lists none). */
+async function startedCourses(page: Page): Promise<string[]> {
+  const r = await page.request.get("/api/student/me/progress");
+  expect(r.status()).toBe(200);
+  return ((await r.json()) as { courses: { title: string }[] }).courses.map((c) => c.title);
+}
+
 async function logOutFrom(page: Page, path: string): Promise<void> {
   // a signed-in page in the history first, so Back has somewhere to go
   await page.goto(path === "/progress" ? "/catalog" : "/progress");
@@ -73,10 +80,8 @@ test("account switch in one tab: the next student sees none of the previous one'
   await page.goto(`/learn/${slug}/0/report`);
   await page.getByTestId("btn-rp2").click(); // Complete Module
   await expect(page.getByText("100% Complete")).toBeVisible();
+  await expect.poll(() => startedCourses(page)).toContain(courseTitle);
   await page.goto("/progress");
-  await expect(
-    page.locator('[data-testid="progress-row"]', { hasText: courseTitle }),
-  ).toBeVisible();
   await page.getByTestId("btn-logout").click();
   await expect(page).toHaveURL(/\/login$/);
 
@@ -85,11 +90,7 @@ test("account switch in one tab: the next student sees none of the previous one'
   await other.close();
   await loginStudentUI(page, b.email);
   await expect(page).toHaveURL(/\/catalog$/);
-  await page.goto("/progress");
-  await expect(page.getByText("Nothing started yet")).toBeVisible();
-  await expect(page.locator('[data-testid="progress-row"]', { hasText: courseTitle })).toHaveCount(
-    0,
-  );
+  expect(await startedCourses(page)).not.toContain(courseTitle);
 });
 
 test("a lost CSRF cookie is refreshed silently: Complete Module still saves", async ({

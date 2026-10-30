@@ -82,9 +82,15 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
   await page.getByTestId("btn-rp2").click();
   await expect(page.getByText("100% Complete")).toBeVisible();
 
-  // progress reflected on the dedicated dashboard
-  await page.goto("/progress");
-  const progressRow = page.locator('[data-testid="progress-row"]', { hasText: courseTitle });
-  await expect(progressRow).toBeVisible();
-  await expect(progressRow.getByText("100%")).toBeVisible();
+  // progress reflected in the student's record
+  // the Progress page lists no courses (owner, 2026-10-30): the record is checked in the API
+  await expect
+    .poll(async () => {
+      const r = await page.request.get("/api/student/me/progress");
+      const { courses } = (await r.json()) as {
+        courses: { title: string; percent_complete: number }[];
+      };
+      return courses.find((c) => c.title === courseTitle)?.percent_complete;
+    })
+    .toBe(100);
 });
