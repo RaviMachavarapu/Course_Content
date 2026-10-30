@@ -396,7 +396,9 @@ def test_unverified_fill_blank_is_recorded_with_its_served_text(
     the admin panel can match it."""
     artifact, user = setup
     quote = "the reaction proceeds through a planar carbocation intermediate"
-    monkeypatch.setattr(qg, "module_source_text", lambda _m: f"Notes. {quote}. End.")
+    monkeypatch.setattr(
+        qg, "read_module_source_text", lambda _m: qg.SourceText(f"Notes. {quote}. End.")
+    )
     from_pdf = [{**mcq(), "source_quote": quote} for _ in range(4)]
     video_blank = {
         **blank(),
@@ -491,10 +493,10 @@ def test_unreadable_source_pdfs_retry_without_asking_chat(
 ) -> None:
     artifact, user = setup
 
-    def unreadable(_: Module) -> str | None:
+    def unreadable(_: Module) -> qg.SourceText:
         raise SourceTextUnavailable("none of the module's 1 PDF(s) could be read")
 
-    monkeypatch.setattr(qg, "module_source_text", unreadable)
+    monkeypatch.setattr(qg, "read_module_source_text", unreadable)
     chat = FakeChat()
 
     with pytest.raises(Retry):
@@ -514,7 +516,9 @@ def test_source_text_is_used_for_quote_checks(
     artifact.module.source_type = ModuleSourceType.pdf
     db_session.commit()
     quote = "the reaction proceeds through a planar carbocation intermediate"
-    monkeypatch.setattr(qg, "module_source_text", lambda _m: f"Notes. {quote}. End.")
+    monkeypatch.setattr(
+        qg, "read_module_source_text", lambda _m: qg.SourceText(f"Notes. {quote}. End.")
+    )
     good = [{**mcq(), "source_quote": quote} for _ in range(5)]
     fabricated = {**mcq(), "source_quote": "a sentence that is nowhere in the module notes"}
     chat = FakeChat(answer([*good, fabricated]), answer([]))
@@ -532,7 +536,9 @@ def test_a_link_and_pdf_module_keeps_link_quotes_and_flags_them(
 ) -> None:
     artifact, user = setup  # the module has a YouTube link
     quote = "the reaction proceeds through a planar carbocation intermediate"
-    monkeypatch.setattr(qg, "module_source_text", lambda _m: f"Notes. {quote}. End.")
+    monkeypatch.setattr(
+        qg, "read_module_source_text", lambda _m: qg.SourceText(f"Notes. {quote}. End.")
+    )
     from_pdf = [{**mcq(), "source_quote": quote} for _ in range(4)]
     from_video = {**mcq(), "source_quote": "a sentence only spoken in the video"}
     chat = FakeChat(answer([*from_pdf, from_video]), answer([]))
@@ -1527,3 +1533,37 @@ def test_a_queued_redo_in_another_language_does_not_change_the_prepared_set(
     assert "difficulty: easy" in chat.prompts[0]
     [qs] = _sets(db_session, artifact, user)
     assert qs.validation_report["prepared_for"] == {"language": "en", "difficulty": "easy"}
+
+
+def test_a_pdf_module_with_an_unreadable_pdf_keeps_unfound_quotes_and_flags_them(
+    db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #2 review finding 2: one of the module's PDFs could not be read, so the text is
+    incomplete. A quote not found in it may be in the unreadable PDF: the question is kept,
+    flagged "quote not verified", and the report names the unreadable file."""
+    artifact, user = setup
+    artifact.module.source_url = None  # PDF-only module
+    artifact.module.source_type = ModuleSourceType.pdf
+    db_session.commit()
+    quote = "the reaction proceeds through a planar carbocation intermediate"
+    monkeypatch.setattr(
+        qg,
+        "read_module_source_text",
+        lambda _m: qg.SourceText(f"Notes. {quote}. End.", ("chapter-2.pdf",)),
+    )
+    from_readable = [{**mcq(), "source_quote": quote} for _ in range(4)]
+    from_unreadable = {**mcq(), "source_quote": "a sentence only in the second chapter"}
+    no_quote = {**mcq(), "source_quote": ""}
+    chat = FakeChat(answer([*from_readable, from_unreadable, no_quote]), answer([]))
+
+    assert _run(monkeypatch, chat, artifact, user) == "ready"
+
+    [qs] = _sets(db_session, artifact, user)
+    assert len(qs.questions) == 5
+    assert qs.validation_report["unreadable_pdfs"] == ["chapter-2.pdf"]
+    first = qs.validation_report["rounds"][0]
+    [flag] = first["unverified"]
+    assert flag["question"] == from_unreadable["question"]
+    assert flag["reason"] == "quote not verified (some PDFs could not be read)"
+    [dropped] = first["dropped"]  # a missing quote is still dropped
+    assert dropped["reason"] == "quote: missing"

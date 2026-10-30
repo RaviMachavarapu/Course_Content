@@ -21,6 +21,7 @@ import logging
 import re
 import unicodedata
 import uuid
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -595,6 +596,8 @@ class _SourceIndex:
 
 #: validation_report flag on a kept question whose quote isn't in the module's PDFs
 UNVERIFIED_REASON = "quote not verified (link source)"
+#: the same, when some of the module's PDFs could not be read (the quote may be in one)
+UNVERIFIED_UNREADABLE_REASON = "quote not verified (some PDFs could not be read)"
 _QUOTE_NOT_FOUND = "quote: not found in the sources"
 
 
@@ -605,6 +608,7 @@ def validate(
     source_text: str | None,
     link_source: bool = False,
     unverified: list[dict[str, Any]] | None = None,
+    unverified_reason: str = UNVERIFIED_REASON,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Split chat questions into (kept, dropped). Dropped entries are
     `{"index", "question", "reason"}`; kept ones are normalised copies (input untouched).
@@ -615,7 +619,8 @@ def validate(
     `link_source`: the module also has a link (owner decision 2026-10-28): a quote not
     found in the PDFs may come from the link, so the question is kept and appended to
     `unverified` (same entry shape, reason `UNVERIFIED_REASON`); a missing or too-short
-    quote is still dropped, as are format problems and duplicates.
+    quote is still dropped, as are format problems and duplicates. A module some of whose
+    PDFs could not be read is treated the same way (`unverified_reason` then says so).
     """
     index = _SourceIndex(source_text) if source_text is not None else None
     taken = [_dup_key(s) for s in seen]
@@ -650,7 +655,7 @@ def validate(
             if unverified is not None:
                 # the text as served (a fill-blank's blank normalised), so it can be matched
                 unverified.append(
-                    {"index": i, "question": q["question"], "reason": UNVERIFIED_REASON}
+                    {"index": i, "question": q["question"], "reason": unverified_reason}
                 )
             problem = None
         if problem:
@@ -677,34 +682,51 @@ class SourceTextUnavailable(Exception):
     the module had no PDFs (the caller retries or fails the set)."""
 
 
-def module_source_text(module: Module) -> str | None:
-    """Extracted text of the module's PDF sources. None only when the module has no PDFs, or
-    its PDFs have no text layer (scans; logged as a warning). Raises `SourceTextUnavailable`
-    when it has PDFs and every one fails to load. Cached in-process per module + files'
-    storage keys and checksums."""
+@dataclass(frozen=True)
+class SourceText:
+    """The module's PDF text and the PDFs it is missing."""
+
+    #: None: no PDFs, or none with a text layer (quotes are not checked)
+    text: str | None
+    #: file names of the PDFs that could not be read: `text` is then incomplete, so a quote
+    #: not found in it is not proof the question was made up
+    unreadable: tuple[str, ...] = field(default=())
+
+
+def read_module_source_text(module: Module) -> SourceText:
+    """Extracted text of the module's PDF sources, and which PDFs could not be read. `text`
+    is None only when the module has no PDFs, or its PDFs have no text layer (scans; logged
+    as a warning). Raises `SourceTextUnavailable` when it has PDFs and every one fails to
+    load. A complete read is cached in-process per module + files' storage keys and
+    checksums (a partial one is not: the next run tries the failed files again)."""
     files = sorted(module.source_files, key=lambda f: f.order_index)
     if not files:
-        return None
+        return SourceText(None)
     key = (module.id, tuple((f.storage_key, f.checksum_sha256) for f in files))
     if key in _text_cache:
-        return _text_cache[key]
+        return SourceText(_text_cache[key])
     storage = storage_service.get_storage()
     texts: list[str] = []
-    complete = True
+    unreadable: list[str] = []
     for f in files:
         try:
             texts.append(_extract_pdf_text(storage.path_for(f.storage_key)))
         except Exception:  # pypdf raises many error types on damaged input
             log.warning("could not read PDF text of %s", f.file_name, exc_info=True)
-            complete = False
+            unreadable.append(f.file_name)
     if not texts:
         raise SourceTextUnavailable(f"none of the module's {len(files)} PDF(s) could be read")
     text = "\n".join(texts)
     result = text if text.strip() else None
     if result is None:
         log.warning("module %s: PDF sources have no text layer; quotes are not checked", module.id)
-    if complete:
+    if not unreadable:
         if len(_text_cache) >= _CACHE_MAX:
             _text_cache.pop(next(iter(_text_cache)))
         _text_cache[key] = result
-    return result
+    return SourceText(result, tuple(unreadable))
+
+
+def module_source_text(module: Module) -> str | None:
+    """`read_module_source_text(module).text` (possibly incomplete: see `SourceText`)."""
+    return read_module_source_text(module).text

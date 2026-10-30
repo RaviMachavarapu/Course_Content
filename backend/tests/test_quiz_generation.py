@@ -384,6 +384,32 @@ def test_module_source_text_skips_unreadable_file(
     assert text is not None and text.split().count("word") == 3
 
 
+def test_read_module_source_text_names_the_unreadable_pdfs_and_does_not_cache(
+    db_session: Session, media_storage: Storage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    good = _make_pdf(tmp_path / "a.pdf", [(3, 0)]).read_bytes()
+    module = _module_with_pdfs(db_session, media_storage, tmp_path, [b"not a pdf", good])
+    source = qg.read_module_source_text(module)
+    assert source.unreadable == ("f0.pdf",)
+    assert source.text is not None and source.text.split().count("word") == 3
+
+    calls: list[Path] = []
+    real = qg._extract_pdf_text
+    monkeypatch.setattr(qg, "_extract_pdf_text", lambda p: calls.append(p) or real(p))
+    assert qg.read_module_source_text(module).unreadable == ("f0.pdf",)
+    assert len(calls) == 2  # a partial read is tried again, not cached
+
+
+def test_complete_read_has_no_unreadable_pdfs(
+    db_session: Session, media_storage: Storage, tmp_path: Path
+) -> None:
+    good = _make_pdf(tmp_path / "a.pdf", [(2, 0)]).read_bytes()
+    source = qg.read_module_source_text(
+        _module_with_pdfs(db_session, media_storage, tmp_path, [good])
+    )
+    assert source.unreadable == () and source.text is not None
+
+
 # keep json import used (answers are JSON text)
 def test_answer_fixture_is_json_text() -> None:
     assert isinstance(json.loads(ANSWER), list)

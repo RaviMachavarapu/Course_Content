@@ -112,6 +112,8 @@ class _Job:
     source_text: str | None
     #: the module also has a link: quotes not in its PDFs are kept, flagged
     link_source: bool = False
+    #: PDFs whose text could not be read: quotes not found are kept, flagged
+    unreadable_pdfs: tuple[str, ...] = ()
     language: str = "en"
     difficulty: str = "medium"
 
@@ -421,14 +423,17 @@ def _load_job(db: Session, set_id: uuid.UUID, aid: uuid.UUID, uid: uuid.UUID) ->
     qs = db.get(QuizQuestionSet, set_id)
     recorded = qs.validation_report.get("prepared_for") if qs is not None else None
     wanted = qg.prepared_for(recorded if isinstance(recorded, dict) else None)
-    source_text = qg.module_source_text(module) if module.notebooklm_notebook_id else None
+    source = (
+        qg.read_module_source_text(module) if module.notebooklm_notebook_id else qg.SourceText(None)
+    )
     return _Job(
         set_id=set_id,
         n=len(studio_questions(artifact)) or DEFAULT_QUESTION_COUNT,
         seen=seen_questions(db, artifact, uid),
         notebook_id=module.notebooklm_notebook_id,
-        source_text=source_text,
+        source_text=source.text,
         link_source=bool(module.source_url),
+        unreadable_pdfs=source.unreadable,
         language=wanted["language"],
         difficulty=wanted["difficulty"],
     )
@@ -462,8 +467,13 @@ def _validate(
         parsed,
         seen=seen,
         source_text=job.source_text,
-        link_source=job.link_source,
+        # a quote may come from the link, or from a PDF whose text could not be read:
+        # kept and flagged rather than dropped (the spec's mixed-module rule)
+        link_source=job.link_source or bool(job.unreadable_pdfs),
         unverified=unverified,
+        unverified_reason=(
+            qg.UNVERIFIED_UNREADABLE_REASON if job.unreadable_pdfs else qg.UNVERIFIED_REASON
+        ),
     )
     return kept, dropped, unverified
 
@@ -472,6 +482,8 @@ def _generate(provider: ContentProvider, job: _Job) -> _Result:
     """Ask chat (once more for a shortfall), validate, and build the set + report."""
     nb = NotebookRef(notebook_id=job.notebook_id or "")
     report: dict[str, Any] = {"requested": job.n, "seen": len(job.seen), "rounds": []}
+    if job.unreadable_pdfs:
+        report["unreadable_pdfs"] = list(job.unreadable_pdfs)
 
     _beat_or_stop(job.set_id)
     style = {"language": job.language, "difficulty": job.difficulty}
