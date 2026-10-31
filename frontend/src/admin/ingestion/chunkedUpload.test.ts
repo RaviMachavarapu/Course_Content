@@ -212,6 +212,64 @@ describe("uploadPdf", () => {
     await expect(p).resolves.toBe("u1");
   });
 
+  it("reports the new upload as soon as the server starts it", async () => {
+    stubFetch([START, { status: 200, body: { received_bytes: 10 } }]);
+    const onStarted = vi.fn();
+    await uploadPdf(pdf(10), vi.fn(), undefined, { onStarted });
+    expect(onStarted).toHaveBeenCalledWith({ upload_id: "u1", chunk_size: CHUNK });
+  });
+
+  it("resumes an earlier upload from the server's received_bytes", async () => {
+    const size = 2 * CHUNK;
+    const calls = stubFetch([
+      { status: 200, body: { received_bytes: CHUNK, status: "receiving" } },
+      { status: 200, body: { received_bytes: size } },
+    ]);
+    const progress = vi.fn();
+    const onStarted = vi.fn();
+    const id = await uploadPdf(pdf(size), progress, undefined, {
+      resume: { upload_id: "u1", chunk_size: CHUNK },
+      onStarted,
+    });
+    expect(id).toBe("u1");
+    expect(calls.map((c) => [c.method, c.url.split("?")[0]])).toEqual([
+      ["GET", "/api/admin/uploads/u1"],
+      ["PUT", "/api/admin/uploads/u1"],
+    ]);
+    expect(offsetOf(calls[1]!)).toBe(CHUNK);
+    expect(progress).toHaveBeenNthCalledWith(1, CHUNK, size);
+    expect(onStarted).not.toHaveBeenCalled();
+  });
+
+  it("a resumed upload the server already has whole sends nothing more", async () => {
+    const calls = stubFetch([{ status: 200, body: { received_bytes: 10, status: "complete" } }]);
+    await expect(
+      uploadPdf(pdf(10), vi.fn(), undefined, { resume: { upload_id: "u1", chunk_size: CHUNK } }),
+    ).resolves.toBe("u1");
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["gone (404)", { status: 404, body: { error: { code: "not_found", message: "x" } } }],
+    ["already used", { status: 200, body: { received_bytes: 10, status: "claimed" } }],
+  ])("starts a fresh upload when the earlier one is %s", async (_label, reply) => {
+    const calls = stubFetch([
+      reply,
+      { status: 201, body: { upload_id: "u2", chunk_size: CHUNK } },
+      { status: 200, body: { received_bytes: 10 } },
+    ]);
+    const onStarted = vi.fn();
+    await expect(
+      uploadPdf(pdf(10), vi.fn(), undefined, {
+        resume: { upload_id: "u1", chunk_size: CHUNK },
+        onStarted,
+      }),
+    ).resolves.toBe("u2");
+    expect(calls.map((c) => c.method)).toEqual(["GET", "POST", "PUT"]);
+    expect(offsetOf(calls[2]!)).toBe(0);
+    expect(onStarted).toHaveBeenCalledWith({ upload_id: "u2", chunk_size: CHUNK });
+  });
+
   it("reports an expired CSRF token so the app can send the admin to sign in", async () => {
     const handler = vi.fn();
     setCsrfFailureHandler(handler);

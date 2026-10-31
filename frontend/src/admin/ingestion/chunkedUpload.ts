@@ -11,9 +11,17 @@ import {
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
-interface UploadStarted {
+/** A server-side upload: what `uploadPdf` needs to resume it later. */
+export interface UploadStarted {
   upload_id: string;
   chunk_size: number;
+}
+
+export interface UploadOptions {
+  /** An earlier upload of this same file to continue (a Retry). */
+  resume?: UploadStarted;
+  /** Called once the server starts a new upload, so a later Retry can resume it. */
+  onStarted?: (started: UploadStarted) => void;
 }
 
 function abortError(): Error {
@@ -116,25 +124,52 @@ async function isComplete(uploadId: string, total: number, signal?: AbortSignal)
   }
 }
 
+/** Where an earlier upload can go on from, or null when it can't (gone: lost,
+ * refused or purged; or already used by a module) and a fresh one is needed. */
+async function resumeOffset(
+  uploadId: string,
+  total: number,
+  signal?: AbortSignal,
+): Promise<number | null> {
+  try {
+    const s = await apiFetch<{ received_bytes: number; status: string }>(
+      `/api/admin/uploads/${uploadId}`,
+      { signal },
+    );
+    if (s.status === "receiving") return s.received_bytes;
+    return s.status === "complete" && s.received_bytes === total ? total : null;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
 /**
  * Resumable chunked upload. Resolves to the server's upload id once every byte
- * is accepted (and the server has checked the file really is a PDF).
+ * is accepted (and the server has checked the file really is a PDF). With
+ * `options.resume`, continues that upload from the bytes the server has.
  */
 export async function uploadPdf(
   file: File,
   onProgress: (sent: number, total: number) => void,
   signal?: AbortSignal,
+  options: UploadOptions = {},
 ): Promise<string> {
   const total = file.size;
-  const started = await apiFetch<UploadStarted>("/api/admin/uploads", {
-    method: "POST",
-    body: { file_name: file.name, size_bytes: total },
-    signal,
-  });
+  let started = options.resume;
+  let offset = started ? await resumeOffset(started.upload_id, total, signal) : null;
+  if (started === undefined || offset === null) {
+    started = await apiFetch<UploadStarted>("/api/admin/uploads", {
+      method: "POST",
+      body: { file_name: file.name, size_bytes: total },
+      signal,
+    });
+    options.onStarted?.(started);
+    offset = 0;
+  }
   const chunkSize = started.chunk_size;
-  onProgress(0, total);
+  onProgress(offset, total);
 
-  let offset = 0;
   while (offset < total) {
     const slice = file.slice(offset, Math.min(offset + chunkSize, total));
     const isFinal = offset + slice.size >= total;

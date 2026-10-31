@@ -12,7 +12,7 @@ import {
 import { ARTIFACT_LABELS, ARTIFACT_TYPES, type ArtifactType } from "../api";
 import { sourceUrlError } from "../sourceValidation";
 import { PdfPicker, type PickedFile } from "./PdfPicker";
-import { uploadPdf } from "./chunkedUpload";
+import { type UploadStarted, uploadPdf } from "./chunkedUpload";
 import { ModuleCreateError, useCourses, useIngest, useMcpStatus } from "../useAdminApi";
 
 type Target = "new" | "existing";
@@ -48,6 +48,8 @@ export function IngestionPage(): JSX.Element {
   const [promptsByType, setPromptsByType] = useState<PromptsByType>({});
   const [pdfs, setPdfs] = useState<PickedFile[]>([]);
   const aborts = useRef(new Map<string, AbortController>());
+  // each picked file's server-side upload, so Retry resumes it instead of resending it all
+  const started = useRef(new Map<string, UploadStarted>());
   const queue = useRef<Promise<void>>(Promise.resolve());
   const nextId = useRef(0);
   const [submitted, setSubmitted] = useState(false);
@@ -69,7 +71,12 @@ export function IngestionPage(): JSX.Element {
             file,
             (sent, total) => patchPdf(id, { sent, total }),
             ctrl.signal,
+            {
+              resume: started.current.get(id),
+              onStarted: (s) => started.current.set(id, s),
+            },
           );
+          started.current.delete(id);
           if (!ctrl.signal.aborted) patchPdf(id, { state: "done", uploadId, error: undefined });
         } catch (err) {
           if (ctrl.signal.aborted) return;
@@ -99,6 +106,7 @@ export function IngestionPage(): JSX.Element {
 
   const removePdf = (id: string) => {
     aborts.current.get(id)?.abort();
+    started.current.delete(id);
     setPdfs((prev) => prev.filter((f) => f.id !== id));
   };
 

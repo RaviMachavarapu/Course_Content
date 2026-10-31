@@ -292,6 +292,24 @@ describe("IngestionPage PDF sources", () => {
     expect(JSON.parse((post![1] as RequestInit).body as string).upload_ids).toEqual(["u1", "u3"]);
   });
 
+  it("Retry resumes the failed upload instead of starting from byte 0", async () => {
+    const handle = { upload_id: "u1", chunk_size: 8 };
+    vi.mocked(uploadPdf)
+      .mockImplementationOnce((_file, _progress, _signal, opts) => {
+        opts?.onStarted?.(handle);
+        return Promise.reject(new Error("Upload failed (502)"));
+      })
+      .mockResolvedValueOnce("u1");
+    installFetch([HEALTHY, NO_COURSES, EMPTY_PIPELINE]);
+    renderPage();
+    addPdfs("a.pdf");
+    expect(await screen.findByText("Upload failed (502)")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(uploadPdf).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(uploadPdf).mock.calls[0]![3]?.resume).toBeUndefined();
+    expect(vi.mocked(uploadPdf).mock.calls[1]![3]?.resume).toEqual(handle);
+  });
+
   it("names only the first failed PDF", async () => {
     vi.mocked(uploadPdf)
       .mockRejectedValueOnce(new Error("a.pdf is not a PDF"))
