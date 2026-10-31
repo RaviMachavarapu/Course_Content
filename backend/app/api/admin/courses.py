@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.admin import ADMIN_DEPENDENCIES
 from app.api.deps import CurrentAdmin, DbDep
+from app.config import get_settings
 from app.errors import APIError, invalid_input
 from app.logging import get_logger
 from app.models.course import Course
@@ -203,6 +204,18 @@ def create_module(
         source_type = detected
     else:
         source_type = ModuleSourceType.pdf
+
+    # NotebookLM's per-notebook cap (PDFs split into parts can still exceed it later:
+    # the source step checks again)
+    total = len(body.upload_ids) + (1 if link else 0)
+    cap = get_settings().notebook_max_sources
+    if total > cap:
+        raise APIError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "too_many_sources",
+            f"This module has {total} sources (a link counts as one); "
+            f"NotebookLM allows at most {cap}",
+        )
 
     uploads = _lock_uploads(db, body.upload_ids, admin.id)
 

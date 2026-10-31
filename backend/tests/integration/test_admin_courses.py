@@ -329,6 +329,26 @@ def test_create_module_needs_a_source(client: TestClient, db_session: Session) -
     assert r.json()["error"]["code"] == "no_source"
 
 
+def test_create_module_refuses_more_sources_than_a_notebook_holds(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refused before any upload is claimed: the PDFs stay usable for a smaller module."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "notebook_max_sources", 2)
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    u1 = _upload(client, h, "one.pdf", _pdf_bytes())
+    u2 = _upload(client, h, "two.pdf", _pdf_bytes())
+    r = _post_module(client, h, cid, source_url="https://example.com/article", upload_ids=[u1, u2])
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "too_many_sources"
+    assert r.json()["error"]["message"] == (
+        "This module has 3 sources (a link counts as one); NotebookLM allows at most 2"
+    )
+    assert _post_module(client, h, cid, upload_ids=[u1, u2]).status_code == 201
+
+
 def test_cannot_claim_incomplete_or_foreign_upload(client: TestClient, db_session: Session) -> None:
     h = _admin(client, db_session)
     cid = _course(client, h)
