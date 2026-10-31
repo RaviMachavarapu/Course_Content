@@ -537,3 +537,35 @@ def test_a_failed_slide_media_download_fails_the_run() -> None:
     provider.fail_url = urls[1]
     with pytest.raises(ProviderError, match="HTTP 403"):
         orchestrator._content_and_media(provider, ArtifactType.slide_deck, raw, job)
+
+
+class _BlockedDownloads(FakeNotebookLm):
+    """One download fails at once; the others hang until `release` is set."""
+
+    def __init__(self, row: list[Any] | None, fail_url: str) -> None:
+        super().__init__(row)
+        self.fail_url = fail_url
+        self.release = threading.Event()
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        if url == self.fail_url:
+            raise ProviderError("media download failed (HTTP 403)")
+        self.release.wait(timeout=10)
+        return super().download(url)
+
+
+def test_a_failed_download_does_not_wait_for_the_others_in_flight() -> None:
+    """Waiting on a hung download after a failure (or the soft time limit) could
+    outlast the hard limit, so the worker is killed before the failure is recorded."""
+    row = _row("slide_deck.json")
+    job = StudioJobRef(job_id="nlm-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    urls = [ref.url for ref in parse_notebooklm(ArtifactType.slide_deck, row, "").media]
+    provider = _BlockedDownloads(row, fail_url=urls[0])
+    raw = provider.fetch_content(job)
+    started = time.monotonic()
+    try:
+        with pytest.raises(ProviderError, match="HTTP 403"):
+            orchestrator._content_and_media(provider, ArtifactType.slide_deck, raw, job)
+        assert time.monotonic() - started < 5
+    finally:
+        provider.release.set()

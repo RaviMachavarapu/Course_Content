@@ -959,16 +959,19 @@ def _content_and_media(
 
     # A few at a time (downloads don't take the session lock); the heartbeat is
     # touched from this thread as each one lands, and the first failure fails the run.
-    with ThreadPoolExecutor(max_workers=_MEDIA_DOWNLOAD_WORKERS) as pool:
+    # Not `with`: its exit waits for downloads in flight, which after a failure or the
+    # soft time limit could outlast the hard limit (the worker killed before the
+    # failure is recorded). Those threads finish on their own; their results are dropped.
+    pool = ThreadPoolExecutor(max_workers=_MEDIA_DOWNLOAD_WORKERS)
+    try:
         futures: list[Future[bytes]] = [pool.submit(fetch, ref.url) for ref in parsed.media]
-        try:
-            for done in as_completed(futures):
-                done.result()
-                on_progress()
-        except BaseException:
-            for f in futures:
-                f.cancel()
-            raise
+        for done in as_completed(futures):
+            done.result()
+            on_progress()
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown()
     blobs = [
         MediaBlob(
             kind=ref.kind,
