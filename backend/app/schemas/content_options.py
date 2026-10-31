@@ -149,6 +149,17 @@ def default_options(artifact_type: ArtifactType) -> dict[str, object]:
     return model().model_dump(exclude={"type"})
 
 
+def takes_focus(artifact_type: ArtifactType, options: dict[str, object] | None) -> bool:
+    """Whether NotebookLM receives a focus prompt for these options. Reports take
+    one only with the "Create your own" (`custom`) template: its interactive
+    format and the other document templates send none (`mcp/shim/studio.js`
+    buildSpec). frontend/src/admin/generationOptions.ts `takesPrompt` matches."""
+    if artifact_type is not ArtifactType.report:
+        return True
+    opts = options or {}
+    return opts.get("format") == "document" and opts.get("template") == "custom"
+
+
 def validate_options(artifact_type: ArtifactType, raw: dict[str, object]) -> dict[str, object]:
     """Validate a raw options dict against the type's schema, filling in
     defaults for anything missing. Raises `pydantic.ValidationError` on a bad

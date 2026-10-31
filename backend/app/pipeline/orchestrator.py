@@ -52,7 +52,7 @@ from app.pipeline.renderers import RENDERERS, MediaBlob, strip_notebook_logo
 from app.render import RenderError
 from app.render.report_html import build_report_html
 from app.schemas.content import AudioOverviewContent, ReportContent
-from app.schemas.content_options import validate_options
+from app.schemas.content_options import takes_focus, validate_options
 from app.services.derived_status import recompute_status
 from app.services.prompts import get_active_body, get_active_template
 from app.storage.keys import media_key
@@ -260,6 +260,8 @@ def enqueue_artifact_regeneration(
 
     if options is not None:
         artifact.generation_options = validate_options(artifact.type, options)
+    if not takes_focus(artifact.type, artifact.generation_options):
+        redo_note = None  # NotebookLM's template takes no instruction: never claim one
     if not isinstance(custom_prompt, Unset):
         artifact.custom_prompt = _clean_prompt(custom_prompt)
     if not (resume and can_resume(artifact)):
@@ -717,10 +719,18 @@ def _resolve_job(
     return job
 
 
-def _prepare_request(session: Session, plan: _Plan) -> dict[str, Any]:
+def _prepare_request(session: Session, plan: _Plan, options: dict[str, Any]) -> dict[str, Any]:
     """(Short transaction) the focus prompt and options for a new generation. A
     custom prompt replaces the template entirely, so no template version is
-    recorded for it (Inspect shows "Custom prompt")."""
+    recorded for it (Inspect shows "Custom prompt"). Options NotebookLM takes no
+    focus for (most reports) get none: no prompt, note or template is recorded."""
+    if not takes_focus(plan.kind, options):
+        return {
+            "focus_prompt": "",
+            "redo_note": None,
+            "template_id": None,
+            "template_version": None,
+        }
     template = None if plan.custom_prompt else get_active_template(session, plan.kind)
     base_body = plan.custom_prompt or get_active_body(session, plan.kind)
     focus_prompt = base_body
@@ -754,10 +764,10 @@ def _generate(session: Session, provider: ContentProvider, plan: _Plan) -> Artif
         }
         options: dict[str, Any] = {}  # nothing is sent
     else:
-        plan.request = _prepare_request(session, plan)
         # Stored options may predate a schema change: fill defaults, reject what
         # NotebookLM doesn't offer, before anything is sent.
         options = validate_options(plan.kind, plan.generation_options)
+        plan.request = _prepare_request(session, plan, options)
         plan.request["generation_options"] = options  # recorded on the version
 
     plan.progress()

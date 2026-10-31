@@ -59,7 +59,7 @@ function previewText(type: ArtifactType, p: Record<string, unknown>): string {
 interface Props {
   artifact: StagingArtifact;
   busy: boolean;
-  onRedo: (note: string | null, options: OptionValues, customPrompt: string) => void;
+  onRedo: (note: string | null, options: OptionValues, customPrompt: string | undefined) => void;
   onRetry: () => void;
   onOutline: (feedback: string | null) => void;
   /** Stop waiting for a stuck generation (lost job, hung call). */

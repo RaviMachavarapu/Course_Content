@@ -229,6 +229,9 @@ def test_a_timeout_keeps_the_notebooklm_artifact_and_retry_resumes_it(
     monkeypatch.setattr(orchestrator, "_POLL_INTERVAL_SEC", 0)
     monkeypatch.setattr(orchestrator, "settings_timeout", lambda _a: 0)
     artifact, job_id = _queued(db_session)
+    # "Create your own": the report template that takes a focus prompt
+    artifact.generation_options = {"format": "document", "template": "custom", "language": "en"}
+    db_session.flush()
     provider = Provider()
     provider.statuses = [StudioStatus.pending]
     with pytest.raises(GenerationTimeout):

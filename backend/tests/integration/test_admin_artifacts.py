@@ -30,7 +30,14 @@ def _generated_report(db: Session) -> Artifact:
     )
     db.add(module)
     db.flush()
-    jobs = orchestrator.start_module_generation(db, PROVIDER, module.id, [ArtifactType.report])
+    jobs = orchestrator.start_module_generation(
+        db,
+        PROVIDER,
+        module.id,
+        [ArtifactType.report],
+        # "Create your own": the report template that takes a focus prompt
+        options_by_type={ArtifactType.report: {"format": "document", "template": "custom"}},
+    )
     orchestrator.run_artifact_generation(db, PROVIDER, jobs[0].artifact_id, job_id=jobs[0].job_id)
     db.expire_all()
     return db.get(Artifact, jobs[0].artifact_id)

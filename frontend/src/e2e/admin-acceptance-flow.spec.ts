@@ -39,14 +39,14 @@ test("AC4: ingest -> 6 generated -> redo one -> publish module -> publish course
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 150_000 });
   await expect(page.getByTestId("btn-sr4")).toHaveCount(6); // one Redo button per resolved card
 
-  // --- redo one (Report, with a note) ---
-  await page.getByRole("button", { name: "Redo Report" }).click();
-  await page.getByRole("textbox").fill("Trim to one page");
+  // --- redo one (Quiz, with a note: a report template may take none) ---
+  await page.getByRole("button", { name: "Redo Quiz" }).click();
+  await page.getByLabel("Instruction (optional) — what should change?").fill("Trim to one page");
   await page.getByTestId("btn-sr7").click();
   // (the fixture provider can finish the redo before the next staging poll,
   // so the transient "Generating…" state is not asserted)
-  const reportCard = page.getByRole("button", { name: "Redo Report" }).locator("xpath=../..");
-  await expect(reportCard.getByText("rev 2")).toBeVisible({ timeout: 30_000 });
+  const quizCard = page.getByRole("button", { name: "Redo Quiz" }).locator("xpath=../..");
+  await expect(quizCard.getByText("rev 2")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/^rev \d+$/)).toHaveCount(1); // no other card regenerated
 

@@ -76,6 +76,17 @@ function renderPage() {
 }
 
 describe("InspectPage", () => {
+  it("a version sent with no prompt (a NotebookLM report template) says so", async () => {
+    installFetch(() => ({
+      ...BODY,
+      viewing: { ...V2, focus_prompt_used: "", prompt_template_version: null, redo_note: null },
+    }));
+    renderPage();
+    expect(await screen.findByText("None (NotebookLM template)")).toBeInTheDocument();
+    expect(screen.queryByText("Custom prompt (template replaced)")).not.toBeInTheDocument();
+    expect(screen.queryByText("focus_prompt used")).not.toBeInTheDocument();
+  });
+
   it("renders the current version content + metadata + BTN-AI2 back link", async () => {
     installFetch(() => BODY);
     renderPage();

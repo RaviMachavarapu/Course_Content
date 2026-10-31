@@ -33,22 +33,22 @@ test("redo regenerates only the chosen artifact", async ({ page }) => {
   // Redo is disabled while a card generates: all six enabled = nothing in flight
   await expect(page.locator('[data-testid="btn-sr4"]:enabled')).toHaveCount(6);
 
-  // Report card: redo with an instruction
-  await page.getByRole("button", { name: "Redo Report" }).click();
-  await page.getByRole("textbox").fill("Trim to one page");
+  // Quiz card: redo with an instruction (most report templates take none)
+  await page.getByRole("button", { name: "Redo Quiz" }).click();
+  await page.getByLabel("Instruction (optional) — what should change?").fill("Trim to one page");
   await page.getByTestId("btn-sr7").click();
 
-  // the Report card settles on rev 2 and no other card regenerates. (The
+  // the Quiz card settles on rev 2 and no other card regenerates. (The
   // fixture provider can finish a redo before the next staging poll, so the
   // transient "Generating…" state is not asserted.)
-  const reportCard = page.getByRole("button", { name: "Redo Report" }).locator("xpath=../..");
-  await expect(reportCard.getByText("rev 2")).toBeVisible({ timeout: 30_000 });
+  const quizCard = page.getByRole("button", { name: "Redo Quiz" }).locator("xpath=../..");
+  await expect(quizCard.getByText("rev 2")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText(/^rev \d+$/)).toHaveCount(1);
 
-  // Inspect the report → version history has two entries, redo note stored
+  // Inspect the quiz → version history has two entries, redo note stored
   await page
-    .getByRole("button", { name: "Redo Report" })
+    .getByRole("button", { name: "Redo Quiz" })
     .locator("xpath=../..")
     .getByTestId("btn-sr5")
     .click();

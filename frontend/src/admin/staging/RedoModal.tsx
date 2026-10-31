@@ -4,8 +4,10 @@ import type { ArtifactType } from "../api";
 import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
 import {
   DEFAULT_OPTIONS,
+  noPromptReason,
   normalizeOptions,
   optionsProblem,
+  takesPrompt,
   type OptionValues,
 } from "../generationOptions";
 
@@ -21,7 +23,8 @@ interface RedoModalProps {
   /** The artifact's stored custom prompt ("" = it uses the Settings template). */
   initialPrompt: string;
   onCancel: () => void;
-  onStart: (note: string | null, options: OptionValues, customPrompt: string) => void;
+  /** `customPrompt` is undefined when these options take none (the stored text is kept). */
+  onStart: (note: string | null, options: OptionValues, customPrompt: string | undefined) => void;
 }
 
 export function RedoModal({
@@ -43,6 +46,9 @@ export function RedoModal({
   // Whatever is in this box is sent (owner decision 2026-10-20); empty means
   // "use the Settings template".
   const [customPrompt, setCustomPrompt] = useState(initialPrompt);
+  // Most report templates take no instructions: offer and send neither a note
+  // nor the (hidden) prompt (owner decision 2026-10-31).
+  const promptless = noPromptReason(type, options);
 
   // Each opening starts fresh: a cancelled edit or the last instruction must
   // not be carried into (and re-sent with) the next redo.
@@ -67,7 +73,11 @@ export function RedoModal({
           <Button
             loading={pending}
             disabled={problem !== null}
-            onClick={() => onStart(note.trim() || null, options, customPrompt.trim())}
+            onClick={() =>
+              takesPrompt(type, options)
+                ? onStart(note.trim() || null, options, customPrompt.trim())
+                : onStart(null, options, undefined)
+            }
             data-testid="btn-sr7"
           >
             Start regeneration
@@ -76,16 +86,25 @@ export function RedoModal({
       }
     >
       <div className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1 font-label-md text-label-md text-on-surface-variant">
-          Instruction (optional) — what should change?
-          <textarea
-            rows={4}
-            maxLength={NOTE_MAX}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md text-on-surface focus:shadow-focus focus:outline-none"
-          />
-        </label>
+        {promptless ? (
+          <p
+            data-testid="redo-no-instruction"
+            className="font-label-md text-label-md text-on-surface-variant"
+          >
+            {promptless}
+          </p>
+        ) : (
+          <label className="flex flex-col gap-1 font-label-md text-label-md text-on-surface-variant">
+            Instruction (optional) — what should change?
+            <textarea
+              rows={4}
+              maxLength={NOTE_MAX}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md text-on-surface focus:shadow-focus focus:outline-none"
+            />
+          </label>
+        )}
         <div data-testid="redo-options">
           <p className="mb-1 font-label-md text-label-md text-on-surface-variant">Options</p>
           <GenerationOptionsEditor

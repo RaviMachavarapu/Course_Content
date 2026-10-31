@@ -177,6 +177,48 @@ describe("StagingPage", () => {
       { method: "GET", match: "/staging", body: stagingBody() },
       {
         method: "POST",
+        match: "/api/admin/artifacts/a-quiz/redo",
+        status: 202,
+        body: { job: { id: "j", state: "queued" } },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    await userEvent.type(
+      await screen.findByLabelText("Instruction (optional) — what should change?"),
+      "make it shorter",
+    );
+    await userEvent.click(screen.getByTestId("btn-sr7"));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-quiz/redo"),
+      );
+      expect(post).toBeDefined();
+      expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
+        note: "make it shorter",
+        options: { quantity: "standard", difficulty: "medium", language: "en" },
+        custom_prompt: "",
+      });
+    });
+  });
+
+  it("a report template without instructions offers no note and sends no prompt", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([
+          artifact("report", {
+            custom_prompt: "Chapter 1 only",
+            generation_options: { format: "document", template: "custom", language: "en" },
+          }),
+        ]),
+      },
+      {
+        method: "POST",
         match: "/api/admin/artifacts/a-report/redo",
         status: 202,
         body: { job: { id: "j", state: "queued" } },
@@ -186,7 +228,24 @@ describe("StagingPage", () => {
     await screen.findByRole("heading", { name: "Neural Nets" });
 
     await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
-    await userEvent.type(await screen.findByRole("textbox"), "make it shorter");
+    // "Create your own" takes instructions: note and prompt are offered
+    await userEvent.type(
+      await screen.findByLabelText("Instruction (optional) — what should change?"),
+      "shorter",
+    );
+    expect(screen.getByLabelText("Describe the kind of report to create")).toHaveValue(
+      "Chapter 1 only",
+    );
+    await userEvent.click(screen.getByRole("radio", { name: /Study guide/ }));
+    expect(
+      screen.queryByLabelText("Instruction (optional) — what should change?"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Describe the kind of report to create"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("redo-no-instruction")).toHaveTextContent(
+      "NotebookLM's “Study guide” template doesn't take instructions.",
+    );
     await userEvent.click(screen.getByTestId("btn-sr7"));
 
     await waitFor(() => {
@@ -194,10 +253,10 @@ describe("StagingPage", () => {
         (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-report/redo"),
       );
       expect(post).toBeDefined();
+      // no note; custom_prompt omitted, so the stored text is kept for "Create your own"
       expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
-        note: "make it shorter",
-        options: { format: "interactive", template: null, language: "en" },
-        custom_prompt: "",
+        note: null,
+        options: { format: "document", template: "study_guide", language: "en" },
       });
     });
   });
@@ -393,8 +452,8 @@ describe("StagingPage", () => {
     const fetchMock = installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
     renderPage();
     await screen.findByRole("heading", { name: "Neural Nets" });
-    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
-    await screen.findByRole("textbox");
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    await screen.findByLabelText("Instruction (optional) — what should change?");
     await userEvent.click(screen.getByTestId("btn-sr8"));
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "POST")).toBe(false);
@@ -478,11 +537,12 @@ describe("StagingPage", () => {
     installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
     renderPage();
     await screen.findByRole("heading", { name: "Neural Nets" });
-    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
-    await userEvent.type(await screen.findByRole("textbox"), "discard me");
+    const NOTE = "Instruction (optional) — what should change?";
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    await userEvent.type(await screen.findByLabelText(NOTE), "discard me");
     await userEvent.click(screen.getByTestId("btn-sr8"));
-    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
-    const box = await screen.findByRole("textbox");
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    const box = await screen.findByLabelText(NOTE);
     expect(box).toHaveValue("");
     expect(box).toHaveAttribute("maxLength", "4000");
   });

@@ -116,7 +116,13 @@ export function InspectPage(): JSX.Element {
                 <MetaRow label="Job id" value={v.generation_job_id ?? "—"} />
                 <MetaRow
                   label="Prompt version"
-                  value={v.prompt_template_version ?? "Custom prompt (template replaced)"}
+                  value={
+                    v.prompt_template_version ??
+                    // no prompt at all: a report template NotebookLM takes none for
+                    (v.focus_prompt_used
+                      ? "Custom prompt (template replaced)"
+                      : "None (NotebookLM template)")
+                  }
                 />
                 <MetaRow label="Redo note" value={v.redo_note ?? "—"} />
                 <MetaRow label="NotebookLM notebook" value={data?.notebooklm_notebook_id ?? "—"} />

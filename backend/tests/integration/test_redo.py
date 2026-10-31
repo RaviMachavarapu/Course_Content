@@ -21,6 +21,8 @@ from app.pipeline.fixture import FixtureProvider
 from app.services.prompts import seed_prompt_templates
 
 PROVIDER = FixtureProvider()
+#: The one report template NotebookLM sends a focus prompt with ("Create your own").
+CUSTOM_REPORT: dict[str, Any] = {"format": "document", "template": "custom"}
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +41,9 @@ def _module_with_generated(db: Session, types: list[ArtifactType]) -> Module:
     )
     db.add(module)
     db.flush()
-    jobs = orchestrator.start_module_generation(db, PROVIDER, module.id, types)
+    jobs = orchestrator.start_module_generation(
+        db, PROVIDER, module.id, types, options_by_type={ArtifactType.report: CUSTOM_REPORT}
+    )
     for job in jobs:
         orchestrator.run_artifact_generation(db, PROVIDER, job.artifact_id, job_id=job.job_id)
     return module
@@ -488,3 +492,75 @@ def test_a_published_version_without_recorded_options_falls_back_to_the_artifact
     quiz.generation_options = {"language": "mr", "difficulty": "easy"}
     db_session.flush()
     assert wanted_for(quiz) == {"language": "mr", "difficulty": "easy"}
+
+
+# -- report options that take no focus (owner decision 2026-10-31) -------
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"format": "interactive"},
+        {"format": "document", "template": "briefing_doc"},
+        {"format": "document", "template": "study_guide"},
+        {"format": "document", "template": "blog_post"},
+    ],
+)
+def test_report_template_without_focus_sends_and_records_no_prompt(
+    db_session: Session, options: dict[str, Any]
+) -> None:
+    seed_prompt_templates(db_session)
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    report.custom_prompt = "Only cover chapter 2."
+    db_session.flush()
+    sent: list[str] = []
+    real = PROVIDER.generate
+
+    def spy(nb: Any, kind: Any, focus_prompt: str, opts: Any) -> Any:
+        sent.append(focus_prompt)
+        return real(nb, kind, focus_prompt, opts)
+
+    job = orchestrator.enqueue_artifact_regeneration(
+        db_session, report.id, redo_note="Shorter", options=options
+    )
+    assert job.kind.value == "generate_artifact"  # the note is ignored
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(PROVIDER, "generate", spy)
+        v = orchestrator.run_artifact_generation(
+            db_session, PROVIDER, report.id, job_id=job.id, redo_note="Shorter"
+        )
+    assert sent == [""]
+    assert v.focus_prompt_used == ""
+    assert v.redo_note is None
+    assert v.prompt_template_id is None
+    assert v.prompt_template_version is None
+    assert report.custom_prompt == "Only cover chapter 2."  # kept for "Create your own"
+
+
+def test_custom_report_template_still_sends_the_prompt_and_note(db_session: Session) -> None:
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    orchestrator.enqueue_artifact_regeneration(
+        db_session,
+        report.id,
+        redo_note="Shorter",
+        options={"format": "document", "template": "custom"},
+        custom_prompt="Only cover chapter 2.",
+    )
+    v = orchestrator.run_artifact_generation(db_session, PROVIDER, report.id, redo_note="Shorter")
+    assert v.redo_note == "Shorter"
+    assert v.focus_prompt_used.startswith("Only cover chapter 2.")
+
+
+def test_redo_endpoint_ignores_a_note_for_a_report_template_without_focus(
+    client: TestClient, db_session: Session
+) -> None:
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    headers = _admin_headers(client, db_session)
+    resp = client.post(
+        f"/api/admin/artifacts/{report.id}/redo",
+        json={"note": "Shorter", "options": {"format": "document", "template": "study_guide"}},
+        headers=headers,
+    )
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    assert resp.json()["job"]["kind"] == "generate_artifact"

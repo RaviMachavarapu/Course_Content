@@ -6,6 +6,7 @@ import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
 import {
   DEFAULT_OPTIONS,
   optionsProblem,
+  takesPrompt,
   type OptionsByType,
   type PromptsByType,
 } from "../generationOptions";
@@ -170,7 +171,8 @@ export function IngestionPage(): JSX.Element {
     const selectedPrompts: PromptsByType = {};
     for (const t of types) {
       selectedOptions[t] = optionsByType[t] ?? DEFAULT_OPTIONS[t];
-      const text = promptsByType[t]?.trim();
+      // a prompt box hidden for these options (most report templates) isn't sent
+      const text = takesPrompt(t, selectedOptions[t]) ? promptsByType[t]?.trim() : undefined;
       if (text) selectedPrompts[t] = text;
     }
 

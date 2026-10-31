@@ -180,6 +180,46 @@ describe("IngestionPage", () => {
     expect(body.prompts).toEqual({ quiz: "Chapter 2 only" });
   });
 
+  it("doesn't send a report prompt the chosen template can't take", async () => {
+    const fetchMock = installFetch([
+      HEALTHY,
+      NO_COURSES,
+      EMPTY_PIPELINE,
+      {
+        method: "POST",
+        match: "/api/admin/courses/c1/modules",
+        status: 201,
+        body: { module: { id: "m1" }, job_ids: ["j1"] },
+      },
+      { method: "POST", match: "/api/admin/courses", status: 201, body: { course: { id: "c1" } } },
+    ]);
+    renderPage();
+    await userEvent.type(screen.getByLabelText("Link (optional)"), "https://youtu.be/abc");
+    await userEvent.type(screen.getByLabelText("Course title"), "Intro to ML");
+    await userEvent.type(screen.getByLabelText("Module title"), "Module 1");
+    const report = within(screen.getByTestId("options-report"));
+    await userEvent.click(report.getByRole("radio", { name: /Document/ }));
+    await userEvent.click(report.getByRole("radio", { name: /Create your own/ }));
+    await userEvent.type(report.getByLabelText("Describe the kind of report to create"), "Ch 2");
+    await userEvent.click(report.getByRole("radio", { name: /Briefing doc/ }));
+    expect(
+      report.queryByLabelText("Describe the kind of report to create"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("btn-ig6"));
+    await waitFor(() => expect(screen.getByText("STAGING PAGE")).toBeInTheDocument());
+    const modulePost = fetchMock.mock.calls.find((c) =>
+      String(c[0]).includes("/api/admin/courses/c1/modules"),
+    );
+    const body = JSON.parse((modulePost![1] as RequestInit).body as string);
+    expect(body.options.report).toEqual({
+      format: "document",
+      template: "briefing_doc",
+      language: "en",
+    });
+    expect(body.prompts).toEqual({});
+  });
+
   it("blocks submit until a document report has a template", async () => {
     const fetchMock = installFetch([HEALTHY, NO_COURSES, EMPTY_PIPELINE]);
     renderPage();
