@@ -309,20 +309,20 @@ def test_lock_already_held_is_a_transient_provider_error(
 def test_502_from_shim_is_a_transient_provider_error() -> None:
     provider = _provider(lambda _r: httpx.Response(502, json={"error": "tool boom"}))
     with pytest.raises(TransientProviderError, match="tool boom"):
-        provider.create_notebook("x")
+        provider.query(NotebookRef(notebook_id="n"), "ask")
 
 
 @pytest.mark.parametrize("code", [408, 503, 504])
 def test_gateway_and_timeout_statuses_are_transient(code: int) -> None:
     provider = _provider(lambda _r: httpx.Response(code, text="<html>proxy page</html>"))
     with pytest.raises(TransientProviderError, match="proxy page"):
-        provider.create_notebook("x")
+        provider.query(NotebookRef(notebook_id="n"), "ask")
 
 
 def test_a_non_json_502_is_still_transient() -> None:
     provider = _provider(lambda _r: httpx.Response(502, text="<html>bad gateway</html>"))
     with pytest.raises(TransientProviderError, match="bad gateway"):
-        provider.create_notebook("x")
+        provider.query(NotebookRef(notebook_id="n"), "ask")
 
 
 def test_a_connector_tool_rejection_is_permanent() -> None:
@@ -406,6 +406,33 @@ def test_a_changing_call_cut_off_after_sending_is_not_retried(
     assert not isinstance(info.value, TransientProviderError)
 
 
+#: the shim's "worth a retry" answers (its tool timeout, Google failing after the
+#: request) and whatever a proxy or timeout in between answers
+_RETRY_STATUSES = [408, 502, 503, 504]
+
+
+@pytest.mark.parametrize("code", _RETRY_STATUSES)
+@pytest.mark.parametrize("call", _READ_CALLS)
+def test_a_read_answered_with_a_retry_status_is_transient(
+    code: int, call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    with pytest.raises(TransientProviderError, match="boom"):
+        call(_provider(lambda _r: httpx.Response(code, json={"error": "boom"})))
+
+
+@pytest.mark.parametrize("code", _RETRY_STATUSES)
+@pytest.mark.parametrize("call", _CHANGING_CALLS)
+def test_a_changing_call_answered_with_a_retry_status_is_not_retried(
+    code: int, call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    """The shim answers 502 when the connector tool times out or Google fails after
+    NotebookLM got the request: it may have acted on it, so the admin decides."""
+    with pytest.raises(UncertainProviderError, match="may have gone through") as info:
+        call(_provider(lambda _r: httpx.Response(code, json={"error": "boom"})))
+    assert not isinstance(info.value, TransientProviderError)
+    assert "Check the module's NotebookLM notebook for a duplicate" in str(info.value)
+
+
 def test_calls_outlast_the_shims_own_tool_timeout() -> None:
     from app.pipeline import notebooklm_mcp
 
@@ -445,7 +472,7 @@ def test_lock_is_released_after_a_call() -> None:
 
 def test_lock_is_released_even_when_the_call_raises() -> None:
     provider = _provider(lambda _r: httpx.Response(502, json={"error": "boom"}))
-    with pytest.raises(TransientProviderError):
+    with pytest.raises(UncertainProviderError):
         provider.create_notebook("x")
     lock = provider._redis.lock("mcp:session", timeout=5, blocking_timeout=1)
     assert lock.acquire(blocking=True)

@@ -88,7 +88,9 @@ _LOCK_WAIT_SEC = _CHAINED_CALL_TIMEOUT_SEC + 30.0
 #: so a half-open connection can't hold the job (and the module lock) forever
 _UPLOAD_TIMEOUT_SEC = 30 * 60.0
 #: shim statuses worth retrying: its own transport/connect failures (502) and
-#: whatever a proxy or timeout in between answers
+#: whatever a proxy or timeout in between answers. Not for a call that changes
+#: NotebookLM: the shim's 502 also covers a tool timeout or Google failing after
+#: getting the request (`_raise_for_status`)
 _TRANSIENT_STATUSES = {408, 502, 503, 504}
 #: transport errors raised before any byte of the request reached the shim: safe to
 #: retry even a call that changes NotebookLM
@@ -97,6 +99,15 @@ _UNSENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 #: (each read is a full `artifact_content_get` under the session lock)
 _POLLED_ARTIFACT_TTL_SEC = 60.0
 _FINISHED_STATUSES = (_STATUS_COMPLETED, _STATUS_OUTLINE_REVIEW)
+
+
+def _uncertain(action: str, detail: str) -> UncertainProviderError:
+    """A call that changes NotebookLM (`action`) may have gone through: the admin's message."""
+    return UncertainProviderError(
+        f"Lost the connection to NotebookLM while {action} "
+        f"({detail}), so it may have gone through anyway. "
+        "Check the module's NotebookLM notebook for a duplicate, then press Retry."
+    )
 
 
 class NotebookLmMcpProvider:
@@ -134,19 +145,20 @@ class NotebookLmMcpProvider:
         # file over plain HTTPS in one request without the connector's stdio session, and
         # an upload of up to 190 MB would otherwise block every other job's calls and
         # could outlive the lock's TTL.
+        action = f"uploading {display_name}"
         resp = self._send(
             lambda: self._http.post(
                 "/source/upload",
                 json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
                 timeout=httpx.Timeout(_UPLOAD_TIMEOUT_SEC, connect=10.0),
             ),
-            action=f"uploading {display_name}",
+            action=action,
         )
         if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
             # NotebookLM rejected the file: permanent, not worth retrying.
             raise ProviderError(self._error_message(resp))
         self._raise_for_source_auth(resp)
-        self._raise_for_status(resp)
+        self._raise_for_status(resp, action=action)
         source_id = resp.json().get("source_id")
         if not source_id:
             raise ProviderError(f"/source/upload returned no source_id: {resp.text}")
@@ -245,6 +257,7 @@ class NotebookLmMcpProvider:
 
     def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
         self._polled.pop(job.job_id, None)  # the outline is about to change
+        action = "sending the outline review"
         resp = self._locked(
             lambda: self._http.post(
                 "/studio/outline",
@@ -254,9 +267,9 @@ class NotebookLmMcpProvider:
                     "feedback": feedback,
                 },
             ),
-            action="sending the outline review",
+            action=action,
         )
-        self._raise_for_status(resp)
+        self._raise_for_status(resp, action=action)
 
     def query(self, nb: NotebookRef, text: str) -> str:
         data = self._call(
@@ -333,7 +346,7 @@ class NotebookLmMcpProvider:
         self, method: str, path: str, *, action: str | None = None, **kwargs: Any
     ) -> dict[str, Any]:
         resp = self._locked(lambda: self._http.request(method, path, **kwargs), action=action)
-        self._raise_for_status(resp)
+        self._raise_for_status(resp, action=action)
         body = resp.json()
         if not isinstance(body, dict):
             raise ProviderError(f"{path} returned a non-object result: {body!r}")
@@ -355,7 +368,7 @@ class NotebookLmMcpProvider:
             action=action,
         )
         self._raise_for_source_auth(resp)
-        self._raise_for_status(resp)
+        self._raise_for_status(resp, action=action)
         body = resp.json()
         data = body.get("data")
         if not isinstance(data, dict):
@@ -406,11 +419,7 @@ class NotebookLmMcpProvider:
             return request()
         except httpx.TransportError as exc:
             if action is not None and not isinstance(exc, _UNSENT_ERRORS):
-                raise UncertainProviderError(
-                    f"Lost the connection to NotebookLM while {action} "
-                    f"({type(exc).__name__}), so it may have gone through anyway. "
-                    "Check the module's NotebookLM notebook for a duplicate, then press Retry."
-                ) from exc
+                raise _uncertain(action, type(exc).__name__) from exc
             raise TransientProviderError(
                 f"MCP shim unreachable ({type(exc).__name__}): {exc}"
             ) from exc
@@ -427,11 +436,18 @@ class NotebookLmMcpProvider:
             return resp.text
         return str(body.get("error", resp.text)) if isinstance(body, dict) else resp.text
 
-    def _raise_for_status(self, resp: httpx.Response) -> None:
+    def _raise_for_status(self, resp: httpx.Response, *, action: str | None = None) -> None:
         """502/503/504/408 are transient; 401 needs signing in again; 422 is
         NotebookLM or the connector rejecting the request for good; anything else
-        ≥ 400 is a provider error."""
+        ≥ 400 is a provider error.
+
+        For a call that changes NotebookLM (`action`), 502/503/504/408 are
+        `UncertainProviderError` instead: the shim answers 502 when the connector
+        tool times out or Google fails after getting the request, so NotebookLM may
+        have acted on it and a retry could do it twice."""
         if resp.status_code in _TRANSIENT_STATUSES:
+            if action is not None:
+                raise _uncertain(action, f"HTTP {resp.status_code}: {self._error_message(resp)}")
             raise TransientProviderError(self._error_message(resp))
         if resp.status_code == httpx.codes.UNAUTHORIZED:
             raise ProviderAuthError(self._error_message(resp))
