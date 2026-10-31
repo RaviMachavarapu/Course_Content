@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import NoReturn
 
 from fastapi import APIRouter, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -91,6 +92,9 @@ def _apply_chunk(
         )
 
     storage = get_storage()
+    if offset == 0 and not _PDF_MAGIC.startswith(data[: len(_PDF_MAGIC)]):
+        # the first bytes already show it isn't a PDF: refuse before the rest is sent
+        _reject_not_pdf(db, upload)
     try:
         upload.received_bytes = storage.append(upload.storage_key, offset, data)
     except ValueError:
@@ -104,16 +108,24 @@ def _apply_chunk(
     if upload.received_bytes == upload.size_bytes:
         with storage.path_for(upload.storage_key).open("rb") as fh:
             head = fh.read(5)
-        if head != b"%PDF-":
-            storage.delete(upload.storage_key)
-            message = f"{upload.file_name} is not a PDF"
-            db.delete(upload)
-            db.commit()  # the error response must not roll the cleanup back
-            raise APIError(status.HTTP_422_UNPROCESSABLE_ENTITY, "not_pdf", message)
+        if head != _PDF_MAGIC:
+            _reject_not_pdf(db, upload)
         upload.status = SourceUploadStatus.complete
     received = upload.received_bytes
     db.commit()
     return received
+
+
+_PDF_MAGIC = b"%PDF-"
+
+
+def _reject_not_pdf(db: Session, upload: SourceUpload) -> NoReturn:
+    """Drop the upload (row and file) and answer 422 `not_pdf`."""
+    get_storage().delete(upload.storage_key)
+    message = f"{upload.file_name} is not a PDF"
+    db.delete(upload)
+    db.commit()  # the error response must not roll the cleanup back
+    raise APIError(status.HTTP_422_UNPROCESSABLE_ENTITY, "not_pdf", message)
 
 
 def _too_large() -> APIError:

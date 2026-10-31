@@ -155,6 +155,30 @@ def test_finished_upload_must_be_pdf(
     assert row is None or not media_storage.exists(row.storage_key)
 
 
+def test_a_first_chunk_that_is_not_a_pdf_is_rejected_early(
+    client: TestClient, db_session: Session, media_storage: Storage
+) -> None:
+    """The first chunk already shows the file isn't a PDF: no need to upload the rest."""
+    h = _login(client, db_session)
+    uid = _create(client, h, 1000, name="movie.pdf")
+    r = _put(client, h, uid, 0, b"\x00\x00\x00 ftypmp42" + b"x" * 100)
+    assert r.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert r.json()["error"]["code"] == "not_pdf"
+    assert r.json()["error"]["message"] == "movie.pdf is not a PDF"
+    assert db_session.get(SourceUpload, uuid.UUID(uid)) is None
+    assert client.get(f"/api/admin/uploads/{uid}").status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_a_tiny_first_chunk_is_checked_once_the_file_is_complete(
+    client: TestClient, db_session: Session
+) -> None:
+    """A first chunk shorter than the 5 magic bytes is checked by the final check."""
+    h = _login(client, db_session)
+    uid = _create(client, h, len(PDF))
+    assert _put(client, h, uid, 0, PDF[:3]).status_code == 200
+    assert _put(client, h, uid, 3, PDF[3:]).json() == {"received_bytes": len(PDF)}
+
+
 def test_overrun_is_rejected(client: TestClient, db_session: Session) -> None:
     h = _login(client, db_session)
     uid = _create(client, h, 10)
