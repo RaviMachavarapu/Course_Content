@@ -91,7 +91,16 @@ def _apply_chunk(
         )
 
     storage = get_storage()
-    upload.received_bytes = storage.append(upload.storage_key, offset, data)
+    try:
+        upload.received_bytes = storage.append(upload.storage_key, offset, data)
+    except ValueError:
+        # the stored file is shorter than the bytes recorded (lost from disk): this
+        # upload can never resume, so drop it; the client starts a new one
+        storage.delete(upload.storage_key)
+        message = f"{upload.file_name} was lost on the server; upload it again"
+        db.delete(upload)
+        db.commit()  # the error response must not roll the cleanup back
+        raise APIError(status.HTTP_409_CONFLICT, "upload_lost", message) from None
     if upload.received_bytes == upload.size_bytes:
         with storage.path_for(upload.storage_key).open("rb") as fh:
             head = fh.read(5)

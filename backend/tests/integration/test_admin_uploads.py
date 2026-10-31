@@ -85,6 +85,25 @@ def test_put_recovers_when_file_is_ahead_of_db(
     assert media_storage.open(row.storage_key) == PDF
 
 
+def test_a_lost_file_is_409_upload_lost_and_the_upload_is_dropped(
+    client: TestClient, db_session: Session, media_storage: Storage
+) -> None:
+    """The stored file is shorter than the recorded offset (e.g. the volume was wiped):
+    resuming can never work, so the client is told to start over (not a 500)."""
+    h = _login(client, db_session)
+    uid = _create(client, h, len(PDF))
+    _put(client, h, uid, 0, PDF[:30])
+    row = db_session.get(SourceUpload, uuid.UUID(uid))
+    assert row is not None
+    media_storage.delete(row.storage_key)
+
+    r = _put(client, h, uid, 30, PDF[30:])
+    assert r.status_code == status.HTTP_409_CONFLICT
+    assert r.json()["error"]["code"] == "upload_lost"
+    assert "upload it again" in r.json()["error"]["message"]
+    assert client.get(f"/api/admin/uploads/{uid}").status_code == status.HTTP_404_NOT_FOUND
+
+
 def test_duplicate_chunk_conflicts_and_file_intact(
     client: TestClient, db_session: Session, media_storage: Storage
 ) -> None:

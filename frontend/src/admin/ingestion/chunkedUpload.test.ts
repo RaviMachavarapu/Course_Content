@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setCsrfFailureHandler, setSessionEndedHandler } from "@/lib/api";
+import { ApiError, setCsrfFailureHandler, setSessionEndedHandler } from "@/lib/api";
 import { uploadPdf } from "./chunkedUpload";
 
 const MB = 1024 * 1024;
@@ -150,6 +150,23 @@ describe("uploadPdf", () => {
       { status: 422, body: { error: { code: "not_pdf", message: "a.pdf is not a PDF" } } },
     ]);
     await expect(uploadPdf(pdf(10), vi.fn())).rejects.toThrow("a.pdf is not a PDF");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("reports a lost upload (409 upload_lost) once, with its code, without retrying", async () => {
+    const calls = stubFetch([
+      START,
+      {
+        status: 409,
+        body: {
+          error: { code: "upload_lost", message: "a.pdf was lost on the server; upload it again" },
+        },
+      },
+    ]);
+    const err = await uploadPdf(pdf(10), vi.fn()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("upload_lost");
+    expect((err as ApiError).message).toBe("a.pdf was lost on the server; upload it again");
     expect(calls).toHaveLength(2);
   });
 
