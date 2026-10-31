@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy import Engine, func, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.cli import seed_admin
 from app.models.enums import SourceUploadStatus
@@ -241,6 +243,108 @@ def test_purge_deletes_old_unclaimed_only(
     assert media_storage.exists(keys["claimed"])
     assert db_session.get(SourceUpload, uuid.UUID(ids["recent"])) is not None
     assert media_storage.exists(keys["recent"])
+
+
+# -- the purge never races a claim (PR #2 review finding 4) ------------------------------
+
+
+@pytest.fixture
+def committed_uploads(
+    db_engine: Engine, media_storage: Storage, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[sessionmaker[Session], dict[str, SourceUpload]]]:
+    """Two old, complete, unclaimed uploads committed for real (visible to other
+    connections), and the purge bound to them with a short lock timeout."""
+    from app.tasks import maintenance
+
+    factory = sessionmaker(bind=db_engine, expire_on_commit=False)
+    old = dt.datetime.now(dt.UTC) - dt.timedelta(hours=25)
+    with factory() as s:
+        admin, _ = seed_admin(
+            s,
+            email=f"purge-{uuid.uuid4().hex[:8]}@example.com",
+            display_name="P",
+            password="upload-admin-pw-1",
+        )
+        s.flush()
+        rows = {}
+        for n in ("a", "b"):
+            uid = uuid.uuid4()
+            rows[n] = SourceUpload(
+                id=uid,
+                admin_id=admin.id,
+                file_name=f"{n}.pdf",
+                size_bytes=len(PDF),
+                received_bytes=len(PDF),
+                storage_key=f"uploads/{uid}.pdf",
+                status=SourceUploadStatus.complete,
+                created_at=old,
+            )
+            s.add(rows[n])
+            media_storage.put(rows[n].storage_key, PDF, "application/pdf")
+        s.commit()
+        admin_id = admin.id
+
+    @contextmanager
+    def scope():  # type: ignore[no-untyped-def]
+        with factory() as session:
+            session.execute(text("SET LOCAL lock_timeout = '2s'"))
+            yield session
+            session.commit()
+
+    monkeypatch.setattr(maintenance, "session_scope", scope)
+    monkeypatch.setattr(maintenance, "get_storage", lambda: media_storage)
+    try:
+        yield factory, rows
+    finally:
+        with factory() as s:
+            s.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": admin_id})
+            s.commit()
+
+
+def test_purge_skips_an_upload_a_claim_has_locked(
+    committed_uploads: tuple[sessionmaker[Session], dict[str, SourceUpload]],
+    media_storage: Storage,
+) -> None:
+    from app.tasks import maintenance
+
+    factory, rows = committed_uploads
+    with factory() as claim:  # a module create holding the row lock mid-claim
+        claim.execute(
+            text("SELECT 1 FROM source_upload WHERE id = :id FOR UPDATE"), {"id": rows["a"].id}
+        )
+        assert maintenance.purge_abandoned_uploads() == 1
+        claim.rollback()
+
+    with factory() as s:
+        assert s.get(SourceUpload, rows["a"].id) is not None
+        assert s.get(SourceUpload, rows["b"].id) is None
+    assert media_storage.exists(rows["a"].storage_key)
+    assert not media_storage.exists(rows["b"].storage_key)
+
+
+def test_purge_deletes_the_file_only_after_the_row_delete_is_committed(
+    committed_uploads: tuple[sessionmaker[Session], dict[str, SourceUpload]],
+    media_storage: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A claim that locks the row after the purge sees no row, never a row whose
+    file is already gone."""
+    from app.tasks import maintenance
+
+    factory, rows = committed_uploads
+    seen: list[bool] = []
+    delete = media_storage.delete
+
+    def checked_delete(key: str) -> bool:
+        with factory() as other:
+            seen.append(
+                other.scalar(select(func.count()).where(SourceUpload.storage_key == key)) == 0
+            )
+        return delete(key)
+
+    monkeypatch.setattr(media_storage, "delete", checked_delete)
+    assert maintenance.purge_abandoned_uploads() == 2
+    assert seen == [True, True]
 
 
 # -- the chunk size cap is enforced while reading (PR #2 review finding 7) ---------------

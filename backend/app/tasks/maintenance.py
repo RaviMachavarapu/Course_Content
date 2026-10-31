@@ -99,21 +99,35 @@ def media_gc() -> int:
 
 @celery_app.task(name="app.tasks.purge_abandoned_uploads")
 def purge_abandoned_uploads() -> int:
-    """Delete non-claimed chunked uploads older than 24 h, with their files."""
+    """Delete non-claimed chunked uploads older than 24 h, with their files.
+
+    Races a module create claiming the same uploads (`_lock_uploads` row-locks them):
+    rows locked by a claim (or a chunk being written) are skipped, and the ones taken
+    here are re-checked under the lock. Each row delete is committed before its file
+    is deleted, so a claim that gets the lock afterwards finds no row, never a row
+    whose file is gone; a crash in between only leaves a file without a row."""
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)
     storage = get_storage()
     with session_scope() as session:
         stale = session.scalars(
-            select(SourceUpload).where(
+            select(SourceUpload)
+            .where(
                 SourceUpload.status != SourceUploadStatus.claimed,
                 SourceUpload.created_at < cutoff,
             )
+            .with_for_update(skip_locked=True)
+            .execution_options(populate_existing=True)
         ).all()
+        stale = [
+            u for u in stale if u.status is not SourceUploadStatus.claimed and u.created_at < cutoff
+        ]
+        keys = [u.storage_key for u in stale]
         for upload in stale:
-            storage.delete(upload.storage_key)
             session.delete(upload)
-        session.flush()
-        removed = len(stale)
+        session.commit()
+    for key in keys:
+        storage.delete(key)
+    removed = len(keys)
     log.info("purge_abandoned_uploads.done", removed=removed)
     return removed
 
