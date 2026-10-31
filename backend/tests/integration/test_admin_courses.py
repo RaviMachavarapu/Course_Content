@@ -455,6 +455,72 @@ def test_failed_create_leaves_uploads_claimable(client: TestClient, db_session: 
     assert ok.status_code == 201, ok.text
 
 
+def test_pdfs_are_read_and_hashed_before_any_lock_is_taken(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading page counts and hashing up to 190 MB per file must not hold the course
+    (or upload) row locks, which block every other module create in the course."""
+    from app.api.admin import courses as courses_api
+    from app.storage.service import Storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    u1 = _upload(client, h, "a.pdf", _pdf_bytes())
+    u2 = _upload(client, h, "b.pdf", _pdf_bytes())
+    events: list[str] = []
+    real_sha, real_count, real_lock = (
+        Storage.sha256,
+        courses_api._page_count,
+        courses_api._lock_uploads,
+    )
+
+    def sha(self, key):  # type: ignore[no-untyped-def]
+        events.append("hash")
+        return real_sha(self, key)
+
+    def count(upload):  # type: ignore[no-untyped-def]
+        events.append("pages")
+        return real_count(upload)
+
+    def lock(*a):  # type: ignore[no-untyped-def]
+        events.append("lock")
+        return real_lock(*a)
+
+    monkeypatch.setattr(Storage, "sha256", sha)
+    monkeypatch.setattr(courses_api, "_page_count", count)
+    monkeypatch.setattr(courses_api, "_lock_uploads", lock)
+    r = _post_module(client, h, cid, upload_ids=[u1, u2])
+    assert r.status_code == 201, r.text
+    assert events == ["pages", "hash", "pages", "hash", "lock"]
+
+
+def test_an_upload_claimed_while_it_was_hashed_is_refused(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-checked under the lock: another module claimed it after it was read."""
+    from sqlalchemy import text
+
+    from app.storage.service import Storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    uid = _upload(client, h, "a.pdf", _pdf_bytes())
+    real_sha = Storage.sha256
+
+    def sha_then_claimed_elsewhere(self, key):  # type: ignore[no-untyped-def]
+        digest = real_sha(self, key)
+        db_session.execute(
+            text("UPDATE source_upload SET status = 'claimed', storage_key = 'x' WHERE id = :id"),
+            {"id": uid},
+        )
+        return digest
+
+    monkeypatch.setattr(Storage, "sha256", sha_then_claimed_elsewhere)
+    r = _post_module(client, h, cid, upload_ids=[uid])
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "bad_upload"
+
+
 def test_move_failure_restores_files(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

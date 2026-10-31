@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Response, status
@@ -217,7 +218,9 @@ def create_module(
             f"NotebookLM allows at most {cap}",
         )
 
-    uploads = _lock_uploads(db, body.upload_ids, admin.id)
+    # the slow part (page counts, checksums: up to 190 MB a file) runs before any lock
+    facts = _inspect_uploads(db, body.upload_ids, admin.id)
+    uploads = _lock_uploads(db, body.upload_ids, admin.id, facts)
 
     # two concurrent creates would both pick max+1 and hit uq_module_course_order
     db.execute(select(Course.id).where(Course.id == course.id).with_for_update())
@@ -251,7 +254,7 @@ def create_module(
     db.flush()
     # moving the files, then committing, are the last steps that can fail: both are
     # compensated (the files go back to the uploads, which stay claimable)
-    moved = _claim_uploads(db, course.id, module, uploads)
+    moved = _claim_uploads(db, course.id, module, uploads, facts)
     _commit_or_restore(db, moved)
 
     background.add_task(_dispatch_all, [j.dispatch for j in jobs])
@@ -260,20 +263,35 @@ def create_module(
     return ModuleEnvelope(module=_module_summary(module), job_ids=[j.job_id for j in jobs])
 
 
-def _lock_uploads(db: Session, ids: list[uuid.UUID], admin_id: uuid.UUID) -> list[SourceUpload]:
-    """Row-lock the uploads (the hourly purge can't delete one mid-claim) and
-    check each is this admin's, complete and unclaimed. Returned in request order."""
-    bad = APIError(
+@dataclass(frozen=True)
+class _UploadFacts:
+    """What `_inspect_uploads` read from an upload's file, and where it was."""
+
+    storage_key: str
+    page_count: int
+    checksum: str
+
+
+def _bad_upload() -> APIError:
+    return APIError(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         "bad_upload",
         "An uploaded PDF is missing, unfinished or already used. Upload it again.",
     )
+
+
+def _usable_uploads(
+    db: Session, ids: list[uuid.UUID], admin_id: uuid.UUID, *, lock: bool
+) -> list[SourceUpload]:
+    """The uploads, in request order, each this admin's, complete and unclaimed."""
+    bad = _bad_upload()
     if len(set(ids)) != len(ids):
         raise bad
-    rows = {
-        u.id: u
-        for u in db.scalars(select(SourceUpload).where(SourceUpload.id.in_(ids)).with_for_update())
-    }
+    stmt = select(SourceUpload).where(SourceUpload.id.in_(ids))
+    if lock:
+        # fresh values, not the ones `_inspect_uploads` loaded before the lock
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    rows = {u.id: u for u in db.scalars(stmt)}
     out: list[SourceUpload] = []
     for uid in ids:
         u = rows.get(uid)
@@ -281,6 +299,36 @@ def _lock_uploads(db: Session, ids: list[uuid.UUID], admin_id: uuid.UUID) -> lis
             raise bad
         out.append(u)
     return out
+
+
+def _inspect_uploads(
+    db: Session, ids: list[uuid.UUID], admin_id: uuid.UUID
+) -> dict[uuid.UUID, _UploadFacts]:
+    """Read each upload's page count and checksum, holding no lock (the files of a
+    complete upload no longer change); a damaged file fails the request here."""
+    storage = get_storage()
+    facts: dict[uuid.UUID, _UploadFacts] = {}
+    for upload in _usable_uploads(db, ids, admin_id, lock=False):
+        page_count = _page_count(upload)
+        checksum = storage.sha256(upload.storage_key)
+        facts[upload.id] = _UploadFacts(upload.storage_key, page_count, checksum)
+    return facts
+
+
+def _lock_uploads(
+    db: Session,
+    ids: list[uuid.UUID],
+    admin_id: uuid.UUID,
+    facts: dict[uuid.UUID, _UploadFacts],
+) -> list[SourceUpload]:
+    """Row-lock the uploads (the hourly purge can't delete one mid-claim) and check
+    again, cheaply, that each is still this admin's, complete, unclaimed and the file
+    `_inspect_uploads` read. Returned in request order."""
+    uploads = _usable_uploads(db, ids, admin_id, lock=True)
+    for upload in uploads:
+        if facts[upload.id].storage_key != upload.storage_key:  # pragma: no cover - defensive
+            raise _bad_upload()
+    return uploads
 
 
 def _safe_stem(file_name: str) -> str:
@@ -315,19 +363,19 @@ def _commit_or_restore(db: Session, moved: list[tuple[str, str]]) -> None:
 
 
 def _claim_uploads(
-    db: Session, course_id: uuid.UUID, module: Module, uploads: list[SourceUpload]
+    db: Session,
+    course_id: uuid.UUID,
+    module: Module,
+    uploads: list[SourceUpload],
+    facts: dict[uuid.UUID, _UploadFacts],
 ) -> list[tuple[str, str]]:
     """Move each upload's file to the module's sources and add its row (flushed); returns
     the moves made, (original key, new key), for `_commit_or_restore`."""
     storage = get_storage()
-    # read every page count before moving anything, so a damaged file fails the
-    # request with nothing half-moved
-    page_counts = [_page_count(upload) for upload in uploads]
     moved: list[tuple[str, str]] = []  # (original key, new key)
     try:
         for index, upload in enumerate(uploads):
             key = source_key(course_id, module.id, index, _safe_stem(upload.file_name))
-            checksum = storage.sha256(upload.storage_key)
             storage.move(upload.storage_key, key)
             moved.append((upload.storage_key, key))
             db.add(
@@ -336,9 +384,9 @@ def _claim_uploads(
                     order_index=index,
                     file_name=upload.file_name,
                     size_bytes=upload.size_bytes,
-                    checksum_sha256=checksum,
+                    checksum_sha256=facts[upload.id].checksum,
                     storage_key=key,
-                    page_count=page_counts[index],
+                    page_count=facts[upload.id].page_count,
                     parts=[],
                 )
             )
