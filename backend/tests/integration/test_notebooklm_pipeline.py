@@ -10,6 +10,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import struct
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,7 @@ from app.models.enums import ArtifactStatus, ArtifactType, MediaFileKind, Module
 from app.models.media_file import MediaFile
 from app.models.module import Module
 from app.pipeline import orchestrator
+from app.pipeline.parsers.notebooklm import parse_notebooklm
 from app.pipeline.provider import (
     NotebookRef,
     ProviderError,
@@ -477,3 +480,63 @@ def test_the_notebook_mark_is_cropped_before_storing(
         if m.kind is MediaFileKind.deck_pdf:
             pages = PdfReader(io.BytesIO(storage.open(m.storage_key))).pages
             assert all(p.mediabox.height < 768 for p in pages)
+
+
+class _SlowDownloads(FakeNotebookLm):
+    """Downloads that take a moment, recording how many ran at once and where."""
+
+    def __init__(self, row: list[Any] | None) -> None:
+        super().__init__(row)
+        self.running = 0
+        self.peak = 0
+        self.fail_url: str | None = None
+        self._guard = threading.Lock()
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        with self._guard:
+            self.running += 1
+            self.peak = max(self.peak, self.running)
+        try:
+            time.sleep(0.05)
+            if url == self.fail_url:
+                raise ProviderError("media download failed (HTTP 403)")
+            return super().download(url)
+        finally:
+            with self._guard:
+                self.running -= 1
+
+
+def test_slide_media_downloads_run_concurrently_in_order() -> None:
+    provider = _SlowDownloads(_row("slide_deck.json"))
+    job = StudioJobRef(job_id="nlm-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    raw = provider.fetch_content(job)
+    beats: list[str] = []
+    main = threading.current_thread().name
+
+    _content, blobs, _html = orchestrator._content_and_media(
+        provider,
+        ArtifactType.slide_deck,
+        raw,
+        job,
+        on_progress=lambda: beats.append(threading.current_thread().name),
+    )
+
+    urls = [
+        ref.url for ref in parse_notebooklm(ArtifactType.slide_deck, raw.extras["row"], "").media
+    ]
+    assert len(urls) == 4 and provider.peak > 1
+    # order kept: each blob holds the bytes of the URL in its position
+    assert [b.data for b in blobs] == [b"\x89PNG\r\n\x1a\n" + u.encode() for u in urls]
+    assert beats == [main] * 4  # heartbeats from the run's own thread, one per download
+
+
+def test_a_failed_slide_media_download_fails_the_run() -> None:
+    provider = _SlowDownloads(_row("slide_deck.json"))
+    job = StudioJobRef(job_id="nlm-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    raw = provider.fetch_content(job)
+    urls = [
+        ref.url for ref in parse_notebooklm(ArtifactType.slide_deck, raw.extras["row"], "").media
+    ]
+    provider.fail_url = urls[1]
+    with pytest.raises(ProviderError, match="HTTP 403"):
+        orchestrator._content_and_media(provider, ArtifactType.slide_deck, raw, job)

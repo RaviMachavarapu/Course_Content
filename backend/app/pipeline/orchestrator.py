@@ -12,6 +12,7 @@ import enum
 import time
 import uuid
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -918,6 +919,10 @@ _MEDIA_MIME: dict[MediaFileKind, str] = {
 }
 
 
+#: slide PNGs, deck PDF and PPTX are fetched this many at a time
+_MEDIA_DOWNLOAD_WORKERS = 4
+
+
 def _content_and_media(
     provider: ContentProvider,
     kind: ArtifactType,
@@ -948,18 +953,28 @@ def _content_and_media(
     parsed = parse_notebooklm(kind, row, raw.html)
 
     def fetch(url: str) -> bytes:
-        data = _without_transient_failures(lambda: provider.download(url))[0]
-        on_progress()
-        return data
+        return _without_transient_failures(lambda: provider.download(url))[0]
 
+    # A few at a time (downloads don't take the session lock); the heartbeat is
+    # touched from this thread as each one lands, and the first failure fails the run.
+    with ThreadPoolExecutor(max_workers=_MEDIA_DOWNLOAD_WORKERS) as pool:
+        futures: list[Future[bytes]] = [pool.submit(fetch, ref.url) for ref in parsed.media]
+        try:
+            for done in as_completed(futures):
+                done.result()
+                on_progress()
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
     blobs = [
         MediaBlob(
             kind=ref.kind,
-            data=fetch(ref.url),
+            data=f.result(),
             mime=_MEDIA_MIME[ref.kind],
             page_index=ref.page_index,
         )
-        for ref in parsed.media
+        for ref, f in zip(parsed.media, futures, strict=True)
     ]
     # owner decision 2026-10-29: crop NotebookLM's "Gemini Notebook" mark off the images
     blobs = strip_notebook_logo(blobs)
