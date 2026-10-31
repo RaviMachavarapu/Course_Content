@@ -327,6 +327,10 @@ def _wait_ready(
             if state is SourceState.ready:
                 del pending[sid]
             elif state is SourceState.failed or state is None:
+                if state is SourceState.failed:
+                    # owner decision 2026-10-31: the failed copy must not stay beside the
+                    # re-upload (it counts toward the notebook's source cap)
+                    _delete_failed(provider, nb, sid)
                 forget()  # a Retry uploads it again
                 raise SourceStepError(f"NotebookLM couldn't read {name}")
         if not pending:
@@ -338,6 +342,24 @@ def _wait_ready(
                 raise SourceStepError(f"NotebookLM is still processing {name} after 10 minutes")
         keep_alive()
         _sleep(_POLL_INTERVAL_SEC)
+
+
+def _delete_failed(provider: ContentProvider, nb: NotebookRef, source_id: str) -> None:
+    """Delete a source this step added and NotebookLM marked failed. Best effort: a
+    failed delete (or one already gone) is logged, and the Retry re-adds it anyway."""
+    try:
+        provider.delete_source(nb, source_id)
+    except Exception as exc:
+        log.warning(
+            "module_sources.delete_failed_source_failed",
+            notebook=nb.notebook_id,
+            source_id=source_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    else:
+        log.info(
+            "module_sources.failed_source_deleted", notebook=nb.notebook_id, source_id=source_id
+        )
 
 
 def _split(storage: Storage, module: Module, sf: ModuleSourceFile) -> list[dict[str, Any]]:

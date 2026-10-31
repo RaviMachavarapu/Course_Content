@@ -27,7 +27,14 @@ import express from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { artifactState, createArtifact, download, outlineAction, resetSession } from "./studio.js";
-import { PathNotAllowed, readySourceIds, sourceStatuses, uploadSource } from "./sources.js";
+import {
+  PathNotAllowed,
+  SourceNotFailed,
+  deleteFailedSource,
+  readySourceIds,
+  sourceStatuses,
+  uploadSource,
+} from "./sources.js";
 import { createSession } from "./session.js";
 import { ToolError, failStatus } from "./tools.js";
 
@@ -235,6 +242,21 @@ app.get("/source/status", async (req, res) => {
     lastOkAt = new Date().toISOString();
     res.json({ sources });
   } catch (err) {
+    studioFail(res, err);
+  }
+});
+
+// Delete a source NotebookLM marked failed: {notebook_id, source_id} -> {deleted}.
+// 409 for a source it doesn't report as failed (never deleted).
+app.post("/source/delete", async (req, res) => {
+  const { notebook_id: notebookId, source_id: sourceId } = req.body ?? {};
+  if (!notebookId || !sourceId) return res.status(400).json({ error: "missing notebook_id or source_id" });
+  try {
+    const result = await deleteFailedSource(String(notebookId), String(sourceId));
+    lastOkAt = new Date().toISOString();
+    res.json(result);
+  } catch (err) {
+    if (err instanceof SourceNotFailed) return res.status(409).json({ error: err.message });
     studioFail(res, err);
   }
 });

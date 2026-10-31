@@ -107,6 +107,10 @@ class ContentProvider(Protocol):
         """Processing state of every source in the notebook, by source id."""
         ...
 
+    def delete_source(self, nb: NotebookRef, source_id: str) -> None:
+        """Delete a source NotebookLM marked failed (refused for any other source)."""
+        ...
+
     def generate(
         self,
         nb: NotebookRef,

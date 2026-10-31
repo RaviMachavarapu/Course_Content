@@ -409,6 +409,14 @@ class FixtureProvider:
         self._remember(nb, ref)
         return ref
 
+    def delete_source(self, nb: NotebookRef, source_id: str) -> None:
+        # recorded for tests; logged so an E2E run can see it happened
+        self.calls.append(("delete_source", nb.notebook_id, source_id))
+        ids = self._source_ids.get(nb.notebook_id, [])
+        if source_id in ids:
+            ids.remove(source_id)
+        log.info("fixture.source_deleted", notebook_id=nb.notebook_id, source_id=source_id)
+
     def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
         if "source-fail" in faults_of(nb.notebook_id).flags:
             return _FailedStates()

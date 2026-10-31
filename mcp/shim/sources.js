@@ -161,6 +161,28 @@ export async function sourceStatuses(notebookId) {
   return rows.map(({ id, title, code }) => ({ id, title, status: statusOf(code) }));
 }
 
+/** The source isn't one NotebookLM reports as failed: the route answers 409. */
+export class SourceNotFailed extends Error {
+  constructor(sourceId, status) {
+    super(`source ${sourceId} is ${status}, not failed: not deleted`);
+  }
+}
+
+/**
+ * Delete a source NotebookLM failed to process, so the backend's re-upload doesn't
+ * sit beside it (owner decision 2026-10-31). Only a source this notebook lists as
+ * failed is deleted; one it no longer lists is already gone ({deleted: false}).
+ * NOT LIVE-VERIFIED: the delete is the connector's own source_delete request
+ * (notebooklm-mcp-server 4.0.2 deleteSource), as in the upload cleanup above.
+ */
+export async function deleteFailedSource(notebookId, sourceId) {
+  const row = (await sourceStatuses(notebookId)).find((s) => s.id === sourceId);
+  if (!row) return { deleted: false };
+  if (row.status !== "failed") throw new SourceNotFailed(sourceId, row.status);
+  await rpc("tGMBJ", [[[sourceId]], [2]], `/notebook/${notebookId}`);
+  return { deleted: true };
+}
+
 /** Ids of the sources NotebookLM has finished processing; Studio may use only these. */
 export async function readySourceIds(notebookId) {
   const ids = (await sourceStatuses(notebookId)).filter((s) => s.status === "ready").map((s) => s.id);

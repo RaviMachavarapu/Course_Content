@@ -210,6 +210,24 @@ def test_refresh_auth_posts_to_shim() -> None:
     assert calls == ["/refresh-auth"]
 
 
+def test_delete_source_posts_to_the_shim() -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"deleted": True})
+
+    _provider(handler).delete_source(NotebookRef(notebook_id="nb-1"), "src-9")
+    assert seen == [("/source/delete", {"notebook_id": "nb-1", "source_id": "src-9"})]
+
+
+def test_delete_source_refused_by_the_shim_is_a_provider_error() -> None:
+    # the shim answers 409 for a source NotebookLM doesn't report as failed
+    provider = _provider(lambda _r: httpx.Response(409, json={"error": "not failed"}))
+    with pytest.raises(ProviderError):
+        provider.delete_source(NotebookRef(notebook_id="nb-1"), "src-9")
+
+
 def test_plain_4xx_from_shim_is_a_provider_error() -> None:
     provider = _provider(lambda _r: httpx.Response(400, text="bad request"))
     with pytest.raises(ProviderError, match="MCP shim error 400"):

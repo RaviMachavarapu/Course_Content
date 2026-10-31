@@ -168,6 +168,17 @@ class NotebookLmMcpProvider:
                 ) from None
         return out
 
+    def delete_source(self, nb: NotebookRef, source_id: str) -> None:
+        # the shim deletes it only if NotebookLM lists it in this notebook as failed
+        # (409 otherwise), so a wrong id can't remove a good source
+        resp = self._locked(
+            lambda: self._http.post(
+                "/source/delete", json={"notebook_id": nb.notebook_id, "source_id": source_id}
+            )
+        )
+        self._raise_for_source_auth(resp)
+        self._raise_for_status(resp)
+
     def generate(
         self,
         nb: NotebookRef,

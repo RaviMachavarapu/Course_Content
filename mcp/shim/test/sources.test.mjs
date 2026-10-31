@@ -12,9 +12,10 @@ fs.mkdirSync(path.join(home, ".notebooklm-mcp"));
 fs.writeFileSync(path.join(home, ".notebooklm-mcp", "auth.json"), JSON.stringify({ cookies: "SID=x; OSID=y" }));
 process.env.HOME = home;
 
-let uploadSource, sourceStatuses, readySourceIds, StudioError, PathNotAllowed;
+let uploadSource, sourceStatuses, readySourceIds, deleteFailedSource, StudioError, PathNotAllowed, SourceNotFailed;
 before(async () => {
-  ({ uploadSource, sourceStatuses, readySourceIds, PathNotAllowed } = await import("../sources.js"));
+  ({ uploadSource, sourceStatuses, readySourceIds, deleteFailedSource, PathNotAllowed, SourceNotFailed } =
+    await import("../sources.js"));
   ({ StudioError } = await import("../studio.js"));
 });
 
@@ -287,4 +288,48 @@ test("an artifact neither call lists is reported missing (it was deleted or neve
   const row = ["A", "t", 1, null, 3];
   const withRow = async (name) => (name === "artifact_content_get" ? { raw: [row], html: "<p>" } : {});
   assert.deepEqual(await artifactState(withRow, "NB", "A"), { status: 3, raw: row, html: "<p>", missing: false });
+});
+
+// -- deleting a failed source (owner decision 2026-10-31) ---------------------
+
+/** Answers the status listing with `rows` and records every batchexecute call. */
+function listingThenDelete(rows) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if ((init.method ?? "GET") === "GET" && url === "https://notebook.google.com/") {
+      return new Response(PAGE, { status: 200 });
+    }
+    calls.push({ url, body: init.body });
+    if (url.includes("rpcids=rLM1Ne")) return new Response(batchReply("rLM1Ne", [["nb", rows]]), { status: 200 });
+    if (url.includes("rpcids=tGMBJ")) return new Response(batchReply("tGMBJ", []), { status: 200 });
+    return new Response("", { status: 404 });
+  };
+  return calls;
+}
+
+test("a source NotebookLM lists as failed in this notebook is deleted", async () => {
+  const calls = listingThenDelete([src("good", 2), src("bad", 9)]);
+
+  assert.deepEqual(await deleteFailedSource("NB", "bad"), { deleted: true });
+
+  const del = calls.find((c) => c.url.includes("rpcids=tGMBJ"));
+  assert.ok(del, "the failed source is deleted");
+  assert.match(del.url, /source-path=%2Fnotebook%2FNB/);
+  const fReq = new URLSearchParams(del.body).get("f.req");
+  assert.deepEqual(JSON.parse(JSON.parse(fReq)[0][0][1]), [[["bad"]], [2]]);
+});
+
+test("a source that is ready or still processing is never deleted", async () => {
+  for (const code of [2, 1, 5]) {
+    const calls = listingThenDelete([src("s", code)]);
+    await assert.rejects(deleteFailedSource("NB", "s"), SourceNotFailed);
+    assert.equal(calls.filter((c) => c.url.includes("rpcids=tGMBJ")).length, 0);
+  }
+});
+
+test("a source the notebook no longer lists is reported gone, nothing is deleted", async () => {
+  const calls = listingThenDelete([src("other", 9)]);
+  assert.deepEqual(await deleteFailedSource("NB", "bad"), { deleted: false });
+  assert.equal(calls.filter((c) => c.url.includes("rpcids=tGMBJ")).length, 0);
 });

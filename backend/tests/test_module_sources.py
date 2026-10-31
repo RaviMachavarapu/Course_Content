@@ -76,6 +76,8 @@ class SpyProvider(FixtureProvider):
         self._names: dict[str, str] = {}  # source id -> display name
         self.create_delay = 0.0
         self.generated: list[ArtifactType] = []
+        #: raised by `delete_source` (after recording the call)
+        self.delete_error: Exception | None = None
 
     def create_notebook(self, title: str) -> NotebookRef:
         if self.create_delay:
@@ -123,6 +125,15 @@ class SpyProvider(FixtureProvider):
     ) -> StudioJobRef:
         self.generated.append(kind)
         return super().generate(nb, kind, focus_prompt, options)
+
+    def delete_source(self, nb: NotebookRef, source_id: str) -> None:
+        super().delete_source(nb, source_id)
+        if self.delete_error is not None:
+            raise self.delete_error
+
+    @property
+    def deletes(self) -> list[tuple[str, str]]:
+        return [(c[1], c[2]) for c in self.calls if c[0] == "delete_source"]
 
     @property
     def uploads(self) -> list[str]:
@@ -439,6 +450,53 @@ def test_failed_source_is_reuploaded_on_retry(
     assert db_session.get(Module, module.id).sources_ready_at is not None
 
 
+def test_a_failed_source_is_deleted_from_the_notebook_before_the_re_add(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+) -> None:
+    """Owner decision 2026-10-31: the failed copy doesn't stay beside the new one
+    (it would count toward the notebook's source cap)."""
+    module = _module(
+        db_session, media_storage, tmp_path, pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))]
+    )
+    provider.fail_state.add("a.pdf")
+    with pytest.raises(SourceStepError):
+        run(provider, module)
+    nb = db_session.get(Module, module.id).notebooklm_notebook_id
+    failed_id = next(sid for sid, name in provider._names.items() if name == "a.pdf")
+    assert provider.deletes == [(nb, failed_id)]  # only the failed source, not the link
+
+    provider.fail_state.clear()
+    run(provider, module)
+    assert provider.uploads == ["a.pdf", "a.pdf"]
+    assert provider.deletes == [(nb, failed_id)]
+
+
+def test_a_failed_delete_does_not_block_the_re_add(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+) -> None:
+    module = _module(
+        db_session, media_storage, tmp_path, pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))]
+    )
+    provider.fail_state.add("a.pdf")
+    provider.delete_error = ProviderError("source already gone")
+    with pytest.raises(SourceStepError, match=r"^NotebookLM couldn't read a\.pdf$"):
+        run(provider, module)
+    module = db_session.get(Module, module.id)
+    assert _parts(module)[0]["notebooklm_source_id"] is None
+
+    provider.fail_state.clear()
+    run(provider, module)
+    assert provider.uploads == ["a.pdf", "a.pdf"]
+
+
 def test_jobs_queued_before_failure_fail_fast(
     db_session: Session,
     media_storage: Storage,
@@ -656,6 +714,8 @@ def test_source_no_longer_listed_is_reuploaded_on_retry(
     assert clock[0] - start < 10  # no 10-minute wait for an id from an earlier run
     module = db_session.get(Module, module.id)
     assert _parts(module)[0]["notebooklm_source_id"] is None  # forgotten → re-upload
+
+    assert provider.deletes == []  # not marked failed: nothing to delete
 
     provider.unlisted.clear()
     run(provider, module)
