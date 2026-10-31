@@ -50,6 +50,7 @@ from app.pipeline.provider import (
     SourceRef,
     SourceState,
     TransientProviderError,
+    UncertainProviderError,
 )
 from app.storage.keys import source_key
 from app.storage.service import Storage, get_storage
@@ -191,7 +192,10 @@ def _add_sources(
 
     # 1. the notebook
     if not module.notebooklm_notebook_id:
-        module.notebooklm_notebook_id = provider.create_notebook(module.title).notebook_id
+        try:
+            module.notebooklm_notebook_id = provider.create_notebook(module.title).notebook_id
+        except UncertainProviderError as exc:
+            raise SourceStepError(str(exc)) from exc
         session.commit()
         keep_alive()
     nb = NotebookRef(notebook_id=module.notebooklm_notebook_id)
@@ -268,6 +272,9 @@ def _upload(name: str, call: Callable[[], SourceRef]) -> str:
         return call().source_id
     except (ProviderAuthError, TransientProviderError):
         raise
+    except UncertainProviderError as exc:
+        # NotebookLM may have added it: no automatic retry; the message is for admins
+        raise SourceStepError(str(exc)) from exc
     except ProviderError as exc:
         reason = str(exc).strip()
         raise SourceStepError(

@@ -41,6 +41,7 @@ from app.pipeline.provider import (
     SourceState,
     StudioJobRef,
     TransientProviderError,
+    UncertainProviderError,
 )
 from app.storage.keys import source_key
 from app.storage.service import Storage
@@ -462,6 +463,32 @@ def test_jobs_queued_before_failure_fail_fast(
     assert later_provider.calls == []
     # failing fast doesn't move the failure time (later jobs still retry)
     assert db_session.get(Module, module.id).sources_failed_at == failed_at
+
+
+@pytest.mark.parametrize("step", ["create_notebook", "add_source", "add_file_source"])
+def test_an_uncertain_source_call_fails_the_step_with_its_own_message(
+    db_session: Session,
+    media_storage: Storage,
+    tmp_path: Path,
+    provider: SpyProvider,
+    run: Callable[..., NotebookRef],
+    step: str,
+) -> None:
+    """NotebookLM may have made the notebook or source anyway: the step fails (no
+    automatic retry, jobs queued before fail fast) and admins see the message as-is."""
+    module = _module(
+        db_session, media_storage, tmp_path, pdfs=[("a.pdf", _text_pdf(tmp_path / "a.pdf"))]
+    )
+    message = "Lost the connection to NotebookLM; it may have gone through."
+
+    def cut_off() -> None:
+        raise UncertainProviderError(message)
+
+    setattr(provider, step, lambda *_a: cut_off())
+    with pytest.raises(SourceStepError) as err:
+        run(provider, module)
+    assert str(err.value) == message
+    assert db_session.get(Module, module.id).sources_error == message
 
 
 def test_legacy_module_skips_source_step(

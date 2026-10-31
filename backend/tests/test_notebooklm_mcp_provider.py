@@ -26,6 +26,7 @@ from app.pipeline.provider import (
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
+    UncertainProviderError,
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -269,31 +270,70 @@ def test_a_connector_auth_failure_is_an_auth_error() -> None:
 
 
 _NETWORK_ERRORS = [httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError]
+#: the request never reached the shim
+_UNSENT_ERRORS = [httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout]
+#: the request may have reached the shim (and NotebookLM acted on it)
+_UNCERTAIN_ERRORS = [
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+]
+_READ_CALLS = [
+    lambda p: p.poll(StudioJobRef(job_id="a", notebook_id="n", kind=ArtifactType.report)),
+    lambda p: p.download("https://lh3.googleusercontent.com/x"),
+    lambda p: p.source_statuses(NotebookRef(notebook_id="n")),
+    lambda p: p.query(NotebookRef(notebook_id="n"), "ask"),
+]
+_CHANGING_CALLS = [
+    lambda p: p.create_notebook("x"),
+    lambda p: p.add_source(NotebookRef(notebook_id="n"), "https://youtu.be/x"),
+    lambda p: p.add_file_source(NotebookRef(notebook_id="n"), "/data/media/a.pdf", "a.pdf"),
+    lambda p: p.generate(NotebookRef(notebook_id="n"), ArtifactType.report, "focus", {}),
+    lambda p: p.outline_action(
+        StudioJobRef(job_id="a", notebook_id="n", kind=ArtifactType.slide_deck), None
+    ),
+]
+
+
+def _raising(error: type[httpx.TransportError]) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error("down", request=request)
+
+    return handler
 
 
 @pytest.mark.parametrize("error", _NETWORK_ERRORS)
-@pytest.mark.parametrize(
-    "call",
-    [
-        lambda p: p.create_notebook("x"),
-        lambda p: p.poll(StudioJobRef(job_id="a", notebook_id="n", kind=ArtifactType.report)),
-        lambda p: p.download("https://lh3.googleusercontent.com/x"),
-        lambda p: p.add_file_source(NotebookRef(notebook_id="n"), "/data/media/a.pdf", "a.pdf"),
-        lambda p: p.source_statuses(NotebookRef(notebook_id="n")),
-        lambda p: p.query(NotebookRef(notebook_id="n"), "ask"),
-    ],
-)
+@pytest.mark.parametrize("call", _READ_CALLS)
 def test_network_errors_and_timeouts_are_transient(
     error: type[httpx.TransportError], call: Callable[[NotebookLmMcpProvider], object]
 ) -> None:
     """An mcp restart or a slow shim call is worth retrying (and, while polling, waiting
     for), not a failed generation."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise error("down", request=request)
-
     with pytest.raises(TransientProviderError):
-        call(_provider(handler))
+        call(_provider(_raising(error)))
+
+
+@pytest.mark.parametrize("error", _UNSENT_ERRORS)
+@pytest.mark.parametrize("call", _CHANGING_CALLS)
+def test_a_call_that_never_reached_the_shim_is_transient(
+    error: type[httpx.TransportError], call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    with pytest.raises(TransientProviderError):
+        call(_provider(_raising(error)))
+
+
+@pytest.mark.parametrize("error", _UNCERTAIN_ERRORS)
+@pytest.mark.parametrize("call", _CHANGING_CALLS)
+def test_a_changing_call_cut_off_after_sending_is_not_retried(
+    error: type[httpx.TransportError], call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    """NotebookLM may already have made the notebook, source or artifact: an automatic
+    retry could make a second one (and spend quota), so the admin decides."""
+    with pytest.raises(UncertainProviderError, match="may have gone through") as info:
+        call(_provider(_raising(error)))
+    assert not isinstance(info.value, TransientProviderError)
 
 
 def test_calls_outlast_the_shims_own_tool_timeout() -> None:

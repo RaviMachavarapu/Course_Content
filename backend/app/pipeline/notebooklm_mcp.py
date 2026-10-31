@@ -42,6 +42,7 @@ from app.pipeline.provider import (
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
+    UncertainProviderError,
 )
 
 if TYPE_CHECKING:
@@ -88,6 +89,9 @@ _UPLOAD_TIMEOUT_SEC = 30 * 60.0
 #: shim statuses worth retrying: its own transport/connect failures (502) and
 #: whatever a proxy or timeout in between answers
 _TRANSIENT_STATUSES = {408, 502, 503, 504}
+#: transport errors raised before any byte of the request reached the shim: safe to
+#: retry even a call that changes NotebookLM
+_UNSENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class NotebookLmMcpProvider:
@@ -106,11 +110,15 @@ class NotebookLmMcpProvider:
     # -- ContentProvider ---------------------------------------------------
 
     def create_notebook(self, title: str) -> NotebookRef:
-        data = self._call("notebook_create", {"title": title})
+        data = self._call("notebook_create", {"title": title}, action="creating the notebook")
         return NotebookRef(notebook_id=str(data["notebook_id"]))
 
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef:
-        data = self._call("notebook_add_url", {"notebook_id": nb.notebook_id, "url": url})
+        data = self._call(
+            "notebook_add_url",
+            {"notebook_id": nb.notebook_id, "url": url},
+            action=f"adding {url}",
+        )
         return SourceRef(source_id=str(data["source_id"]))
 
     def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
@@ -124,7 +132,8 @@ class NotebookLmMcpProvider:
                 "/source/upload",
                 json={"notebook_id": nb.notebook_id, "path": path, "name": display_name},
                 timeout=httpx.Timeout(_UPLOAD_TIMEOUT_SEC, connect=10.0),
-            )
+            ),
+            action=f"uploading {display_name}",
         )
         if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
             # NotebookLM rejected the file: permanent, not worth retrying.
@@ -176,6 +185,7 @@ class NotebookLmMcpProvider:
                 "options": options,
             },
             timeout=_CHAINED_CALL_TIMEOUT_SEC,
+            action=f"requesting the {kind.value.replace('_', ' ')}",
         )
         artifact_id = data.get("artifact_id")
         if not artifact_id:
@@ -227,7 +237,8 @@ class NotebookLmMcpProvider:
                     "artifact_id": job.job_id,
                     "feedback": feedback,
                 },
-            )
+            ),
+            action="sending the outline review",
         )
         self._raise_for_status(resp)
 
@@ -286,8 +297,10 @@ class NotebookLmMcpProvider:
             timeout=_CHAINED_CALL_TIMEOUT_SEC,
         )
 
-    def _studio(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        resp = self._locked(lambda: self._http.request(method, path, **kwargs))
+    def _studio(
+        self, method: str, path: str, *, action: str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        resp = self._locked(lambda: self._http.request(method, path, **kwargs), action=action)
         self._raise_for_status(resp)
         body = resp.json()
         if not isinstance(body, dict):
@@ -301,11 +314,13 @@ class NotebookLmMcpProvider:
         *,
         timeout: float | None = None,
         wait: float | None = None,
+        action: str | None = None,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
         resp = self._locked(
             lambda: self._http.post("/call", json={"tool": tool, "args": args}, **kwargs),
             wait=wait,
+            action=action,
         )
         self._raise_for_source_auth(resp)
         self._raise_for_status(resp)
@@ -316,7 +331,11 @@ class NotebookLmMcpProvider:
         return data
 
     def _locked(
-        self, request: Callable[[], httpx.Response], *, wait: float | None = None
+        self,
+        request: Callable[[], httpx.Response],
+        *,
+        wait: float | None = None,
+        action: str | None = None,
     ) -> httpx.Response:
         """Run one shim request under the shared NotebookLM session lock.
 
@@ -334,7 +353,7 @@ class NotebookLmMcpProvider:
         if not acquired:
             raise TransientProviderError(f"could not acquire {_LOCK_KEY} within {wait:.0f}s")
         try:
-            return self._send(request)
+            return self._send(request, action=action)
         finally:
             try:
                 lock.release()
@@ -342,12 +361,24 @@ class NotebookLmMcpProvider:
                 log.warning("notebooklm_mcp.lock_release_failed", error=str(exc))
 
     @staticmethod
-    def _send(request: Callable[[], httpx.Response]) -> httpx.Response:
+    def _send(
+        request: Callable[[], httpx.Response], *, action: str | None = None
+    ) -> httpx.Response:
         """A shim timeout, refused connection or dropped socket (e.g. the mcp
-        container restarting) is transient: retried, or waited out while polling."""
+        container restarting) is transient: retried, or waited out while polling.
+
+        `action` marks a call that changes NotebookLM (what it does, for the message):
+        once its request may have reached the shim (anything but a failed connect), a
+        lost reply is `UncertainProviderError`, since a retry could do it twice."""
         try:
             return request()
         except httpx.TransportError as exc:
+            if action is not None and not isinstance(exc, _UNSENT_ERRORS):
+                raise UncertainProviderError(
+                    f"Lost the connection to NotebookLM while {action} "
+                    f"({type(exc).__name__}), so it may have gone through anyway. "
+                    "Check the module's NotebookLM notebook for a duplicate, then press Retry."
+                ) from exc
             raise TransientProviderError(
                 f"MCP shim unreachable ({type(exc).__name__}): {exc}"
             ) from exc

@@ -61,6 +61,13 @@ class TransientProviderError(ProviderError):
     """A provider failure that is worth retrying (timeout, 5xx, locked session)."""
 
 
+class UncertainProviderError(ProviderError):
+    """A call that changes NotebookLM (a new notebook, source or artifact) lost its
+    connection after the request went out, so NotebookLM may have acted on it. Not
+    retried automatically (a second request could make a duplicate and spend quota);
+    the message is written for admins, who decide with Retry."""
+
+
 class GenerationTimeout(ProviderError):
     """A Studio job did not reach a terminal state within its deadline."""
 

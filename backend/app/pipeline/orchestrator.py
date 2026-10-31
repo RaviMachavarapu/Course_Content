@@ -46,6 +46,7 @@ from app.pipeline.provider import (
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
+    UncertainProviderError,
 )
 from app.pipeline.renderers import RENDERERS, MediaBlob, strip_notebook_logo
 from app.render import RenderError
@@ -566,8 +567,9 @@ def _record_failure(
         log.info("orchestrator.job_requeued", job_id=str(plan.job_id), error=str(exc))
         return True
 
-    # The source step's messages are written for admins (spec §8): show as-is.
-    if isinstance(exc, SourceStepError):
+    # The source step's messages (spec §8) and an uncertain call's are written for
+    # admins: show as-is.
+    if isinstance(exc, SourceStepError | UncertainProviderError):
         message = str(exc)
     elif isinstance(exc, SoftTimeLimitExceeded):
         message = TIME_LIMIT

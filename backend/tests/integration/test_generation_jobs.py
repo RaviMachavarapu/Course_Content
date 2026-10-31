@@ -36,6 +36,7 @@ from app.pipeline.provider import (
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
+    UncertainProviderError,
 )
 from app.storage.service import Storage
 
@@ -182,6 +183,29 @@ def test_a_transient_error_with_retries_left_requeues_the_job(db_session: Sessio
         db_session, provider, artifact.id, job_id=job_id, retry_transient=True
     )
     assert _job(db_session, job_id).attempts == 2
+
+
+def test_an_uncertain_generate_fails_with_the_admin_message_and_is_not_requeued(
+    db_session: Session,
+) -> None:
+    """The connection dropped after /studio/create went out: NotebookLM may have
+    started it, so no automatic retry; the admin sees why and decides (Retry)."""
+    artifact, job_id = _queued(db_session)
+    provider = Provider()
+
+    def cut_off() -> None:
+        raise UncertainProviderError("Lost the connection; it may have gone through.")
+
+    provider.on_generate = cut_off
+    with pytest.raises(UncertainProviderError):
+        orchestrator.run_artifact_generation(
+            db_session, provider, artifact.id, job_id=job_id, retry_transient=True
+        )
+    assert _job(db_session, job_id).state is GenerationJobState.failed
+    db_session.expire_all()
+    failed = db_session.get(Artifact, artifact.id)
+    assert failed.status is ArtifactStatus.error
+    assert failed.last_error == "Lost the connection; it may have gone through."
 
 
 def test_a_transient_error_on_the_last_retry_fails_the_job(db_session: Session) -> None:
