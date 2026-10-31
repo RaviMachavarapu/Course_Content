@@ -34,6 +34,7 @@ from app.models.enums import (
 )
 from app.models.generation_job import GenerationJob
 from app.models.module import Module
+from app.pipeline.fixture import FixtureProvider
 from app.pipeline.media_probe import mp4_duration_seconds
 from app.pipeline.module_sources import SourceStepError, ensure_module_sources
 from app.pipeline.parsers import parse_artifact
@@ -932,8 +933,9 @@ def _content_and_media(
     on_progress: Callable[[], None] = lambda: None,
 ) -> tuple[dict[str, object], list[MediaBlob], str | None]:
     """(content_json, media to store, content_html) for a finished artifact."""
-    if raw.extras.get("source") != "notebooklm":
-        # FixtureProvider: Studio-style HTML, rendered by us.
+    if isinstance(provider, FixtureProvider):
+        # Studio-style HTML, rendered by us (fetch_binary for the audio). Any other
+        # provider returns NotebookLM's own row, whose media URLs are downloaded.
         content_json = parse_artifact(kind, raw.html, raw.extras)
         blobs = RENDERERS[kind](content_json, provider, studio_job)
         return content_json, blobs, _report_html(kind, content_json) or raw.html

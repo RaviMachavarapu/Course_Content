@@ -228,12 +228,8 @@ class NotebookLmMcpProvider:
         data = self._recently_polled(job) or self._artifact(job)
         return RawArtifact(
             html=str(data.get("html") or ""),
-            extras={"artifact_id": job.job_id, "source": "notebooklm", "row": data.get("raw")},
+            extras={"artifact_id": job.job_id, "row": data.get("raw")},
         )
-
-    def fetch_binary(self, job: StudioJobRef, kind: ArtifactType) -> bytes | None:
-        # NotebookLM media is fetched by URL (`download`); kept for the protocol.
-        return None
 
     def download(self, url: str) -> tuple[bytes, str]:
         # Not under the session lock: a plain HTTPS fetch that doesn't touch the

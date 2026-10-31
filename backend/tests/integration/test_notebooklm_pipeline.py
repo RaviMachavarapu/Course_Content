@@ -95,11 +95,8 @@ class FakeNotebookLm:
     def fetch_content(self, job: StudioJobRef) -> RawArtifact:
         return RawArtifact(
             html=self.html or "",
-            extras={"artifact_id": job.job_id, "source": "notebooklm", "row": self.row},
+            extras={"artifact_id": job.job_id, "row": self.row},
         )
-
-    def fetch_binary(self, job: StudioJobRef, kind: ArtifactType) -> bytes | None:
-        return None
 
     def download(self, url: str) -> tuple[bytes, str]:
         if self.fail_downloads:

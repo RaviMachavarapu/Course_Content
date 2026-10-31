@@ -125,42 +125,6 @@ app.post("/refresh-auth", async (_req, res) => {
   }
 });
 
-// Proxies a Studio artifact's binary media (e.g. the audio_overview mp3),
-// per `studio_poll`'s `media_url` field.
-//
-// NOT YET LIVE-VERIFIED: whether `media_url` needs the MCP server's own
-// session credentials to fetch (in which case this has to reuse whatever
-// cookie jar `notebooklm-mcp-server` holds internally — not currently
-// exposed via the MCP tool interface, so this may need an upstream feature
-// request or a different retrieval path) or is a short-lived signed URL
-// fetchable with a plain unauthenticated GET. This implementation assumes
-// the latter until proven otherwise.
-app.get("/media", async (req, res) => {
-  const { notebook_id: notebookId, artifact_id: artifactId } = req.query;
-  if (!notebookId || !artifactId) {
-    return res.status(400).json({ error: "missing notebook_id or artifact_id" });
-  }
-  try {
-    const poll = await callTool("studio_poll", { notebook_id: notebookId });
-    const artifact = (poll.artifacts ?? []).find((a) => a.artifact_id === artifactId);
-    if (!artifact?.media_url) {
-      return res.status(404).json({ error: "no media_url for this artifact" });
-    }
-    const upstream = await fetch(artifact.media_url);
-    if (!upstream.ok) {
-      return res.status(502).json({ error: `media fetch failed: ${upstream.status}` });
-    }
-    res.setHeader(
-      "Content-Type",
-      upstream.headers.get("content-type") || "application/octet-stream",
-    );
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    res.send(buf);
-  } catch (err) {
-    res.status(502).json({ error: String(err?.message ?? err) });
-  }
-});
-
 // -- Studio, in the web app's current request format (studio.js) -------------
 
 // 401 = the Google session needs attention; 422 = NotebookLM rejected the

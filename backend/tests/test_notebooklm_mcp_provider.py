@@ -136,7 +136,7 @@ def test_fetch_content_carries_the_artifact_row_and_html() -> None:
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.infographic)
     raw = provider.fetch_content(job)
     assert raw.html == "<div>hi</div>"
-    assert raw.extras == {"artifact_id": "art-1", "source": "notebooklm", "row": row}
+    assert raw.extras == {"artifact_id": "art-1", "row": row}
 
 
 def _counting_artifact(states: list[dict[str, Any]]) -> tuple[NotebookLmMcpProvider, list[str]]:
@@ -219,12 +219,6 @@ def test_outline_action_posts_feedback_or_proceed(feedback: str | None) -> None:
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
     _provider(handler).outline_action(job, feedback)
     assert seen == [{"notebook_id": "nb-1", "artifact_id": "art-1", "feedback": feedback}]
-
-
-def test_fetch_binary_is_unused_for_notebooklm() -> None:
-    provider = _provider(lambda _r: pytest.fail("no request expected"))
-    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.audio_overview)
-    assert provider.fetch_binary(job, ArtifactType.audio_overview) is None
 
 
 def test_health_reports_shim_status() -> None:

@@ -12,14 +12,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.logging import get_logger
 from app.models.enums import ArtifactType, MediaFileKind
-from app.pipeline.provider import ContentProvider, StudioJobRef
+from app.pipeline.provider import StudioJobRef
 from app.render import RenderError, notebook_logo
 from app.render.infographic import render_infographic
 from app.render.slides_pptx import render_slides
+
+if TYPE_CHECKING:
+    from app.pipeline.fixture import FixtureProvider
 
 log = get_logger("pipeline.renderers")
 
@@ -32,14 +35,16 @@ class MediaBlob:
     page_index: int | None = None
 
 
-Renderer = Callable[[dict[str, Any], ContentProvider, StudioJobRef], list[MediaBlob]]
+#: FixtureProvider only: its Studio-style HTML is rendered by us. NotebookLM's own
+#: media is downloaded instead (orchestrator `_content_and_media`).
+Renderer = Callable[[dict[str, Any], "FixtureProvider", StudioJobRef], list[MediaBlob]]
 
 
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 def _render_slides(
-    content_json: dict[str, Any], _p: ContentProvider, _j: StudioJobRef
+    content_json: dict[str, Any], _p: FixtureProvider, _j: StudioJobRef
 ) -> list[MediaBlob]:
     rendered = render_slides(content_json)
     blobs = [
@@ -54,7 +59,7 @@ def _render_slides(
 
 
 def _render_audio(
-    _content_json: dict[str, Any], provider: ContentProvider, job: StudioJobRef
+    _content_json: dict[str, Any], provider: FixtureProvider, job: StudioJobRef
 ) -> list[MediaBlob]:
     mp3 = provider.fetch_binary(job, ArtifactType.audio_overview)
     if not mp3:
@@ -63,7 +68,7 @@ def _render_audio(
 
 
 def _render_infographic(
-    content_json: dict[str, Any], _p: ContentProvider, _j: StudioJobRef
+    content_json: dict[str, Any], _p: FixtureProvider, _j: StudioJobRef
 ) -> list[MediaBlob]:
     rendered = render_infographic(content_json)
     return [
