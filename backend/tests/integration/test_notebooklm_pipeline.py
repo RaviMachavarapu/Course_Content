@@ -296,6 +296,9 @@ def test_outline_feedback_is_sent_and_needs_text(
 
     url = f"/api/admin/artifacts/{artifact.id}/outline/feedback"
     assert client.post(url, json={"feedback": ""}, headers=headers).status_code == 422
+    # whitespace-only is no feedback: rejected, not sent on as Proceed
+    assert client.post(url, json={"feedback": " \n\t "}, headers=headers).status_code == 422
+    assert dispatched == []
     resp = client.post(url, json={"feedback": "  Fewer slides  "}, headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
     [payload] = dispatched

@@ -4,7 +4,7 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import (
     ArtifactStatus,
@@ -29,6 +29,15 @@ class RedoRequest(BaseModel):
 
 class OutlineFeedbackRequest(BaseModel):
     feedback: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("feedback")
+    @classmethod
+    def _feedback_not_blank(cls, value: str) -> str:
+        # whitespace-only would reach NotebookLM as no feedback, i.e. Proceed
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
 
 
 class OutlineOut(BaseModel):
