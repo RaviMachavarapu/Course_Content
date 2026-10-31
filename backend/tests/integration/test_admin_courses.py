@@ -521,6 +521,70 @@ def test_an_upload_claimed_while_it_was_hashed_is_refused(
     assert r.json()["error"]["code"] == "bad_upload"
 
 
+def _storage_key(db: Session, uid: str) -> str:
+    from app.models.source_upload import SourceUpload
+
+    row = db.get(SourceUpload, uuid.UUID(uid))
+    assert row is not None
+    return row.storage_key
+
+
+_GONE = "An uploaded PDF is missing, unfinished or already used. Upload it again."
+
+
+def test_an_upload_whose_file_is_gone_is_refused_as_not_available(
+    client: TestClient, db_session: Session
+) -> None:
+    """Purged (or moved by a concurrent claim) before it was read: not 'damaged'."""
+    from app.storage.service import get_storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    uid = _upload(client, h, "a.pdf", _pdf_bytes())
+    get_storage().path_for(_storage_key(db_session, uid)).unlink()
+    r = _post_module(client, h, cid, upload_ids=[uid])
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "bad_upload"
+    assert r.json()["error"]["message"] == _GONE
+
+
+def test_an_upload_whose_file_goes_while_it_is_read_is_refused_as_not_available(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counted, then moved by a concurrent claim before it was hashed: not a 500."""
+    from app.api.admin import courses as courses_api
+    from app.storage.service import get_storage
+
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    uid = _upload(client, h, "a.pdf", _pdf_bytes())
+    real_count = courses_api._page_count
+
+    def count_then_gone(upload):  # type: ignore[no-untyped-def]
+        pages = real_count(upload)
+        get_storage().path_for(upload.storage_key).unlink()
+        return pages
+
+    monkeypatch.setattr(courses_api, "_page_count", count_then_gone)
+    r = _post_module(client, h, cid, upload_ids=[uid])
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "bad_upload"
+    assert r.json()["error"]["message"] == _GONE
+
+
+def test_a_damaged_upload_that_exists_is_still_reported_damaged(
+    client: TestClient, db_session: Session
+) -> None:
+    h = _admin(client, db_session)
+    cid = _course(client, h)
+    uid = _upload(client, h, "broken.pdf", b"%PDF-1.4 not really a pdf")
+    r = _post_module(client, h, cid, upload_ids=[uid])
+    assert r.status_code == 422
+    assert r.json()["error"]["message"] == (
+        "broken.pdf can't be opened (damaged or password-protected)"
+    )
+
+
 def test_move_failure_restores_files(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

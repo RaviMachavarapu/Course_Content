@@ -305,12 +305,16 @@ def _inspect_uploads(
     db: Session, ids: list[uuid.UUID], admin_id: uuid.UUID
 ) -> dict[uuid.UUID, _UploadFacts]:
     """Read each upload's page count and checksum, holding no lock (the files of a
-    complete upload no longer change); a damaged file fails the request here."""
+    complete upload no longer change); a damaged file fails the request here. A file
+    a concurrent claim moved or the purge deleted meanwhile is "not available"."""
     storage = get_storage()
     facts: dict[uuid.UUID, _UploadFacts] = {}
     for upload in _usable_uploads(db, ids, admin_id, lock=False):
         page_count = _page_count(upload)
-        checksum = storage.sha256(upload.storage_key)
+        try:
+            checksum = storage.sha256(upload.storage_key)
+        except FileNotFoundError:
+            raise _bad_upload() from None
         facts[upload.id] = _UploadFacts(upload.storage_key, page_count, checksum)
     return facts
 
@@ -408,6 +412,8 @@ def _page_count(upload: SourceUpload) -> int:
         if reader.is_encrypted and not reader.decrypt(""):
             raise ValueError("encrypted")
         return len(reader.pages)
+    except FileNotFoundError:
+        raise _bad_upload() from None  # claimed or purged meanwhile, not damaged
     except Exception:
         raise APIError(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
