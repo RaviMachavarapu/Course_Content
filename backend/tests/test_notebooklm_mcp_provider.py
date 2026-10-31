@@ -139,6 +139,64 @@ def test_fetch_content_carries_the_artifact_row_and_html() -> None:
     assert raw.extras == {"artifact_id": "art-1", "source": "notebooklm", "row": row}
 
 
+def _counting_artifact(states: list[dict[str, Any]]) -> tuple[NotebookLmMcpProvider, list[str]]:
+    """A provider whose /studio/artifact answers `states` in turn (the last repeats)."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/studio/outline":
+            return httpx.Response(204)
+        return httpx.Response(200, json=states[min(len(calls) - 1, len(states) - 1)])
+
+    return _provider(handler), calls
+
+
+def test_fetch_content_reuses_the_finished_artifact_the_last_poll_read() -> None:
+    row = ["art-1", "Title", 7]
+    provider, calls = _counting_artifact(
+        [
+            {"status": 1, "raw": None, "html": None},
+            {"status": 3, "raw": row, "html": "<div>hi</div>"},
+        ]
+    )
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.infographic)
+    assert provider.poll(job) is StudioStatus.pending
+    assert provider.poll(job) is StudioStatus.ready
+    raw = provider.fetch_content(job)
+    assert raw.html == "<div>hi</div>" and raw.extras["row"] == row
+    assert calls == ["/studio/artifact", "/studio/artifact"]  # no third full read
+
+
+def test_fetch_content_reads_again_after_a_pending_poll_or_an_outline_action() -> None:
+    provider, calls = _counting_artifact([{"status": 1, "raw": None, "html": None}])
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    provider.poll(job)
+    provider.fetch_content(job)  # a pending payload is never reused
+    assert calls == ["/studio/artifact"] * 2
+
+    provider, calls = _counting_artifact([{"status": 6, "raw": ["art-1"], "html": None}])
+    provider.poll(job)
+    provider.outline_action(job, "Fewer slides")  # the outline is about to change
+    provider.fetch_content(job)
+    assert calls == ["/studio/artifact", "/studio/outline", "/studio/artifact"]
+
+
+def test_fetch_content_reads_again_once_the_last_poll_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.pipeline.notebooklm_mcp as mod
+
+    provider, calls = _counting_artifact([{"status": 3, "raw": ["art-1"], "html": "x"}])
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.report)
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+    provider.poll(job)
+    now[0] += mod._POLLED_ARTIFACT_TTL_SEC + 1
+    provider.fetch_content(job)
+    assert calls == ["/studio/artifact"] * 2
+
+
 def test_download_returns_bytes_and_content_type() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/studio/download"

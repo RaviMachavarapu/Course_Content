@@ -21,6 +21,7 @@ against the same underlying browser session.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -92,6 +93,10 @@ _TRANSIENT_STATUSES = {408, 502, 503, 504}
 #: transport errors raised before any byte of the request reached the shim: safe to
 #: retry even a call that changes NotebookLM
 _UNSENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+#: `fetch_content` reuses a finished artifact the last `poll` read this recently
+#: (each read is a full `artifact_content_get` under the session lock)
+_POLLED_ARTIFACT_TTL_SEC = 60.0
+_FINISHED_STATUSES = (_STATUS_COMPLETED, _STATUS_OUTLINE_REVIEW)
 
 
 class NotebookLmMcpProvider:
@@ -101,6 +106,8 @@ class NotebookLmMcpProvider:
             base_url=self._base_url, timeout=httpx.Timeout(_SHIM_CALL_TIMEOUT_SEC, connect=10.0)
         )
         self._redis: RedisClient = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        #: studio id -> (when, payload) of the last finished artifact `poll` read
+        self._polled: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def close(self) -> None:
         """Release the HTTP connections and the Redis pool."""
@@ -205,6 +212,7 @@ class NotebookLmMcpProvider:
 
     def poll(self, job: StudioJobRef) -> StudioStatus:
         data = self._artifact(job)
+        self._remember_polled(job, data)
         if data.get("missing") is True:
             return StudioStatus.missing
         status = data.get("status")
@@ -217,7 +225,7 @@ class NotebookLmMcpProvider:
         return StudioStatus.pending
 
     def fetch_content(self, job: StudioJobRef) -> RawArtifact:
-        data = self._artifact(job)
+        data = self._recently_polled(job) or self._artifact(job)
         return RawArtifact(
             html=str(data.get("html") or ""),
             extras={"artifact_id": job.job_id, "source": "notebooklm", "row": data.get("raw")},
@@ -240,6 +248,7 @@ class NotebookLmMcpProvider:
         return resp.content, resp.headers.get("content-type", "application/octet-stream")
 
     def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
+        self._polled.pop(job.job_id, None)  # the outline is about to change
         resp = self._locked(
             lambda: self._http.post(
                 "/studio/outline",
@@ -307,6 +316,22 @@ class NotebookLmMcpProvider:
             params={"notebook_id": job.notebook_id, "artifact_id": job.job_id},
             timeout=_CHAINED_CALL_TIMEOUT_SEC,
         )
+
+    def _remember_polled(self, job: StudioJobRef, data: dict[str, Any]) -> None:
+        now = time.monotonic()
+        for key, (at, _) in list(self._polled.items()):  # a long-lived worker: drop old
+            if now - at > _POLLED_ARTIFACT_TTL_SEC:
+                self._polled.pop(key, None)
+        if data.get("status") in _FINISHED_STATUSES and data.get("missing") is not True:
+            self._polled[job.job_id] = (now, data)
+        else:
+            self._polled.pop(job.job_id, None)
+
+    def _recently_polled(self, job: StudioJobRef) -> dict[str, Any] | None:
+        hit = self._polled.get(job.job_id)
+        if hit is None or time.monotonic() - hit[0] > _POLLED_ARTIFACT_TTL_SEC:
+            return None
+        return hit[1]
 
     def _studio(
         self, method: str, path: str, *, action: str | None = None, **kwargs: Any
