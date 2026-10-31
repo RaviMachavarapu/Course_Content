@@ -325,16 +325,24 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
         if existing is None or existing.status is not QuizSetStatus.preparing:
             raise _Done("exists")
         artifact = db.get(Artifact, aid)
-        if artifact is None or not discard_stale_sets(db, artifact, uid):
+        stop = _not_preparable(artifact)
+        if stop is not None:
+            # no longer a quiz, or fresh retakes switched off since the first run
+            existing.status = QuizSetStatus.failed
+            existing.validation_report = {"error": f"abandoned: {stop}"}
+            db.commit()  # `_Done` rolls the scope back
+            raise _Done(stop)
+        assert artifact is not None
+        if not discard_stale_sets(db, artifact, uid):
             existing.heartbeat_at = func.now()
             return set_id
         # the quiz's language/difficulty changed meanwhile: prepare a new set instead
 
     artifact = db.get(Artifact, aid)
-    if artifact is None or artifact.type is not ArtifactType.quiz:
-        raise _Done("skipped")
-    if not artifact.module.quiz_fresh_retakes:
-        raise _Done("off")
+    stop = _not_preparable(artifact)
+    if stop is not None:
+        raise _Done(stop)
+    assert artifact is not None
 
     discard_stale_sets(db, artifact, uid)
     wanted = wanted_for(artifact)
@@ -363,6 +371,16 @@ def _claim(db: Session, aid: uuid.UUID, uid: uuid.UUID, set_id: uuid.UUID | None
     if new_id is None:
         raise _Done("exists")
     return new_id
+
+
+def _not_preparable(artifact: Artifact | None) -> str | None:
+    """Why no chat set is prepared for `artifact` ("skipped": not a quiz; "off": fresh
+    retakes switched off), or None."""
+    if artifact is None or artifact.type is not ArtifactType.quiz:
+        return "skipped"
+    if not artifact.module.quiz_fresh_retakes:
+        return "off"
+    return None
 
 
 def _insert_preparing(

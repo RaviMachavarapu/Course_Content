@@ -694,6 +694,38 @@ def test_a_retry_for_a_set_no_longer_preparing_does_nothing(
     assert chat.prompts == []
 
 
+@pytest.mark.parametrize(
+    ("change", "outcome"),
+    [("switched_off", "off"), ("not_a_quiz", "skipped")],
+)
+def test_a_retry_after_the_quiz_stopped_qualifying_abandons_its_set(
+    db_session: Session,
+    scope: Any,
+    setup: tuple[Artifact, User],
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    outcome: str,
+) -> None:
+    """A Celery retry re-checks what the first run checked: fresh retakes switched off
+    (or the artifact is no longer a quiz) meanwhile means no more chat queries."""
+    artifact, user = setup
+    set_id = quiz._insert_preparing(db_session, artifact.id, user.id, quiz.wanted_for(artifact))
+    assert set_id is not None
+    if change == "switched_off":
+        artifact.module.quiz_fresh_retakes = False
+    else:
+        artifact.type = ArtifactType.flashcards
+    db_session.commit()
+    chat = FakeChat()
+
+    assert _run(monkeypatch, chat, artifact, user, set_id=str(set_id), retries=1) == outcome
+
+    assert chat.prompts == []
+    [qs] = _sets(db_session, artifact, user)
+    assert qs.status is QuizSetStatus.failed
+    assert qs.validation_report["error"]
+
+
 def test_avoid_list_is_built_from_previous_sets(
     db_session: Session, scope: Any, setup: tuple[Artifact, User], monkeypatch: pytest.MonkeyPatch
 ) -> None:
