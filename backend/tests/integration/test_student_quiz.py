@@ -698,6 +698,39 @@ def test_a_non_quiz_artifact_is_not_found(
     assert client.post(f"/api/student/artifacts/{report.id}/quiz-attempts").status_code == 404
 
 
+def test_an_unpublished_quiz_stops_its_open_attempt(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    ctx = _setup(client, db_session, enqueued)
+    attempt_id = _start(client, ctx).json()["attempt_id"]
+    quiz = db_session.get(Artifact, uuid.UUID(ctx.quiz_id))
+    assert quiz is not None
+    quiz.published_version_id = None
+    db_session.flush()
+    assert _check(client, attempt_id, 0, 0).status_code == 404
+    assert _complete(client, attempt_id).status_code == 404
+    assert client.get(f"/api/student/quiz-attempts/{attempt_id}").status_code == 404
+
+
+def test_check_and_complete_do_not_load_versions_or_the_course(
+    client: TestClient, db_session: Session, enqueued: list[tuple[str, str]]
+) -> None:
+    """The per-answer liveness check is one small query, not every version's content
+    and the whole course tree."""
+    import re
+
+    from tests.integration.test_student_query_shape import _statements
+
+    ctx = _setup(client, db_session, enqueued)
+    attempt_id = _start(client, ctx).json()["attempt_id"]
+    db_session.expire_all()
+    heavy = re.compile(r"FROM (artifact_version|course|module)\b")
+    with _statements(db_session) as seen:
+        assert _check(client, attempt_id, 0, 0).status_code == 200
+        assert client.get(f"/api/student/quiz-attempts/{attempt_id}").status_code == 200
+    assert [s for s in seen if heavy.search(s)] == []
+
+
 # -- option shuffling ---------------------------------------------------------------------
 
 

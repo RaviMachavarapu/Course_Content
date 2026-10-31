@@ -56,6 +56,7 @@ from app.schemas.student import (
 )
 from app.services.progress import record_artifact_progress
 from app.services.quiz_generation import fill_blank_correct
+from app.services.visibility import live_clause
 from app.tasks.quiz import discard_stale_sets, enqueue_prepare, studio_questions
 
 router = APIRouter(
@@ -87,6 +88,18 @@ def _quiz_artifact(db: Session, artifact_id: uuid.UUID) -> Artifact:
     if artifact.type is not ArtifactType.quiz:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
     return artifact
+
+
+def _ensure_live_quiz(db: Session, artifact_id: uuid.UUID) -> None:
+    """`_quiz_artifact`'s rule (a quiz with a published version, else 404) as one
+    small query, for the per-answer paths that need no artifact data."""
+    live = db.scalar(
+        select(Artifact.id).where(
+            Artifact.id == artifact_id, Artifact.type == ArtifactType.quiz, live_clause()
+        )
+    )
+    if live is None:
+        raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
 
 
 def _qtype(q: dict[str, Any]) -> QType:
@@ -371,7 +384,7 @@ def _locked_attempt(db: Session, attempt_id: uuid.UUID, user_id: uuid.UUID) -> Q
     )
     if attempt is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
-    _quiz_artifact(db, attempt.artifact_id)
+    _ensure_live_quiz(db, attempt.artifact_id)
     return attempt
 
 
@@ -390,7 +403,7 @@ def get_attempt(attempt_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> Qu
     )
     if attempt is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
-    _quiz_artifact(db, attempt.artifact_id)
+    _ensure_live_quiz(db, attempt.artifact_id)
     if _is_complete(attempt):
         raise APIError(status.HTTP_409_CONFLICT, "attempt_completed", "This attempt is finished.")
     return _start_out(db, attempt, _attempt_number(db, attempt), resumed=True)
@@ -514,7 +527,8 @@ def complete_attempt(attempt_id: uuid.UUID, db: DbDep, student: CurrentStudent) 
     attempt.submitted_at = now
     db.flush()
 
-    artifact = _quiz_artifact(db, attempt.artifact_id)
+    artifact = db.get(Artifact, attempt.artifact_id)  # live: `_locked_attempt` checked
+    assert artifact is not None
     record_artifact_progress(db, user_id=student.id, artifact=artifact, completed=True)
     return _complete_out(db, attempt)
 
