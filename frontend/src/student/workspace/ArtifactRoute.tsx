@@ -37,16 +37,21 @@ export function ArtifactRoute(): JSX.Element | null {
     );
   }
 
+  // `key` gives each artifact a fresh viewer: the module switcher keeps the
+  // type, so without it React would reuse the old deck's state (index, seen
+  // cards, audio seek flag) for the new artifact.
   if (artifactType === "slide_deck")
-    return <SlidesViewer artifactId={entry.id} slug={course.slug} />;
+    return <SlidesViewer key={entry.id} artifactId={entry.id} slug={course.slug} />;
   if (artifactType === "flashcards")
-    return <FlashcardsViewer artifactId={entry.id} slug={course.slug} />;
-  if (artifactType === "quiz") return <QuizViewer artifactId={entry.id} slug={course.slug} />;
+    return <FlashcardsViewer key={entry.id} artifactId={entry.id} slug={course.slug} />;
+  if (artifactType === "quiz")
+    return <QuizViewer key={entry.id} artifactId={entry.id} slug={course.slug} />;
   if (artifactType === "report")
-    return <ReportViewer artifactId={entry.id} slug={course.slug} />;
+    return <ReportViewer key={entry.id} artifactId={entry.id} slug={course.slug} />;
   if (artifactType === "audio_overview")
     return (
       <AudioPlayer
+        key={entry.id}
         artifactId={entry.id}
         slug={course.slug}
         nextHref={nextResourceHref(course, module.index, artifactType)}
@@ -55,7 +60,12 @@ export function ArtifactRoute(): JSX.Element | null {
     );
   if (artifactType === "infographic")
     return (
-      <InfographicViewer artifactId={entry.id} slug={course.slug} moduleTitle={module.title} />
+      <InfographicViewer
+        key={entry.id}
+        artifactId={entry.id}
+        slug={course.slug}
+        moduleTitle={module.title}
+      />
     );
 
   // exhaustive: every ArtifactType has a real viewer above
@@ -81,7 +91,6 @@ function nextResourceHref(
   const firstType = nextModule
     ? WORKSPACE_ARTIFACT_ORDER.find((t) => nextModule.artifacts.some((a) => a.type === t))
     : undefined;
-  if (nextModule && firstType)
-    return `/learn/${course.slug}/${nextModule.index}/${firstType}`;
+  if (nextModule && firstType) return `/learn/${course.slug}/${nextModule.index}/${firstType}`;
   return `/learn/${course.slug}`;
 }

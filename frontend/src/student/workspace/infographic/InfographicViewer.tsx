@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
+import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
+import { imageSize } from "./imageSize";
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
@@ -23,6 +26,7 @@ export function InfographicViewer({
   const progress = useArtifactProgress(artifactId, slug);
   const frameRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
+  const [ratio, setRatio] = useState<number | null>(null);
 
   // opening the infographic counts as viewed
   useEffect(() => {
@@ -49,9 +53,7 @@ export function InfographicViewer({
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
-      {moduleTitle && (
-        <p className="text-label-sm text-on-surface-variant">{moduleTitle}</p>
-      )}
+      {moduleTitle && <p className="text-label-sm text-on-surface-variant">{moduleTitle}</p>}
 
       <div className="flex items-center justify-end gap-1">
         <Button
@@ -95,14 +97,20 @@ export function InfographicViewer({
             src={imageUrl}
             alt={content.caption || "Infographic"}
             data-testid="infographic-image"
-            style={{ width: `${zoom * 100}%`, transition: "width 150ms" }}
+            onLoad={(e) => {
+              const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+              if (w > 0 && h > 0) setRatio(w / h);
+            }}
+            style={{ ...imageSize(zoom, ratio), transition: "width 150ms, max-width 150ms" }}
             className="mx-auto max-w-none"
           />
         )}
       </div>
 
       {content.caption && (
-        <p className="text-center text-body-md text-on-surface-variant">{content.caption}</p>
+        <p className="text-center text-body-md text-on-surface-variant">
+          <MathText text={content.caption} />
+        </p>
       )}
 
       <div className="flex flex-wrap items-center justify-center gap-3">
@@ -117,6 +125,7 @@ export function InfographicViewer({
             Download .png
           </a>
         )}
+        <PdfDownloadLink media={data.media} kind="infographic_pdf" testid="btn-if6" />
         <Button
           data-testid="btn-if5"
           loading={progress.isPending}

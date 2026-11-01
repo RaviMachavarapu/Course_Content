@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button, Input } from "@/components";
-import { ApiError } from "@/lib/api";
+import { ApiError, authErrorMessage } from "@/lib/api";
 import { AuthShell } from "./AuthShell";
 import { confirmError, displayNameError, emailError, passwordError } from "./validation";
 import { useRegister } from "./useStudentAuth";
@@ -46,9 +46,7 @@ export function RegisterPage(): JSX.Element {
           } else if (err instanceof ApiError && err.code === "weak_password") {
             setErrors((p) => ({ ...p, password: err.message }));
           } else {
-            setFormError(
-              err instanceof ApiError ? err.message : "Could not create your account. Try again.",
-            );
+            setFormError(authErrorMessage(err, "Could not create your account. Try again."));
           }
         },
       },

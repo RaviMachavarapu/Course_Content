@@ -1,4 +1,39 @@
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
+import { uniqueMarker } from "./unique";
+
+/**
+ * Walk an adaptive quiz from question 1: answer (option A, or "x" for a
+ * fill-in), Check, see the feedback, then Next — and Finish on the last.
+ * `revisitFirst` also goes back to Q1 after Q2 opens (feedback is kept).
+ */
+async function answerAllQuestions(
+  page: Page,
+  total: number,
+  { revisitFirst = false }: { revisitFirst?: boolean } = {},
+): Promise<void> {
+  for (let i = 0; i < total; i++) {
+    await expect(page.getByText(`Question ${i + 1} of ${total}`)).toBeVisible();
+    const fill = page.getByTestId("quiz-fill-input");
+    if (await fill.isVisible()) await fill.fill("x");
+    else await page.getByTestId("btn-qz1-0").click();
+    await page.getByTestId("btn-qz8").click(); // Check
+    await expect(page.getByTestId("quiz-feedback")).toBeVisible();
+    await expect(page.getByText(`${i + 1}/${total} checked`)).toBeVisible();
+    if (i === total - 1) {
+      await page.getByTestId("btn-qz4").click(); // Finish
+      return;
+    }
+    await page.getByTestId("btn-qz3").click(); // Next
+    if (i === 0 && revisitFirst) {
+      await expect(page.getByText(`Question 2 of ${total}`)).toBeVisible();
+      await page.getByTestId("btn-qz2").click(); // Previous: Q1 keeps its feedback
+      await expect(page.getByText(`Question 1 of ${total}`)).toBeVisible();
+      await expect(page.getByTestId("quiz-feedback")).toBeVisible();
+      await page.getByTestId("btn-qz3").click();
+    }
+  }
+}
 
 /**
  * T031 — student catalog. Publishes a course as admin, then views it as a
@@ -9,7 +44,7 @@ const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "dev-admin-password-123
 
 test("published course shows in the catalog and opens", async ({ page }) => {
   test.slow();
-  const marker = Date.now();
+  const marker = uniqueMarker();
   const courseTitle = `Catalog E2E ${marker}`;
 
   // --- admin: ingest + publish a course ---
@@ -19,7 +54,7 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=cat${marker}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=cat${marker}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Category").fill("E2E Topics");
   await page.getByLabel("Module title").fill("Catalog Module");
@@ -29,7 +64,9 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 30_000 });
   await page.getByTestId("btn-sr3").click();
   await page.getByTestId("btn-publish-confirm").click();
-  await expect(page.locator('[data-status="published"]')).toHaveCount(5);
+  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(
+    5,
+  );
 
   // --- admin logs out ---
   await page.getByTestId("btn-ig9").click();
@@ -45,9 +82,9 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  const card = page.locator('[data-testid="course-card"]', { hasText: courseTitle });
-  await expect(card).toBeVisible();
-  await expect(card.getByText("0% Complete")).toBeVisible();
+  // the catalog lists no courses (owner, 2026-10-30)
+  await expect(page.getByTestId("course-card")).toHaveCount(0);
+  const slug = await courseSlug(page.context(), courseTitle);
 
   // student nav (BTN-CT2..4): Catalog / My Listening / Achievements
   const studentNav = page.getByRole("navigation");
@@ -58,16 +95,8 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await studentNav.getByRole("link", { name: "Catalog", exact: true }).click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  // search narrows to our course
-  await page.getByLabel("Search courses").first().fill(courseTitle);
-  await expect(page.getByTestId("course-card")).toHaveCount(1);
-
-  // category chip filters too
-  await page.getByRole("button", { name: "E2E Topics" }).click();
-  await expect(card).toBeVisible();
-
-  // Start Learning routes into the workspace shell
-  await card.getByTestId("btn-ct7").click();
+  // a direct course link opens the workspace shell
+  await page.goto(`/learn/${slug}`);
   await expect(page).toHaveURL(/\/learn\/catalog-e2e-/);
   await expect(page.getByTestId("btn-ws1")).toContainText("Course Overview");
   await expect(page.getByTestId("btn-ws2")).toContainText("Back to Dashboard");
@@ -104,12 +133,15 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await page.getByTestId("btn-au8").click(); // Next Lesson (also saves the listened position)
   await expect(page).not.toHaveURL(/\/0\/audio_overview$/);
 
-  // My Listening (BTN-ML1): resume deep-links back into this audio lesson
-  await page.goto("/my-listening");
-  const listeningRow = page.getByTestId("listening-row").filter({ hasText: courseTitle });
-  await expect(listeningRow).toBeVisible();
-  await listeningRow.getByTestId("btn-ml1").click();
-  await expect(page).toHaveURL(/\/0\/audio_overview$/);
+  // the listened position is saved (My Listening lists no courses, owner 2026-10-30)
+  await expect
+    .poll(async () => {
+      const r = await page.request.get("/api/student/me/listening");
+      const { rows } = (await r.json()) as { rows: { course_title: string }[] };
+      return rows.some((row) => row.course_title === courseTitle);
+    })
+    .toBe(true);
+  await page.goto(`/learn/${slug}/0/audio_overview`);
 
   // Infographic (BTN-WS7): zoom, fullscreen affordance, download, mark reviewed
   await page.getByTestId("btn-ws7").click();
@@ -127,7 +159,14 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await expect(page).toHaveURL(/\/learn\/[a-z0-9-]+\/0\/report$/);
   await expect(page.getByText(/\d+ min read/)).toBeVisible();
   await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
-  await expect(page.getByTestId("btn-rp3")).toHaveAttribute("href", /\/api\/media\/.*\.pdf/);
+  // the PDF is typeset in the background (worker-pdf -> typeset) after
+  // generation and may not exist yet on first view: reload until it does
+  await expect(async () => {
+    await page.reload();
+    await expect(page.getByTestId("btn-rp3")).toHaveAttribute("href", /\/api\/media\/.*\.pdf/, {
+      timeout: 3_000,
+    });
+  }).toPass({ timeout: 120_000 });
   await page.getByTestId("btn-rp1").click(); // Previous -> back to overview
   await expect(page).toHaveURL(new RegExp("/learn/[a-z0-9-]+$"));
   await page.getByTestId("btn-ws8").click(); // back into the report for the rest of the walk
@@ -155,31 +194,24 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await expect(page.getByText(/^1 of \d+$/)).toBeVisible();
   await expect(page.getByTestId("btn-fc4")).toHaveAttribute("aria-pressed", "true");
 
-  // Quiz (BTN-WS6): answer every question, navigate back/forward, submit, retake, back
+  // Quiz (BTN-WS6), adaptive: each question is checked on its own (instant
+  // feedback) before Next; Finish on the last one shows the score. Retake
+  // brings a fresh question set (the fixture chat answer: MCQ + fill-in).
   await page.getByTestId("btn-ws6").click();
-  const qCount = Number((await page.getByText(/Question 1 of \d+/).textContent())!.match(/of (\d+)/)![1]);
-  await page.getByTestId("btn-qz1-0").click(); // pick option A on Q1
-  if (qCount > 1) {
-    await page.getByTestId("btn-qz3").click(); // Next Question
-    await expect(page.getByText("Question 2 of " + qCount)).toBeVisible();
-    await page.getByTestId("btn-qz2").click(); // Previous
-    await expect(page.getByText("Question 1 of " + qCount)).toBeVisible();
-  }
-  for (let i = 0; i < qCount; i++) {
-    await page.getByTestId("btn-qz1-0").click(); // pick option A
-    if (i < qCount - 1) await page.getByTestId("btn-qz3").click();
-  }
-  await page.getByTestId("btn-qz4").click(); // Submit
+  const firstQuestion = page.getByText(/^Question 1 of \d+$/);
+  await expect(firstQuestion).toBeVisible();
+  const qCount = Number((await firstQuestion.textContent())!.match(/of (\d+)/)![1]);
+  await answerAllQuestions(page, qCount, { revisitFirst: true });
   await expect(page.getByTestId("quiz-score")).toBeVisible();
   await expect(page.getByText(/of \d+ correct/)).toBeVisible();
-  await page.getByTestId("btn-qz5").click(); // Retake
-  await expect(page.getByText("Question 1 of " + qCount)).toBeVisible();
 
-  for (let i = 0; i < qCount; i++) {
-    await page.getByTestId("btn-qz1-0").click();
-    if (i < qCount - 1) await page.getByTestId("btn-qz3").click();
-  }
-  await page.getByTestId("btn-qz4").click(); // Submit again
+  await page.getByTestId("btn-qz5").click(); // Retake (a fresh set may take a moment to prepare)
+  const retakeFirst = page.getByText(/^Question 1 of \d+$/);
+  await expect(retakeFirst).toBeVisible({ timeout: 60_000 });
+  // owner decision 7: a retake has as many questions as the reviewed quiz
+  const retakeCount = Number((await retakeFirst.textContent())!.match(/of (\d+)/)![1]);
+  expect(retakeCount).toBe(qCount);
+  await answerAllQuestions(page, retakeCount);
   await expect(page.getByTestId("quiz-score")).toBeVisible();
   await page.getByTestId("btn-qz6").click(); // Back to module
   await expect(page).toHaveURL(new RegExp(`/learn/[a-z0-9-]+$`));
@@ -195,18 +227,21 @@ test("published course shows in the catalog and opens", async ({ page }) => {
   await expect(page).toHaveURL(new RegExp(`${learnBase}$`));
   await expect(page.getByText("100% Complete")).toBeVisible();
 
-  // Back to Dashboard returns to the catalog, now at 100%
+  // Back to Dashboard returns to the catalog
   await page.getByTestId("btn-ws2").click();
   await expect(page).toHaveURL(/\/catalog$/);
-  await expect(
-    page.locator('[data-testid="course-card"]', { hasText: courseTitle }).getByText("100% Complete"),
-  ).toBeVisible();
 
-  // Progress dashboard reflects the real record (T039)
-  await page.goto("/progress");
-  const progressRow = page.locator('[data-testid="progress-row"]', { hasText: courseTitle });
-  await expect(progressRow).toBeVisible();
-  await expect(progressRow.getByText("100%")).toBeVisible();
+  // the progress record reflects it (T039)
+  // the Progress page lists no courses (owner, 2026-10-30): the record is checked in the API
+  await expect
+    .poll(async () => {
+      const r = await page.request.get("/api/student/me/progress");
+      const { courses } = (await r.json()) as {
+        courses: { title: string; percent_complete: number }[];
+      };
+      return courses.find((c) => c.title === courseTitle)?.percent_complete;
+    })
+    .toBe(100);
 
   // Completing the course unlocked the Course Complete badge
   await page.goto("/achievements");

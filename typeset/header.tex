@@ -1,0 +1,10 @@
+% Copied verbatim from the 2026-10-26 notation spike (notation-spike/quarto/header-fixed.tex).
+% With it all 68 spike formulas compiled with 0 errors (physics then braket; siunitx \qty restored).
+\usepackage[version=4]{mhchem}
+\usepackage{siunitx}
+\usepackage{physics}
+\usepackage{braket}
+\AtBeginDocument{\RenewCommandCopy\qty\SI}
+\usepackage{chemfig}
+\usepackage{cancel}
+\pagestyle{empty}

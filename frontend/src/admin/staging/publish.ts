@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type { ArtifactType } from "../api";
+import { invalidateAfterModuleChange } from "./useStaging";
 
 export interface PublishResult {
   published: ArtifactType[];
@@ -17,7 +18,7 @@ const publishCourse = (courseId: string) =>
 
 export function usePublish(moduleId: string) {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] });
+  const invalidate = () => invalidateAfterModuleChange(qc, moduleId);
   return {
     module: useMutation({ mutationFn: () => publishModule(moduleId), onSuccess: invalidate }),
     course: useMutation({

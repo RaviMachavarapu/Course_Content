@@ -4,23 +4,43 @@
 #   - run the frontend via the Vite dev server instead of the nginx build
 #   - switch the content provider to live NotebookLM
 #   - expose extra debug ports
+# (`!override` replaces the base list instead of appending to it; needs
+# Docker Compose 2.24 or later.)
 
 services:
+  # Vite dev server (hot reload) instead of the nginx build, still on :5173.
   web:
     build:
       context: ./frontend
       target: build
     command: npm run dev -- --host 0.0.0.0 --port 5173
+    environment:
+      # Inside the container localhost is the web container itself.
+      VITE_API_PROXY: http://api:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules
-    ports: ["5173:5173"]
+    ports: !override ["127.0.0.1:5173:5173"]
+    healthcheck:
+      # node:20-slim has no curl, and nothing listens on :80 here.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5173/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 
+  # Live NotebookLM instead of the fixture provider. Needs the mcp service
+  # running and signed in (see mcp/README.md):
+  #   docker compose --profile mcp up -d mcp
   # api:
   #   environment:
   #     CONTENT_PROVIDER: notebooklm
   #     MCP_ENDPOINT: http://mcp:7332
   # worker:
+  #   environment:
+  #     CONTENT_PROVIDER: notebooklm
+  #     MCP_ENDPOINT: http://mcp:7332
+  # worker-quiz:
+  #   environment:
+  #     CONTENT_PROVIDER: notebooklm
+  #     MCP_ENDPOINT: http://mcp:7332
+  # beat:
   #   environment:
   #     CONTENT_PROVIDER: notebooklm
   #     MCP_ENDPOINT: http://mcp:7332

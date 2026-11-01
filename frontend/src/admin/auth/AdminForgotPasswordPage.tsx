@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Icon, Input } from "@/components";
+import { authErrorMessage } from "@/lib/api";
 import { emailError } from "@/student/auth/validation";
 import { adminAuthApi } from "./api";
 
@@ -38,8 +39,7 @@ export function AdminForgotPasswordPage(): JSX.Element {
             <>
               <h1 className="font-headline-md text-headline-md">Check your email</h1>
               <p className="mt-1 font-body-md text-body-md text-on-surface-variant">
-                If that email has an admin account, we sent a reset link. It expires in 30
-                minutes.
+                If that email has an admin account, we sent a reset link. It expires in 30 minutes.
               </p>
               <Link
                 to="/admin/login"
@@ -55,6 +55,14 @@ export function AdminForgotPasswordPage(): JSX.Element {
                 Enter your email and we&apos;ll send you a reset link.
               </p>
               <form className="mt-5 flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+                {request.isError && (
+                  <p
+                    role="alert"
+                    className="rounded-lg bg-error-container/50 px-3 py-2 font-label-md text-label-md text-on-error-container"
+                  >
+                    {authErrorMessage(request.error, "Could not send the reset link. Try again.")}
+                  </p>
+                )}
                 <Input
                   label="Email"
                   type="email"

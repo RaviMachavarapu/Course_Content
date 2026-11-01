@@ -1,18 +1,20 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Card, CardBody, Icon, Input, Select } from "@/components";
 import { ApiError } from "@/lib/api";
 import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
 import {
   DEFAULT_OPTIONS,
   optionsProblem,
+  takesPrompt,
   type OptionsByType,
   type PromptsByType,
 } from "../generationOptions";
 import { ARTIFACT_LABELS, ARTIFACT_TYPES, type ArtifactType } from "../api";
-import { StatusChip, StatusDot } from "../AdminStatus";
 import { sourceUrlError } from "../sourceValidation";
-import { useCourses, useIngest, useMcpStatus, useRecentPipeline } from "../useAdminApi";
+import { PdfPicker, type PickedFile } from "./PdfPicker";
+import { type UploadStarted, uploadPdf } from "./chunkedUpload";
+import { ModuleCreateError, useCourses, useIngest, useMcpStatus } from "../useAdminApi";
 
 type Target = "new" | "existing";
 
@@ -22,7 +24,6 @@ export function IngestionPage(): JSX.Element {
   const scopedCourseId = searchParams.get("course") ?? "";
   const mcp = useMcpStatus();
   const courses = useCourses();
-  const pipeline = useRecentPipeline(5);
   const ingest = useIngest();
   const urlRef = useRef<HTMLInputElement>(null);
   const focusForm = searchParams.get("focus") === "form";
@@ -46,10 +47,91 @@ export function IngestionPage(): JSX.Element {
   const [types, setTypes] = useState<Set<ArtifactType>>(new Set(ARTIFACT_TYPES));
   const [optionsByType, setOptionsByType] = useState<OptionsByType>({ ...DEFAULT_OPTIONS });
   const [promptsByType, setPromptsByType] = useState<PromptsByType>({});
+  const [pdfs, setPdfs] = useState<PickedFile[]>([]);
+  const aborts = useRef(new Map<string, AbortController>());
+  // each picked file's server-side upload, so Retry resumes it instead of resending it all
+  const started = useRef(new Map<string, UploadStarted>());
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const nextId = useRef(0);
   const [submitted, setSubmitted] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const patchPdf = useCallback((id: string, patch: Partial<PickedFile>) => {
+    setPdfs((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  }, []);
+
+  // Uploads run one at a time, in the order the files were added.
+  const startUpload = useCallback(
+    (id: string, file: File) => {
+      const ctrl = new AbortController();
+      aborts.current.set(id, ctrl);
+      queue.current = queue.current.then(async () => {
+        if (ctrl.signal.aborted) return;
+        try {
+          const uploadId = await uploadPdf(
+            file,
+            (sent, total) => patchPdf(id, { sent, total }),
+            ctrl.signal,
+            {
+              resume: started.current.get(id),
+              onStarted: (s) => started.current.set(id, s),
+            },
+          );
+          started.current.delete(id);
+          if (!ctrl.signal.aborted) patchPdf(id, { state: "done", uploadId, error: undefined });
+        } catch (err) {
+          if (ctrl.signal.aborted) return;
+          patchPdf(id, {
+            state: "error",
+            error: err instanceof Error ? err.message : "Upload failed",
+          });
+        } finally {
+          aborts.current.delete(id);
+        }
+      });
+    },
+    [patchPdf],
+  );
+
+  const addPdfs = (files: File[]) => {
+    const added: PickedFile[] = files.map((file) => ({
+      id: `pdf-${nextId.current++}`,
+      file,
+      sent: 0,
+      total: file.size,
+      state: "uploading",
+    }));
+    setPdfs((prev) => [...prev, ...added]);
+    added.forEach((a) => startUpload(a.id, a.file));
+  };
+
+  const removePdf = (id: string) => {
+    aborts.current.get(id)?.abort();
+    started.current.delete(id);
+    setPdfs((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const retryPdf = (id: string) => {
+    const f = pdfs.find((x) => x.id === id);
+    if (!f) return;
+    patchPdf(id, { state: "uploading", sent: 0, error: undefined });
+    startUpload(id, f.file);
+  };
+
+  useEffect(() => {
+    const pending = aborts.current;
+    return () => pending.forEach((c) => c.abort());
+  }, []);
+
+  const uploadedIds = pdfs.flatMap((f) => (f.state === "done" && f.uploadId ? [f.uploadId] : []));
+  const uploading = pdfs.filter((f) => f.state === "uploading").length;
+  const trackedPdfs = pdfs.filter((f) => f.state !== "error").length;
   const urlErr = sourceUrlError(sourceUrl);
+  const sourceErr =
+    !sourceUrl.trim() && uploadedIds.length === 0 ? "Add a link or at least one PDF" : null;
+  // A failed PDF must not be dropped silently: the admin retries or removes it first.
+  const failedPdf = pdfs.find((f) => f.state === "error");
+  const pdfErr = failedPdf ? `Retry or remove ${failedPdf.file.name}` : null;
   const moduleTitleErr = moduleTitle.trim() ? null : "Module title is required";
   const courseTitleErr =
     target === "new" && !courseTitle.trim() ? "Course title is required" : null;
@@ -63,6 +145,8 @@ export function IngestionPage(): JSX.Element {
   );
   const isValid =
     !urlErr &&
+    !sourceErr &&
+    !pdfErr &&
     !moduleTitleErr &&
     !courseTitleErr &&
     !courseSelectErr &&
@@ -81,19 +165,21 @@ export function IngestionPage(): JSX.Element {
     e.preventDefault();
     setSubmitted(true);
     setFormError(null);
-    if (!isValid) return;
+    if (!isValid || uploading > 0) return;
 
     const selectedOptions: OptionsByType = {};
     const selectedPrompts: PromptsByType = {};
     for (const t of types) {
       selectedOptions[t] = optionsByType[t] ?? DEFAULT_OPTIONS[t];
-      const text = promptsByType[t]?.trim();
+      // a prompt box hidden for these options (most report templates) isn't sent
+      const text = takesPrompt(t, selectedOptions[t]) ? promptsByType[t]?.trim() : undefined;
       if (text) selectedPrompts[t] = text;
     }
 
     ingest.mutate(
       {
         sourceUrl,
+        uploadIds: uploadedIds,
         moduleTitle,
         types: [...types],
         options: selectedOptions,
@@ -105,10 +191,22 @@ export function IngestionPage(): JSX.Element {
       },
       {
         onSuccess: ({ moduleId }) => navigate(`/admin/modules/${moduleId}/staging`),
-        onError: (err) =>
-          setFormError(
-            err instanceof ApiError ? err.message : "Could not start generation. Try again.",
-          ),
+        onError: (err) => {
+          const cause = err instanceof ModuleCreateError ? err.cause : err;
+          const message =
+            cause instanceof ApiError ? cause.message : "Could not start generation. Try again.";
+          if (err instanceof ModuleCreateError) {
+            // The course exists now: retry adds the module to it instead of
+            // creating another empty course.
+            setTarget("existing");
+            setExistingCourseId(err.createdCourseId);
+            setFormError(
+              `${message} The course “${courseTitle}” was created — fix the problem and retry to add this module to it.`,
+            );
+            return;
+          }
+          setFormError(message);
+        },
       },
     );
   }
@@ -157,13 +255,30 @@ export function IngestionPage(): JSX.Element {
 
             <Input
               ref={urlRef}
-              label="Source URL"
+              label="Link (optional)"
               placeholder="https://youtube.com/watch?v=…"
               value={sourceUrl}
               onChange={(e) => setSourceUrl(e.target.value)}
               error={submitted ? (urlErr ?? undefined) : undefined}
               hint="YouTube, Google Drive, a direct .pdf link, or a web page"
             />
+
+            <div className="flex flex-col gap-1">
+              <span className="font-label-md text-label-md text-on-surface-variant">
+                PDF files (optional)
+              </span>
+              <PdfPicker files={pdfs} onAdd={addPdfs} onRemove={removePdf} onRetry={retryPdf} />
+              {submitted && sourceErr && (
+                <p role="alert" className="font-label-sm text-label-sm text-error">
+                  {sourceErr}
+                </p>
+              )}
+              {submitted && pdfErr && (
+                <p role="alert" className="font-label-sm text-label-sm text-error">
+                  {pdfErr}
+                </p>
+              )}
+            </div>
 
             <fieldset className="flex flex-col gap-3">
               <legend className="font-label-md text-label-md text-on-surface-variant">
@@ -281,89 +396,17 @@ export function IngestionPage(): JSX.Element {
               type="submit"
               iconLeft="auto_awesome"
               loading={ingest.isPending}
-              disabled={submitted && !isValid}
+              disabled={uploading > 0 || (submitted && !isValid)}
               data-testid="btn-ig6"
               className="self-start"
             >
-              Generate Course Material
+              {uploading > 0
+                ? `Uploading ${trackedPdfs - uploading + 1} of ${trackedPdfs}…`
+                : "Generate Course Material"}
             </Button>
           </form>
         </CardBody>
       </Card>
-
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-headline-md text-headline-md">Recent Pipeline</h2>
-          <Link
-            to="/admin/pipeline"
-            data-testid="btn-ig11"
-            className="font-label-md text-label-md text-primary underline underline-offset-4"
-          >
-            View all
-          </Link>
-        </div>
-
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-body-md">
-              <thead className="border-b border-outline-variant font-label-sm text-label-sm text-on-surface-variant">
-                <tr>
-                  <th className="px-4 py-2">Source</th>
-                  <th className="px-4 py-2">Date</th>
-                  <th className="px-4 py-2">Artifacts</th>
-                  <th className="px-4 py-2">Status</th>
-                  <th className="px-4 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(pipeline.data?.rows ?? []).map((row) => (
-                  <tr key={row.module_id} className="border-b border-outline-variant/60">
-                    <td className="px-4 py-3">
-                      <div className="font-label-md text-label-md">{row.module_title}</div>
-                      <div className="truncate text-label-sm text-on-surface-variant">
-                        {row.source_url}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-label-sm text-on-surface-variant">
-                      {new Date(row.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        {row.dots.map((d) => (
-                          <StatusDot
-                            key={d.type}
-                            status={d.status}
-                            title={`${d.type}: ${d.status}`}
-                          />
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusChip status={row.global_status} />
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        to={`/admin/modules/${row.module_id}/staging`}
-                        data-testid="btn-ig10"
-                        className="font-label-md text-label-md text-primary underline underline-offset-4"
-                      >
-                        Open staging
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-                {pipeline.data && pipeline.data.rows.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-on-surface-variant">
-                      Nothing generated yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </section>
     </div>
   );
 }

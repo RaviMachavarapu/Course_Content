@@ -8,11 +8,14 @@ tests are fully isolated and the dev database is never touched.
 
 from __future__ import annotations
 
+import functools
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 import redis
 import sqlalchemy as sa
@@ -119,22 +122,100 @@ def media_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Storage:
         "app.api.media",
         "app.api.admin.artifacts",
         "app.api.admin.jobs",
+        "app.api.admin.uploads",
+        "app.api.admin.courses",
+        "app.pipeline.module_sources",
+        "app.render.typeset_docs",
+        "app.pipeline.artifact_pdf",
+        "app.cli",
     ):
         monkeypatch.setattr(f"{module}.get_storage", lambda: store, raising=False)
     return store
 
 
 @pytest.fixture
+def source_step_sessions(
+    db_connection: Connection,
+) -> Callable[[], AbstractContextManager[Session]]:
+    """A `session_scope` stand-in for the module source step: each session is
+    bound to the test connection, so its commits are SAVEPOINTs inside the
+    test's outer transaction (and visible to `db_session`)."""
+    factory = sessionmaker(
+        bind=db_connection,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        session = factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    return scope
+
+
+@pytest.fixture(autouse=True)
+def _bind_source_step(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orchestrator's source step opens its own sessions (`session_scope`, the
+    app database) and a Redis lock (db 0). In a DB test, bind both to the test
+    connection and the test Redis db instead."""
+    if "db_session" not in request.fixturenames:
+        return
+    from app.pipeline import module_sources, orchestrator
+
+    monkeypatch.setattr(
+        orchestrator,
+        "ensure_module_sources",
+        functools.partial(
+            module_sources.ensure_module_sources,
+            session_factory=request.getfixturevalue("source_step_sessions"),
+            redis_client=request.getfixturevalue("redis_client"),
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_notebook_deletes_on_the_real_broker(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Re-run all / module delete queue a NotebookLM notebook delete after the commit.
+    A test must never put that on the running stack's broker (its worker may be signed
+    in to live NotebookLM): record it instead (`notebook_deletes` fixture)."""
+    from app.tasks import maintenance
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        maintenance.delete_notebook_task,
+        "apply_async",
+        lambda args, **_: sent.append(args[0]),
+    )
+    return sent
+
+
+@pytest.fixture
+def notebook_deletes(_no_notebook_deletes_on_the_real_broker: list[str]) -> list[str]:
+    return _no_notebook_deletes_on_the_real_broker
+
+
+@pytest.fixture
 def redis_client() -> Iterator[redis.Redis[str]]:
-    """A flushed, isolated Redis DB (index 15) for the duration of one test."""
+    """A flushed, isolated Redis DB (index 15, or TEST_REDIS_DB for a parallel
+    run against another test database) for the duration of one test."""
     url = os.environ.get("TEST_REDIS_URL") or get_settings().redis_url
+    db = int(os.environ.get("TEST_REDIS_DB", "15"))
     # A db in the URL path (redis://host:6379/0) overrides a `db=` kwarg to
     # from_url, which made this flush the app's real db0 (every session and
-    # rate limit) on each run. Take host/auth from the URL, force db 15.
+    # rate limit) on each run. Take host/auth from the URL, force the test db.
+    assert db >= 10, "test Redis DBs are 10-15; 0-2 belong to the running app"
     base = redis.Redis.from_url(url, decode_responses=True)
-    client: redis.Redis[str] = redis.Redis(**{**base.connection_pool.connection_kwargs, "db": 15})
+    client: redis.Redis[str] = redis.Redis(**{**base.connection_pool.connection_kwargs, "db": db})
     base.close()
-    assert client.connection_pool.connection_kwargs["db"] == 15
+    assert client.connection_pool.connection_kwargs["db"] == db
     client.flushdb()
     try:
         yield client
@@ -153,5 +234,21 @@ def client(db_session: Session, redis_client: redis.Redis[str]) -> Iterator[Test
     app.dependency_overrides[app_get_db] = _override_get_db
     app.dependency_overrides[app_get_redis] = lambda: redis_client
     with TestClient(app) as test_client:
+        _send_csrf_like_the_spa(test_client)
         yield test_client
     app.dependency_overrides.clear()
+
+
+def _send_csrf_like_the_spa(test_client: TestClient) -> None:
+    """Mirror frontend/src/lib/api.ts: on a non-GET request, copy the `sdp_csrf`
+    cookie into `X-CSRF-Token` unless the test set that header itself (an
+    explicit empty value is how a test sends "no token")."""
+
+    def add_token(request: httpx.Request) -> None:
+        if request.method in {"GET", "HEAD", "OPTIONS"} or "x-csrf-token" in request.headers:
+            return
+        token = test_client.cookies.get("sdp_csrf")
+        if token:
+            request.headers["X-CSRF-Token"] = token
+
+    test_client.event_hooks["request"].append(add_token)

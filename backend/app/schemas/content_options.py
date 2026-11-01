@@ -18,6 +18,16 @@ from app.models.enums import ArtifactType
 #: Owner decision 2026-10-20: English plus Hindi, Telugu, Tamil, Kannada,
 #: Marathi. All six were sent and accepted in the live capture.
 Language = Literal["en", "hi", "te", "ta", "kn", "mr"]
+#: Human names of the `Language` codes (prompts that ask for text in a language; the
+#: admin UI's labels in frontend/src/admin/generationOptions.ts match).
+LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English",
+    "hi": "Hindi",
+    "te": "Telugu",
+    "ta": "Tamil",
+    "kn": "Kannada",
+    "mr": "Marathi",
+}
 Quantity = Literal["fewer", "standard", "more"]
 Difficulty = Literal["easy", "medium", "hard"]
 AudioFormat = Literal["deep_dive", "brief", "critique", "debate"]
@@ -137,6 +147,17 @@ def default_options(artifact_type: ArtifactType) -> dict[str, object]:
     pass to `ContentProvider.generate`."""
     model = _OPTIONS_MODEL_BY_TYPE[artifact_type]
     return model().model_dump(exclude={"type"})
+
+
+def takes_focus(artifact_type: ArtifactType, options: dict[str, object] | None) -> bool:
+    """Whether NotebookLM receives a focus prompt for these options. Reports take
+    one only with the "Create your own" (`custom`) template: its interactive
+    format and the other document templates send none (`mcp/shim/studio.js`
+    buildSpec). frontend/src/admin/generationOptions.ts `takesPrompt` matches."""
+    if artifact_type is not ArtifactType.report:
+        return True
+    opts = options or {}
+    return opts.get("format") == "document" and opts.get("template") == "custom"
 
 
 def validate_options(artifact_type: ArtifactType, raw: dict[str, object]) -> dict[str, object]:

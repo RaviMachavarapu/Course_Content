@@ -1,7 +1,7 @@
 """Storage key construction and validation.
 
 Scheme (T017):
-    courses/{course_id}/modules/{module_id}/artifacts/{artifact_id}/v{rev}/{kind}[.{page}].{ext}
+    courses/{course_id}/modules/{module_id}/artifacts/{artifact_id}/v{rev}/{kind}[.{page}][.{variant}].{ext}
 """
 
 from __future__ import annotations
@@ -43,11 +43,39 @@ def media_key(
     kind: MediaFileKind,
     ext: str,
     page_index: int | None = None,
+    variant: str | None = None,
 ) -> str:
+    """`variant` (e.g. a checksum prefix) gives a rebuilt file a new key, so a
+    browser that cached the old one (media is served as immutable) gets the new."""
     ext = ext.lstrip(".")
     leaf = kind.value if page_index is None else f"{kind.value}.{page_index:04d}"
+    if variant:
+        leaf = f"{leaf}.{variant}"
     key = (
         f"courses/{course_id}/modules/{module_id}/artifacts/{artifact_id}"
         f"/v{revision}/{leaf}.{ext}"
     )
     return validate_key(key)
+
+
+def module_prefix(course_id: uuid.UUID | str, module_id: uuid.UUID | str) -> str:
+    """The folder holding everything stored for one module (media and sources)."""
+    return validate_key(f"courses/{course_id}/modules/{module_id}")
+
+
+def upload_key(upload_id: uuid.UUID | str) -> str:
+    """In-flight (pre-claim) chunked upload: `uploads/{id}.pdf`."""
+    return validate_key(f"uploads/{upload_id}.pdf")
+
+
+def source_key(
+    course_id: uuid.UUID | str,
+    module_id: uuid.UUID | str,
+    order_index: int,
+    safe_stem: str,
+    part: int | None = None,
+) -> str:
+    """A module's source PDF (or one split part). `safe_stem` must already be
+    sanitized by the caller."""
+    leaf = f"{order_index:02d}-{safe_stem}" + (f".part{part}" if part is not None else "")
+    return validate_key(f"courses/{course_id}/modules/{module_id}/sources/{leaf}.pdf")

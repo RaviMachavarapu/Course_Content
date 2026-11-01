@@ -14,6 +14,7 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -146,6 +147,85 @@ def parse_infographic(row: list[Any]) -> NotebookLmParse:
 _md = MarkdownIt("commonmark", {"html": False}).enable("table")
 
 
+# An inline code span never crosses a blank line (a stray backtick mustn't swallow
+# the paragraphs, and their formulas, up to the next one).
+_CODE_RE = re.compile(r"```.*?```|~~~.*?~~~|(`+)(?:(?!\1)(?!\n[ \t]*\n).)+?\1", re.S)
+
+
+def _math_element(latex: str, display: bool) -> str:
+    cls, tag = ("math-display", "div") if display else ("math-inline", "span")
+    return f'<{tag} class="{cls}">{html_lib.escape(latex)}</{tag}>'
+
+
+def _find_math(text: str, start: int) -> tuple[int, int, str, bool] | None:
+    """The first `$…$` / `$$…$$` formula at or after `start`, else None.
+
+    Pandoc's rule: an opening `$` is followed by a non-space, a closing `$` is
+    preceded by a non-space and not followed by a digit; `\\$` is a literal dollar.
+    """
+    i, n = start, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c != "$":
+            i += 1
+            continue
+        if text.startswith("$$", i):
+            end = text.find("$$", i + 2)
+            if end > i + 2 and text[i + 2 : end].strip():
+                return i, end + 2, text[i + 2 : end].strip(), True
+            i += 2
+            continue
+        if i + 1 < n and not text[i + 1].isspace():
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "\n" and text.startswith("\n", j + 1):
+                    break  # never across a blank line
+                if (
+                    text[j] == "$"
+                    and not text[j - 1].isspace()
+                    and not (j + 1 < n and text[j + 1].isdigit())
+                ):
+                    return i, j + 1, text[i + 1 : j], False
+                j += 1
+        i += 1
+    return None
+
+
+def _render_markdown(markdown: str) -> str:
+    """Markdown → HTML with `$…$` / `$$…$$` formulas kept out of markdown's way."""
+    nonce = uuid.uuid4().hex[:10]
+    maths: list[str] = []
+
+    def protect(chunk: str) -> str:
+        out, pos = [], 0
+        while (m := _find_math(chunk, pos)) is not None:
+            start, end, latex, display = m
+            out += [chunk[pos:start], f"MATHPH{nonce}X{len(maths)}X"]
+            maths.append(_math_element(latex, display))
+            pos = end
+        out.append(chunk[pos:])
+        return "".join(out)
+
+    parts, pos = [], 0
+    for code in _CODE_RE.finditer(markdown):  # leave real code alone
+        parts += [protect(markdown[pos : code.start()]), code.group(0)]
+        pos = code.end()
+    parts.append(protect(markdown[pos:]))
+    rendered: str = _md.render("".join(parts))
+    for k, element in enumerate(maths):
+        token = f"MATHPH{nonce}X{k}X"
+        if element.startswith("<div"):
+            rendered = rendered.replace(f"<p>{token}</p>", element)
+        rendered = rendered.replace(token, element)
+    return rendered
+
+
 def _sections_from_markdown(markdown: str) -> tuple[str | None, list[dict[str, str]]]:
     """Split a Document report on its `##` headings; the `#` line is the title."""
     title: str | None = None
@@ -155,7 +235,7 @@ def _sections_from_markdown(markdown: str) -> tuple[str | None, list[dict[str, s
     def flush() -> None:
         body = "\n".join(buf).strip()
         if body:
-            sections.append({"heading": heading, "html": sanitize_html(_md.render(body))})
+            sections.append({"heading": heading, "html": sanitize_html(_render_markdown(body))})
 
     for line in markdown.splitlines():
         if line.startswith("# ") and title is None:
@@ -169,20 +249,56 @@ def _sections_from_markdown(markdown: str) -> tuple[str | None, list[dict[str, s
     return title, sections
 
 
+def _plain_html(text: str) -> str:
+    """Escaped text with its `$…$` / `$$…$$` formulas as math elements."""
+    out, pos = [], 0
+    while (m := _find_math(text, pos)) is not None:
+        start, end, latex, display = m
+        out += [html_lib.escape(text[pos:start]), _math_element(latex, display)]
+        pos = end
+    out.append(html_lib.escape(text[pos:]))
+    return "".join(out)
+
+
+def _plain_text(text: str) -> str:
+    """Heading text: `$…$` / `$$…$$` formulas kept, every other `$` as `\\$`."""
+    out, pos = [], 0
+    while (m := _find_math(text, pos)) is not None:
+        start, end = m[0], m[1]
+        out += [text[pos:start].replace("$", "\\$"), text[start:end]]
+        pos = end
+    out.append(text[pos:].replace("$", "\\$"))
+    return "".join(out)
+
+
+def _run_text(run: list[Any]) -> str:
+    """One run as heading text, formula runs written back as `$latex$` / `$$latex$$`."""
+    text = _at(run, 2, 0)
+    if not isinstance(text, str):
+        return ""
+    slot9 = _at(run, 2, 1, 9)
+    if slot9 == 1:
+        return f"${text}$"
+    if slot9 == 2:
+        return f"$${text}$$"
+    return _plain_text(text)
+
+
 def _run_html(run: list[Any]) -> str:
     """One interactive-report text run: [start, end, [text, format?]]."""
     text = _at(run, 2, 0)
     if not isinstance(text, str):
         return ""
-    out = html_lib.escape(text)
+    out = _plain_html(text)
     fmt = _at(run, 2, 1)
     if isinstance(fmt, list):
+        # slot 9: 1 = inline formula ("S_N2", "2^4"), 2 = displayed equation
+        if _at(fmt, 9) in (1, 2):
+            out = _math_element(text, display=_at(fmt, 9) == 2)
         if _at(fmt, 0) is True:
             out = f"<strong>{out}</strong>"
         if _at(fmt, 1) is True:
             out = f"<em>{out}</em>"
-        if _at(fmt, 9) == 1:  # observed on "2^4", "A : B :: C : ?" — inline code
-            out = f"<code>{out}</code>"
     return out
 
 
@@ -211,7 +327,7 @@ def _sections_from_blocks(blocks: list[Any]) -> list[dict[str, str]]:
 
     for block in blocks:
         body = _at(block, 2)
-        if not isinstance(body, list):
+        if not isinstance(body, list) or not body:
             continue  # embedded Studio item
         runs = body[0] if isinstance(body[0], list) else []
         inner = "".join(_run_html(r) for r in runs)
@@ -219,7 +335,7 @@ def _sections_from_blocks(blocks: list[Any]) -> list[dict[str, str]]:
         level = _at(style, 1)
         if style == [None, 5]:
             flush()
-            heading = html_lib.unescape(re.sub("<[^>]+>", "", inner)).strip() or heading
+            heading = "".join(_run_text(r) for r in runs).strip() or heading
             parts = []
         elif style in ([None, 6], [None, 7]):
             close_list()
@@ -239,7 +355,7 @@ def _sections_from_blocks(blocks: list[Any]) -> list[dict[str, str]]:
             parts.append(f"<blockquote><p>{inner}</p></blockquote>")
         elif inner:
             close_list()
-            parts.append(f"<p>{inner}</p>")
+            parts.append(inner if 'class="math-display"' in inner else f"<p>{inner}</p>")
     flush()
     return sections
 
@@ -296,6 +412,9 @@ def parse_flashcards(html: str | None) -> NotebookLmParse:
     cards_raw = _app_data(html, "flashcards").get("flashcards")
     if not isinstance(cards_raw, list) or not cards_raw:
         raise ArtifactParseError("flashcards: NotebookLM gave no cards")
+    for i, c in enumerate(cards_raw):
+        if not isinstance(c, dict):
+            raise ArtifactParseError(f"flashcards: card {i + 1} is not an object")
     cards = [
         {
             "front": _block_text(c.get("f"), f"card {i + 1} front"),
@@ -319,6 +438,8 @@ def parse_quiz(html: str | None) -> NotebookLmParse:
                 f"quiz: question {i + 1} has {len(options) if isinstance(options, list) else 0} "
                 "options; the quiz player supports exactly 4"
             )
+        if not all(isinstance(o, dict) for o in options):
+            raise ArtifactParseError(f"quiz: question {i + 1} has an option that isn't an object")
         correct = [j for j, o in enumerate(options) if o.get("isCorrect") is True]
         if len(correct) != 1:
             raise ArtifactParseError(
@@ -350,7 +471,21 @@ def parse_notebooklm(
     kind: ArtifactType, row: list[Any] | None, html: str | None
 ) -> NotebookLmParse:
     """Dispatch on artifact type. Audio is handled by the caller (its content
-    needs the downloaded file's duration)."""
+    needs the downloaded file's duration). A layout this parser doesn't expect
+    is an `ArtifactParseError`, never a bare IndexError/TypeError."""
+    try:
+        return _parse_notebooklm(kind, row, html)
+    except ArtifactParseError:
+        raise
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise ArtifactParseError(
+            f"{kind.value}: unexpected data shape from NotebookLM ({type(exc).__name__}: {exc})"
+        ) from exc
+
+
+def _parse_notebooklm(
+    kind: ArtifactType, row: list[Any] | None, html: str | None
+) -> NotebookLmParse:
     if kind is ArtifactType.flashcards:
         return parse_flashcards(html)
     if kind is ArtifactType.quiz:

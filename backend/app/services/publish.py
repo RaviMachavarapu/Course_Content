@@ -3,20 +3,30 @@
 An artifact publishes only from `ready`: `published_version_id` is set to the
 current version and its status becomes `published`. Everything else is skipped
 and reported. Module/course derived status is recomputed afterwards.
+
+Every artifact row is locked (and re-read) first, in the pipeline's lock order
+(artifact → module → course): a Redo committing `processing` or a worker storing
+a new version meanwhile is waited for, never overwritten with a stale
+"published".
 """
 
 from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.artifact import Artifact
 from app.models.course import Course
-from app.models.enums import ArtifactStatus, CourseStatus
+from app.models.enums import ArtifactStatus, ArtifactType, CourseStatus
 from app.models.module import Module
-from app.models.status import derive_course_status, derive_module_status
+from app.models.progress import ArtifactProgress
+from app.services.derived_status import (
+    recompute_course_status,
+    recompute_module_status,
+    recompute_status,
+)
 
 _SKIP_REASON = {
     ArtifactStatus.pending: "not generated yet",
@@ -26,11 +36,31 @@ _SKIP_REASON = {
 }
 
 
-def _publish_artifacts(artifacts: list[Artifact]) -> tuple[list[Artifact], list[Artifact]]:
+def _reset_flashcard_completion(session: Session, artifact: Artifact) -> None:
+    """A newly published deck starts fresh: ratings are per version (so they
+    reset by themselves) and completion is cleared (owner decision 2026-10-28)."""
+    session.execute(
+        update(ArtifactProgress)
+        .where(ArtifactProgress.artifact_id == artifact.id)
+        .values(completed_at=None)
+        .execution_options(synchronize_session="fetch")
+    )
+
+
+def _publish_artifacts(
+    session: Session, artifacts: list[Artifact]
+) -> tuple[list[Artifact], list[Artifact]]:
     published: list[Artifact] = []
     skipped: list[Artifact] = []
     for artifact in artifacts:
         if artifact.status is ArtifactStatus.ready and artifact.current_version_id is not None:
+            previous = artifact.published_version_id
+            if (
+                artifact.type is ArtifactType.flashcards
+                and previous is not None
+                and previous != artifact.current_version_id
+            ):
+                _reset_flashcard_completion(session, artifact)
             artifact.published_version_id = artifact.current_version_id
             artifact.status = ArtifactStatus.published
             published.append(artifact)
@@ -40,14 +70,7 @@ def _publish_artifacts(artifacts: list[Artifact]) -> tuple[list[Artifact], list[
 
 
 def _recompute(session: Session, module: Module) -> None:
-    session.flush()
-    module.status = derive_module_status(
-        list(session.scalars(select(Artifact.status).where(Artifact.module_id == module.id)))
-    )
-    session.flush()
-    module.course.status = derive_course_status(
-        list(session.scalars(select(Module.status).where(Module.course_id == module.course_id)))
-    )
+    recompute_status(session, module)
     _stamp_course_published(module.course)
     session.flush()
 
@@ -58,8 +81,23 @@ def _stamp_course_published(course: Course) -> None:
         course.published_at = dt.datetime.now(tz=dt.UTC)
 
 
+def _lock_artifacts(session: Session, module_ids: list[object]) -> list[Artifact]:
+    if not module_ids:
+        return []
+    return list(
+        session.scalars(
+            select(Artifact)
+            .where(Artifact.module_id.in_(module_ids))
+            .order_by(Artifact.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+
+
 def publish_module(session: Session, module: Module) -> tuple[list[Artifact], list[Artifact]]:
-    published, skipped = _publish_artifacts(list(module.artifacts))
+    locked = _lock_artifacts(session, [module.id])
+    published, skipped = _publish_artifacts(session, locked)
     _recompute(session, module)
     return published, skipped
 
@@ -68,16 +106,13 @@ def publish_course(session: Session, course: Course) -> tuple[list[Artifact], li
     """BR4 — publish every `ready` artifact across all the course's modules."""
     published: list[Artifact] = []
     skipped: list[Artifact] = []
+    locked = _lock_artifacts(session, [m.id for m in course.modules])
     for module in course.modules:
-        p, s = _publish_artifacts(list(module.artifacts))
+        p, s = _publish_artifacts(session, [a for a in locked if a.module_id == module.id])
         published.extend(p)
         skipped.extend(s)
-        session.flush()
-        module.status = derive_module_status(
-            list(session.scalars(select(Artifact.status).where(Artifact.module_id == module.id)))
-        )
-    session.flush()
-    course.status = derive_course_status([m.status for m in course.modules])
+        recompute_module_status(session, module)
+    recompute_course_status(session, course)
     _stamp_course_published(course)
     session.flush()
     return published, skipped

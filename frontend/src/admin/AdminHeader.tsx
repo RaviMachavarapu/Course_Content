@@ -92,7 +92,10 @@ export function AdminHeader(): JSX.Element {
               <button
                 onClick={() => {
                   logout.mutate(undefined, {
-                    onSettled: () => navigate("/admin/login", { replace: true }),
+                    // only on success: a failed logout leaves the session live,
+                    // and the hook tells the user so
+                    onSuccess: () => navigate("/admin/login", { replace: true }),
+                    onError: () => setMenuOpen(false),
                   });
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left font-label-md text-label-md hover:bg-surface-container-high"

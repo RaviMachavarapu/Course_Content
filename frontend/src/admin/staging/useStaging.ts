@@ -1,19 +1,36 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { stagingApi } from "./api";
 import type { OptionValues } from "../generationOptions";
 
 const PENDING = new Set(["queued", "processing", "running"]);
 
+/** After publish / redo / retry / outline actions: refresh this module's
+ * staging view and every admin list that shows module or course status. */
+export function invalidateAfterModuleChange(qc: QueryClient, moduleId: string): Promise<unknown> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] }),
+    qc.invalidateQueries({ queryKey: ["admin", "courses"] }),
+    qc.invalidateQueries({ queryKey: ["admin", "pipeline"] }),
+    qc.invalidateQueries({ queryKey: ["admin", "editor"] }),
+  ]);
+}
+
+/** Poll every 2.5 s while anything is still resolving (spec §3.3). A failed
+ * first load (module deleted → 404, session ended → 401) stops polling; the
+ * page offers a retry instead. */
+export function stagingPollInterval(
+  data: { artifacts: { status: string }[] } | undefined,
+  status: "pending" | "error" | "success",
+): number | false {
+  if (!data) return status === "error" ? false : 2500;
+  return data.artifacts.some((a) => PENDING.has(a.status)) ? 2500 : false;
+}
+
 export function useStaging(moduleId: string) {
   return useQuery({
     queryKey: ["admin", "staging", moduleId],
     queryFn: () => stagingApi.get(moduleId),
-    // poll every 2.5s while anything is still resolving (spec §3.3)
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (!data) return 2500;
-      return data.artifacts.some((a) => PENDING.has(a.status)) ? 2500 : false;
-    },
+    refetchInterval: (query) => stagingPollInterval(query.state.data, query.state.status),
   });
 }
 
@@ -31,7 +48,7 @@ export function useRedo(moduleId: string) {
       options?: OptionValues;
       customPrompt?: string;
     }) => stagingApi.redo(artifactId, note, options, customPrompt),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] }),
+    onSuccess: () => invalidateAfterModuleChange(qc, moduleId),
   });
 }
 
@@ -43,7 +60,7 @@ export function useOutlineAction(moduleId: string) {
       feedback
         ? stagingApi.outlineFeedback(artifactId, feedback)
         : stagingApi.outlineProceed(artifactId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] }),
+    onSuccess: () => invalidateAfterModuleChange(qc, moduleId),
   });
 }
 
@@ -51,7 +68,15 @@ export function useRetry(moduleId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (artifactId: string) => stagingApi.retry(artifactId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "staging", moduleId] }),
+    onSuccess: () => invalidateAfterModuleChange(qc, moduleId),
+  });
+}
+
+export function useCancel(moduleId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (artifactId: string) => stagingApi.cancel(artifactId),
+    onSuccess: () => invalidateAfterModuleChange(qc, moduleId),
   });
 }
 

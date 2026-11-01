@@ -9,7 +9,7 @@
 # over stdio via the official SDK, and re-exposes the handful of tool calls
 # our backend needs as plain HTTP on :7332 (`MCP_ENDPOINT` in `app/config.py`).
 
-FROM node:20-slim
+FROM node:20.20.2-slim
 
 # Chromium runtime deps for the (interactive, for `auth`) Google login the
 # MCP server performs, plus a virtual display + web-viewable VNC session
@@ -27,7 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # docs/implementation.md §Versions, and re-run the T015a/T015b live checks.
 ENV NOTEBOOKLM_MCP_PACKAGE=notebooklm-mcp-server@4.0.2
 # Pre-fetch it into npx's cache so the first request doesn't pay a cold
-# download; also fails the build loudly if the pin no longer resolves.
+# download. The server has no real --version (it may exit non-zero), hence
+# `|| true`; the next step fails the build if the package is not in the cache.
 RUN npx -y ${NOTEBOOKLM_MCP_PACKAGE} --version || true
 
 # NotebookLM moved to https://notebook.google.com ("Gemini Notebook");
@@ -42,9 +43,9 @@ RUN F="$(find /root/.npm/_npx -path '*/node_modules/notebooklm-mcp-server/dist/i
     && grep -q 'BASE_URL = "https://notebook.google.com"' "$F"
 
 WORKDIR /srv/shim
-COPY shim/package.json .
-RUN npm install --omit=dev
-COPY shim/server.js shim/studio.js ./
+COPY shim/package.json shim/package-lock.json ./
+RUN npm ci --omit=dev
+COPY shim/server.js shim/studio.js shim/sources.js shim/tools.js shim/session.js ./
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

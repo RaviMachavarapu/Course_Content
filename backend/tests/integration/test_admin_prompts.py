@@ -66,6 +66,6 @@ def test_unknown_type_is_422(client: TestClient, db_session: Session) -> None:
 
 def test_put_requires_csrf(client: TestClient, db_session: Session) -> None:
     _admin_client(client, db_session)  # logged in, but no X-CSRF-Token header
-    assert client.put("/api/admin/prompts/quiz", json={"body": "x"}).status_code == (
-        status.HTTP_403_FORBIDDEN
-    )
+    assert client.put(
+        "/api/admin/prompts/quiz", json={"body": "x"}, headers={"X-CSRF-Token": ""}
+    ).status_code == (status.HTTP_403_FORBIDDEN)

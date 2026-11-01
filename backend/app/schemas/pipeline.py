@@ -6,6 +6,7 @@ import uuid
 from pydantic import BaseModel
 
 from app.models.enums import ArtifactStatus, ArtifactType, ModuleStatus
+from app.schemas.courses import SourceFileOut
 
 
 class PipelineDot(BaseModel):
@@ -18,7 +19,8 @@ class PipelineRow(BaseModel):
     course_id: uuid.UUID
     course_title: str
     module_title: str
-    source_url: str
+    source_url: str | None
+    source_files: list[SourceFileOut]
     created_at: dt.datetime
     global_status: ModuleStatus
     dots: list[PipelineDot]

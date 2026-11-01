@@ -58,4 +58,17 @@ describe("RegisterPage", () => {
     await userEvent.click(screen.getByTestId("btn-sl1"));
     await waitFor(() => expect(screen.getByText("CATALOG PAGE")).toBeInTheDocument());
   });
+
+  it("explains a rate limit", async () => {
+    mockFetch({
+      status: 429,
+      body: { error: { code: "rate_limited", message: "Too many attempts. Try again later." } },
+    });
+    renderAuthRoute("/register");
+    await fillValid();
+    await userEvent.click(screen.getByTestId("btn-sl1"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Too many attempts — please try again later.",
+    );
+  });
 });

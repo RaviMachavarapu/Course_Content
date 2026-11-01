@@ -27,6 +27,10 @@ class CourseProgress(Base):
     last_module_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("module.id", ondelete="SET NULL"), nullable=True
     )
+    # "Course Complete" badge: stamped the first time every published artifact
+    # of the course was complete, never cleared (a module published later, or a
+    # deck republished, doesn't take the badge back or move its date).
+    completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

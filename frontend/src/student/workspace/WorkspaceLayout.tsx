@@ -1,5 +1,6 @@
 import { Link, Outlet, useParams } from "react-router-dom";
 import { ErrorState, Icon, Skeleton } from "@/components";
+import { LogoutButton } from "../auth/LogoutButton";
 import type { ArtifactType } from "../catalog/api";
 import type { WorkspaceCourse } from "./api";
 import { ModuleExplorer } from "./ModuleExplorer";
@@ -21,18 +22,15 @@ export function WorkspaceLayout(): JSX.Element {
     );
   }
 
-  if (isError || !course) {
+  // a failed background refresh keeps the page (and the open viewer) as it is
+  if (!course) {
     const notFound =
       error && typeof error === "object" && "status" in error && error.status === 404;
     return (
       <div className="min-h-screen bg-background p-6">
         <ErrorState
           title={notFound ? "Course not available" : "Could not load the course"}
-          description={
-            notFound
-              ? "This course isn’t published, or the link is wrong."
-              : undefined
-          }
+          description={notFound ? "This course isn’t published, or the link is wrong." : undefined}
           onRetry={notFound ? undefined : () => void refetch()}
         />
         <Link
@@ -46,12 +44,11 @@ export function WorkspaceLayout(): JSX.Element {
     );
   }
 
-  const activeModuleIndex =
-    moduleIndex != null ? Number(moduleIndex) : course.current_module_index;
+  const activeModuleIndex = moduleIndex != null ? Number(moduleIndex) : course.current_module_index;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-on-background">
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-outline-variant bg-surface-container-lowest px-4 py-3 md:px-margin-desktop">
+      <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-outline-variant bg-surface-container-lowest px-4 py-3 md:px-margin-desktop">
         <div className="flex min-w-0 flex-col">
           <span className="font-label-sm text-label-sm text-on-surface-variant">
             Individual Course
@@ -64,7 +61,7 @@ export function WorkspaceLayout(): JSX.Element {
             {course.title} · Course Overview
           </Link>
         </div>
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 md:gap-4">
           <span className="font-label-md text-label-md tabular-nums text-on-surface-variant">
             {course.percent_complete}% Complete
           </span>
@@ -76,8 +73,24 @@ export function WorkspaceLayout(): JSX.Element {
             <Icon name="arrow_back" className="text-[16px]" />
             Back to Dashboard
           </Link>
+          <LogoutButton testid="btn-ws9" />
         </div>
       </header>
+      {isError && (
+        <p
+          role="status"
+          className="border-b border-outline-variant bg-surface-container-high px-4 py-1.5 font-label-sm text-label-sm text-on-surface-variant md:px-margin-desktop"
+        >
+          Couldn’t refresh the course just now — your place is kept.{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2"
+            onClick={() => void refetch()}
+          >
+            Try again
+          </button>
+        </p>
+      )}
 
       <div className="flex flex-1 flex-col lg:flex-row">
         <ModuleExplorer

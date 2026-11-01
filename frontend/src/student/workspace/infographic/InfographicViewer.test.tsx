@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { imageSize } from "./imageSize";
 import { InfographicViewer } from "./InfographicViewer";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -31,8 +32,10 @@ function installFetch(artifact: unknown = ARTIFACT) {
     let body: unknown = { error: { code: "x", message: "x" } };
     let status = 404;
     if (url.includes("/progress") && method === "PUT") {
+      // like the server: a visit PUT ({}) doesn't complete; {completed:true} does
+      const sent = JSON.parse((init?.body as string) ?? "{}") as { completed?: boolean };
       body = {
-        completed: true,
+        completed: sent.completed === true,
         slide_last_index: null,
         audio_position_seconds: null,
         course_percent_complete: 100,
@@ -61,6 +64,15 @@ function renderViewer() {
     </QueryClientProvider>,
   );
 }
+
+describe("InfographicViewer math", () => {
+  it("draws a formula in the caption", async () => {
+    installFetch({ ...ARTIFACT, content_json: { caption: "Rate of $S_N2$" } });
+    const { container } = renderViewer();
+    await screen.findByTestId("infographic-image");
+    expect(container.querySelector(".katex")).not.toBeNull();
+  });
+});
 
 describe("InfographicViewer", () => {
   it("renders the diagram, caption, module title, and marks viewed on open", async () => {
@@ -122,5 +134,61 @@ describe("InfographicViewer", () => {
       );
       expect(completedPut).toBeDefined();
     });
+  });
+});
+
+describe("InfographicViewer PDF link", () => {
+  it("links the infographic PDF when present", async () => {
+    installFetch({
+      ...ARTIFACT,
+      media: [
+        ...ARTIFACT.media,
+        { kind: "infographic_pdf", url: "/api/media/i.pdf", page_index: null },
+      ],
+    });
+    renderViewer();
+    expect(await screen.findByTestId("btn-if6")).toHaveAttribute("href", "/api/media/i.pdf");
+  });
+  it("hides the link when absent", async () => {
+    installFetch();
+    renderViewer();
+    await screen.findByTestId("btn-if5");
+    expect(screen.queryByTestId("btn-if6")).toBeNull();
+  });
+});
+
+describe("InfographicViewer orientations", () => {
+  function loaded(img: HTMLElement, width: number, height: number) {
+    Object.defineProperty(img, "naturalWidth", { value: width, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: height, configurable: true });
+    fireEvent.load(img);
+  }
+
+  it.each([
+    ["landscape", 2752, 1536, "51.958rem"],
+    ["square", 2048, 2048, "29rem"],
+    ["portrait", 1536, 2752, "16.186rem"],
+  ])("fits a %s image in the frame at zoom 1", async (_name, w, h, maxWidth) => {
+    installFetch();
+    renderViewer();
+    const img = await screen.findByTestId("infographic-image");
+    loaded(img, w, h);
+    await waitFor(() => expect(img.style.maxWidth).toBe(maxWidth));
+    expect(img.style.width).toBe("100%");
+  });
+
+  it("zoom scales a portrait image's cap too", async () => {
+    installFetch();
+    renderViewer();
+    const img = await screen.findByTestId("infographic-image");
+    loaded(img, 1536, 2752);
+    await userEvent.click(screen.getByTestId("btn-if1"));
+    expect(img.style.width).toBe("125%");
+    expect(img.style.maxWidth).toBe("20.233rem");
+  });
+
+  it("imageSize has no cap before the image has loaded", () => {
+    expect(imageSize(1, null)).toEqual({ width: "100%" });
+    expect(imageSize(2, 1)).toEqual({ width: "200%", maxWidth: "58rem" });
   });
 });

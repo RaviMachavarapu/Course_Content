@@ -12,10 +12,17 @@ from sqlalchemy.orm import Session
 from app.cli import seed_admin
 from app.models.artifact import Artifact
 from app.models.course import Course
-from app.models.enums import ArtifactStatus, ArtifactType, ModuleSourceType
+from app.models.enums import (
+    ArtifactStatus,
+    ArtifactType,
+    CourseStatus,
+    MediaFileKind,
+    ModuleSourceType,
+)
 from app.models.module import Module
-from app.pipeline import orchestrator
+from app.pipeline import artifact_pdf, orchestrator
 from app.pipeline.fixture import FixtureProvider
+from app.render.typeset_client import TypesetResult
 
 PROVIDER = FixtureProvider()
 
@@ -40,8 +47,15 @@ def _report_with_media(db: Session) -> tuple[Artifact, str]:
     orchestrator.run_artifact_generation(db, PROVIDER, jobs[0].artifact_id, job_id=jobs[0].job_id)
     db.expire_all()
     artifact = db.get(Artifact, jobs[0].artifact_id)
-    version = next(v for v in artifact.versions if v.id == artifact.current_version_id)
-    return artifact, version.media_files[0].storage_key
+    # the report's PDF is typeset after generation (fake service here)
+    (built,) = artifact_pdf.build_version_pdfs(
+        db,
+        artifact.current_version_id,
+        render=lambda *_: TypesetResult(pdf=b"%PDF-1.7 report", fallback="0"),
+    )
+    media = built.media
+    assert media.kind is MediaFileKind.report_pdf
+    return artifact, media.storage_key
 
 
 def _login_admin(client: TestClient, db: Session) -> None:
@@ -59,6 +73,9 @@ def test_admin_can_fetch_any_media(client: TestClient, db_session: Session) -> N
     assert resp.status_code == status.HTTP_200_OK
     assert resp.headers["content-type"] == "application/pdf"
     assert "immutable" in resp.headers["cache-control"]
+    # session-gated: never storable by a shared cache (CDN, school proxy)
+    assert resp.headers["cache-control"].startswith("private")
+    assert "public" not in resp.headers["cache-control"]
     assert resp.content[:5] == b"%PDF-"
 
 
@@ -90,3 +107,90 @@ def test_bad_and_unknown_keys_are_404(client: TestClient, db_session: Session) -
     _login_admin(client, db_session)
     assert client.get("/api/media/../etc/passwd").status_code == status.HTTP_404_NOT_FOUND
     assert client.get("/api/media/courses/x/nope.pdf").status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_student_cannot_fetch_unpublished_pdf(client: TestClient, db_session: Session) -> None:
+    """Review focus 4: a typeset PDF follows the version's publish state. The
+    published version's PDF is served; the newer, unpublished one is not."""
+    artifact, published_key = _report_with_media(db_session)
+    artifact = db_session.get(Artifact, artifact.id)
+    artifact.published_version_id = artifact.current_version_id
+    artifact.status = ArtifactStatus.published
+    db_session.flush()
+
+    # a redo makes a new current version (with its own PDF) that is not published
+    orchestrator.run_artifact_generation(db_session, PROVIDER, artifact.id, redo_note="again")
+    db_session.expire_all()
+    artifact = db_session.get(Artifact, artifact.id)
+    assert artifact.current_version_id != artifact.published_version_id
+    (draft,) = artifact_pdf.build_version_pdfs(
+        db_session,
+        artifact.current_version_id,
+        render=lambda *_: TypesetResult(pdf=b"%PDF-1.7 draft", fallback="0"),
+    )
+    draft_key = draft.media.storage_key
+    artifact.status = ArtifactStatus.published
+    db_session.flush()
+
+    client.post(
+        "/api/student/auth/register",
+        json={"email": "p@example.com", "password": "student-pw-12345", "display_name": "P"},
+    )
+    assert client.get(f"/api/media/{draft_key}").status_code == status.HTTP_404_NOT_FOUND
+    resp = client.get(f"/api/media/{published_key}")
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.content == b"%PDF-1.7 report"
+
+
+def test_students_never_get_the_quiz_answer_key_pdf(
+    client: TestClient, db_session: Session
+) -> None:
+    """quiz_pdf carries the answer key: admins only, even for a published
+    version. Students get quiz_questions_pdf (questions and options only)."""
+    course = Course(title="C", slug=f"c-{uuid.uuid4()}")
+    module = Module(
+        course=course,
+        order_index=0,
+        title="M",
+        source_url="https://youtu.be/x",
+        source_type=ModuleSourceType.youtube,
+    )
+    db_session.add(module)
+    db_session.flush()
+    jobs = orchestrator.start_module_generation(
+        db_session, PROVIDER, module.id, [ArtifactType.quiz]
+    )
+    orchestrator.run_artifact_generation(
+        db_session, PROVIDER, jobs[0].artifact_id, job_id=jobs[0].job_id
+    )
+    db_session.expire_all()
+    artifact = db_session.get(Artifact, jobs[0].artifact_id)
+    built = artifact_pdf.build_version_pdfs(
+        db_session,
+        artifact.current_version_id,
+        render=lambda md, *_: TypesetResult(pdf=b"%PDF-1.7 " + md.encode(), fallback="0"),
+    )
+    keys = {b.media.kind: b.media.storage_key for b in built}
+    assert set(keys) == {MediaFileKind.quiz_pdf, MediaFileKind.quiz_questions_pdf}
+    artifact.published_version_id = artifact.current_version_id
+    artifact.status = ArtifactStatus.published
+    artifact.module.course.status = CourseStatus.published
+    db_session.flush()
+    db_session.expire_all()  # load the rows as the API would
+
+    client.post(
+        "/api/student/auth/register",
+        json={"email": "q@example.com", "password": "student-pw-12345", "display_name": "Q"},
+    )
+    listing = client.get(f"/api/student/artifacts/{artifact.id}")
+    assert listing.status_code == status.HTTP_200_OK
+    kinds = {m["kind"] for m in listing.json()["media"]}
+    assert "quiz_questions_pdf" in kinds
+    assert "quiz_pdf" not in kinds
+    assert all(keys[MediaFileKind.quiz_pdf] not in m["url"] for m in listing.json()["media"])
+
+    answer_key = client.get(f"/api/media/{keys[MediaFileKind.quiz_pdf]}")
+    assert answer_key.status_code == status.HTTP_404_NOT_FOUND
+    questions = client.get(f"/api/media/{keys[MediaFileKind.quiz_questions_pdf]}")
+    assert questions.status_code == status.HTTP_200_OK
+    assert b"Answer key" not in questions.content

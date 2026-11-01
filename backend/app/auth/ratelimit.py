@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 import redis
+from starlette.requests import Request
 
 _SPEC_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*([smh])\s*$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
@@ -21,6 +22,13 @@ def parse_rate(spec: str) -> tuple[int, int]:
         raise ValueError(f"invalid rate spec: {spec!r}")
     limit, qty, unit = int(m.group(1)), int(m.group(2)), m.group(3)
     return limit, qty * _UNIT_SECONDS[unit]
+
+
+def client_ip(request: Request) -> str:
+    """The caller's IP. uvicorn runs with proxy headers trusting only the nginx
+    container, so `request.client.host` is already the real client address
+    (never a client-supplied X-Forwarded-For)."""
+    return request.client.host if request.client else "unknown"
 
 
 class RateLimiter:
@@ -38,3 +46,6 @@ class RateLimiter:
     def peek(self, key: str) -> int:
         raw = self._r.get(key)
         return int(raw) if raw is not None else 0
+
+    def reset(self, key: str) -> None:
+        self._r.delete(key)

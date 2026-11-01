@@ -1,7 +1,7 @@
 """app_meta table
 
 Revision ID: ba04118cd53e
-Revises: 
+Revises:
 Create Date: 2026-09-03 17:50:45.068005+00:00
 """
 

@@ -19,12 +19,14 @@ from app.config import get_settings
 from app.models.enums import ArtifactType
 from app.pipeline.notebooklm_mcp import NotebookLmMcpProvider
 from app.pipeline.provider import (
-    GenerationTimeout,
     NotebookRef,
+    ProviderAuthError,
     ProviderError,
+    SourceState,
     StudioJobRef,
     StudioStatus,
     TransientProviderError,
+    UncertainProviderError,
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -134,7 +136,65 @@ def test_fetch_content_carries_the_artifact_row_and_html() -> None:
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.infographic)
     raw = provider.fetch_content(job)
     assert raw.html == "<div>hi</div>"
-    assert raw.extras == {"artifact_id": "art-1", "source": "notebooklm", "row": row}
+    assert raw.extras == {"artifact_id": "art-1", "row": row}
+
+
+def _counting_artifact(states: list[dict[str, Any]]) -> tuple[NotebookLmMcpProvider, list[str]]:
+    """A provider whose /studio/artifact answers `states` in turn (the last repeats)."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/studio/outline":
+            return httpx.Response(204)
+        return httpx.Response(200, json=states[min(len(calls) - 1, len(states) - 1)])
+
+    return _provider(handler), calls
+
+
+def test_fetch_content_reuses_the_finished_artifact_the_last_poll_read() -> None:
+    row = ["art-1", "Title", 7]
+    provider, calls = _counting_artifact(
+        [
+            {"status": 1, "raw": None, "html": None},
+            {"status": 3, "raw": row, "html": "<div>hi</div>"},
+        ]
+    )
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.infographic)
+    assert provider.poll(job) is StudioStatus.pending
+    assert provider.poll(job) is StudioStatus.ready
+    raw = provider.fetch_content(job)
+    assert raw.html == "<div>hi</div>" and raw.extras["row"] == row
+    assert calls == ["/studio/artifact", "/studio/artifact"]  # no third full read
+
+
+def test_fetch_content_reads_again_after_a_pending_poll_or_an_outline_action() -> None:
+    provider, calls = _counting_artifact([{"status": 1, "raw": None, "html": None}])
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    provider.poll(job)
+    provider.fetch_content(job)  # a pending payload is never reused
+    assert calls == ["/studio/artifact"] * 2
+
+    provider, calls = _counting_artifact([{"status": 6, "raw": ["art-1"], "html": None}])
+    provider.poll(job)
+    provider.outline_action(job, "Fewer slides")  # the outline is about to change
+    provider.fetch_content(job)
+    assert calls == ["/studio/artifact", "/studio/outline", "/studio/artifact"]
+
+
+def test_fetch_content_reads_again_once_the_last_poll_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.pipeline.notebooklm_mcp as mod
+
+    provider, calls = _counting_artifact([{"status": 3, "raw": ["art-1"], "html": "x"}])
+    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.report)
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+    provider.poll(job)
+    now[0] += mod._POLLED_ARTIFACT_TTL_SEC + 1
+    provider.fetch_content(job)
+    assert calls == ["/studio/artifact"] * 2
 
 
 def test_download_returns_bytes_and_content_type() -> None:
@@ -159,12 +219,6 @@ def test_outline_action_posts_feedback_or_proceed(feedback: str | None) -> None:
     job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
     _provider(handler).outline_action(job, feedback)
     assert seen == [{"notebook_id": "nb-1", "artifact_id": "art-1", "feedback": feedback}]
-
-
-def test_fetch_binary_is_unused_for_notebooklm() -> None:
-    provider = _provider(lambda _r: pytest.fail("no request expected"))
-    job = StudioJobRef(job_id="art-1", notebook_id="nb-1", kind=ArtifactType.audio_overview)
-    assert provider.fetch_binary(job, ArtifactType.audio_overview) is None
 
 
 def test_health_reports_shim_status() -> None:
@@ -208,6 +262,24 @@ def test_refresh_auth_posts_to_shim() -> None:
     assert calls == ["/refresh-auth"]
 
 
+def test_delete_source_posts_to_the_shim() -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"deleted": True})
+
+    _provider(handler).delete_source(NotebookRef(notebook_id="nb-1"), "src-9")
+    assert seen == [("/source/delete", {"notebook_id": "nb-1", "source_id": "src-9"})]
+
+
+def test_delete_source_refused_by_the_shim_is_a_provider_error() -> None:
+    # the shim answers 409 for a source NotebookLM doesn't report as failed
+    provider = _provider(lambda _r: httpx.Response(409, json={"error": "not failed"}))
+    with pytest.raises(ProviderError):
+        provider.delete_source(NotebookRef(notebook_id="nb-1"), "src-9")
+
+
 def test_plain_4xx_from_shim_is_a_provider_error() -> None:
     provider = _provider(lambda _r: httpx.Response(400, text="bad request"))
     with pytest.raises(ProviderError, match="MCP shim error 400"):
@@ -223,7 +295,7 @@ def test_non_object_data_is_a_provider_error() -> None:
 def test_lock_already_held_is_a_transient_provider_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.pipeline.notebooklm_mcp._LOCK_BLOCKING_TIMEOUT_SEC", 1)
+    monkeypatch.setattr("app.pipeline.notebooklm_mcp._LOCK_WAIT_SEC", 1)
     provider = _provider(lambda _r: _ok({"notebook_id": "nb-1", "title": "x"}))
     blocking_lock = provider._redis.lock("mcp:session", timeout=5)
     assert blocking_lock.acquire(blocking=True)
@@ -237,13 +309,156 @@ def test_lock_already_held_is_a_transient_provider_error(
 def test_502_from_shim_is_a_transient_provider_error() -> None:
     provider = _provider(lambda _r: httpx.Response(502, json={"error": "tool boom"}))
     with pytest.raises(TransientProviderError, match="tool boom"):
+        provider.query(NotebookRef(notebook_id="n"), "ask")
+
+
+@pytest.mark.parametrize("code", [408, 503, 504])
+def test_gateway_and_timeout_statuses_are_transient(code: int) -> None:
+    provider = _provider(lambda _r: httpx.Response(code, text="<html>proxy page</html>"))
+    with pytest.raises(TransientProviderError, match="proxy page"):
+        provider.query(NotebookRef(notebook_id="n"), "ask")
+
+
+def test_a_non_json_502_is_still_transient() -> None:
+    provider = _provider(lambda _r: httpx.Response(502, text="<html>bad gateway</html>"))
+    with pytest.raises(TransientProviderError, match="bad gateway"):
+        provider.query(NotebookRef(notebook_id="n"), "ask")
+
+
+def test_a_connector_tool_rejection_is_permanent() -> None:
+    # the shim answers 422 when the tool itself reported an error (isError)
+    provider = _provider(lambda _r: httpx.Response(422, json={"error": "private video"}))
+    with pytest.raises(ProviderError, match="private video") as info:
+        provider.add_source(NotebookRef(notebook_id="nb"), "https://youtu.be/x")
+    assert not isinstance(info.value, TransientProviderError)
+
+
+def test_a_connector_auth_failure_is_an_auth_error() -> None:
+    provider = _provider(lambda _r: httpx.Response(401, json={"error": "sign in again"}))
+    with pytest.raises(ProviderAuthError):
         provider.create_notebook("x")
 
 
-def test_5xx_other_than_502_is_a_generation_timeout() -> None:
-    provider = _provider(lambda _r: httpx.Response(504, text="gateway timeout"))
-    with pytest.raises(GenerationTimeout):
-        provider.create_notebook("x")
+_NETWORK_ERRORS = [httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError]
+#: the request never reached the shim
+_UNSENT_ERRORS = [httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout]
+#: the request may have reached the shim (and NotebookLM acted on it)
+_UNCERTAIN_ERRORS = [
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+]
+_READ_CALLS = [
+    lambda p: p.poll(StudioJobRef(job_id="a", notebook_id="n", kind=ArtifactType.report)),
+    lambda p: p.download("https://lh3.googleusercontent.com/x"),
+    lambda p: p.source_statuses(NotebookRef(notebook_id="n")),
+    lambda p: p.query(NotebookRef(notebook_id="n"), "ask"),
+]
+_CHANGING_CALLS = [
+    lambda p: p.create_notebook("x"),
+    lambda p: p.add_source(NotebookRef(notebook_id="n"), "https://youtu.be/x"),
+    lambda p: p.add_file_source(NotebookRef(notebook_id="n"), "/data/media/a.pdf", "a.pdf"),
+    lambda p: p.generate(NotebookRef(notebook_id="n"), ArtifactType.report, "focus", {}),
+    lambda p: p.outline_action(
+        StudioJobRef(job_id="a", notebook_id="n", kind=ArtifactType.slide_deck), None
+    ),
+]
+
+
+def _raising(error: type[httpx.TransportError]) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error("down", request=request)
+
+    return handler
+
+
+@pytest.mark.parametrize("error", _NETWORK_ERRORS)
+@pytest.mark.parametrize("call", _READ_CALLS)
+def test_network_errors_and_timeouts_are_transient(
+    error: type[httpx.TransportError], call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    """An mcp restart or a slow shim call is worth retrying (and, while polling, waiting
+    for), not a failed generation."""
+    with pytest.raises(TransientProviderError):
+        call(_provider(_raising(error)))
+
+
+@pytest.mark.parametrize("error", _UNSENT_ERRORS)
+@pytest.mark.parametrize("call", _CHANGING_CALLS)
+def test_a_call_that_never_reached_the_shim_is_transient(
+    error: type[httpx.TransportError], call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    with pytest.raises(TransientProviderError):
+        call(_provider(_raising(error)))
+
+
+@pytest.mark.parametrize("error", _UNCERTAIN_ERRORS)
+@pytest.mark.parametrize("call", _CHANGING_CALLS)
+def test_a_changing_call_cut_off_after_sending_is_not_retried(
+    error: type[httpx.TransportError], call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    """NotebookLM may already have made the notebook, source or artifact: an automatic
+    retry could make a second one (and spend quota), so the admin decides."""
+    with pytest.raises(UncertainProviderError, match="may have gone through") as info:
+        call(_provider(_raising(error)))
+    assert not isinstance(info.value, TransientProviderError)
+
+
+#: the shim's "worth a retry" answers (its tool timeout, Google failing after the
+#: request) and whatever a proxy or timeout in between answers
+_RETRY_STATUSES = [408, 502, 503, 504]
+
+
+@pytest.mark.parametrize("code", _RETRY_STATUSES)
+@pytest.mark.parametrize("call", _READ_CALLS)
+def test_a_read_answered_with_a_retry_status_is_transient(
+    code: int, call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    with pytest.raises(TransientProviderError, match="boom"):
+        call(_provider(lambda _r: httpx.Response(code, json={"error": "boom"})))
+
+
+@pytest.mark.parametrize("code", _RETRY_STATUSES)
+@pytest.mark.parametrize("call", _CHANGING_CALLS)
+def test_a_changing_call_answered_with_a_retry_status_is_not_retried(
+    code: int, call: Callable[[NotebookLmMcpProvider], object]
+) -> None:
+    """The shim answers 502 when the connector tool times out or Google fails after
+    NotebookLM got the request: it may have acted on it, so the admin decides."""
+    with pytest.raises(UncertainProviderError, match="may have gone through") as info:
+        call(_provider(lambda _r: httpx.Response(code, json={"error": "boom"})))
+    assert not isinstance(info.value, TransientProviderError)
+    assert "Check the module's NotebookLM notebook for a duplicate" in str(info.value)
+
+
+def test_calls_outlast_the_shims_own_tool_timeout() -> None:
+    from app.pipeline import notebooklm_mcp
+
+    shim_timeout_sec = 300
+    provider = NotebookLmMcpProvider(get_settings())
+    try:
+        assert provider._http.timeout.read is not None
+        assert provider._http.timeout.read > shim_timeout_sec
+        assert shim_timeout_sec < notebooklm_mcp._QUERY_TIMEOUT_SEC
+        assert provider._http.timeout.read < notebooklm_mcp._LOCK_TIMEOUT_SEC
+    finally:
+        provider.close()
+
+
+def test_the_provider_is_reused_per_process_and_closes() -> None:
+    from app.config import Settings
+    from app.pipeline import factory
+
+    settings = Settings(content_provider="notebooklm")
+    factory.reset_content_provider()
+    try:
+        first = factory.get_content_provider(settings)
+        assert factory.get_content_provider(settings) is first
+    finally:
+        factory.reset_content_provider()
+    assert first._http.is_closed
 
 
 def test_lock_is_released_after_a_call() -> None:
@@ -257,8 +472,270 @@ def test_lock_is_released_after_a_call() -> None:
 
 def test_lock_is_released_even_when_the_call_raises() -> None:
     provider = _provider(lambda _r: httpx.Response(502, json={"error": "boom"}))
-    with pytest.raises(TransientProviderError):
+    with pytest.raises(UncertainProviderError):
         provider.create_notebook("x")
     lock = provider._redis.lock("mcp:session", timeout=5, blocking_timeout=1)
     assert lock.acquire(blocking=True)
     lock.release()
+
+
+def test_add_file_source_posts_path_and_name() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"source_id": "src-9"})
+
+    provider = _provider(handler)
+    ref = provider.add_file_source(
+        NotebookRef(notebook_id="nb-1"), "/data/media/uploads/a.pdf", "a.pdf"
+    )
+    assert ref.source_id == "src-9"
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/source/upload"
+    assert json.loads(seen[0].content) == {
+        "notebook_id": "nb-1",
+        "path": "/data/media/uploads/a.pdf",
+        "name": "a.pdf",
+    }
+    # long but finite: a half-open connection to the shim can't hang the job forever
+    assert seen[0].extensions["timeout"]["read"] == pytest.approx(30 * 60)
+
+
+def test_add_file_source_does_not_hold_the_session_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A long upload must not block other jobs' calls, so it runs outside mcp:session.
+    monkeypatch.setattr("app.pipeline.notebooklm_mcp._LOCK_BLOCKING_TIMEOUT_SEC", 1)
+    provider = _provider(lambda _r: httpx.Response(200, json={"source_id": "src-9"}))
+    other_job = provider._redis.lock("mcp:session", timeout=5)
+    assert other_job.acquire(blocking=True)
+    try:
+        ref = provider.add_file_source(NotebookRef(notebook_id="nb-1"), "/x.pdf", "x.pdf")
+    finally:
+        other_job.release()
+    assert ref.source_id == "src-9"
+
+
+def test_source_statuses_maps_shim_reply() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/source/status"
+        assert request.url.params["notebook_id"] == "nb-1"
+        return httpx.Response(
+            200,
+            json={
+                "sources": [
+                    {"id": "s1", "title": "A", "status": "pending"},
+                    {"id": "s2", "title": "B", "status": "ready"},
+                    {"id": "s3", "title": "C", "status": "failed"},
+                ]
+            },
+        )
+
+    out = _provider(handler).source_statuses(NotebookRef(notebook_id="nb-1"))
+    assert out == {
+        "s1": SourceState.pending,
+        "s2": SourceState.ready,
+        "s3": SourceState.failed,
+    }
+
+
+def test_add_file_source_422_is_provider_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"error": "unsupported file"})
+
+    with pytest.raises(ProviderError) as exc:
+        _provider(handler).add_file_source(NotebookRef(notebook_id="nb-1"), "/x.pdf", "x.pdf")
+    assert not isinstance(exc.value, TransientProviderError)
+    assert str(exc.value) == "unsupported file"
+
+
+@pytest.mark.parametrize("route", ["upload", "status"])
+def test_source_routes_401_is_provider_auth_error(route: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "Google session needs attention"})
+
+    provider = _provider(handler)
+    nb = NotebookRef(notebook_id="nb-1")
+    with pytest.raises(ProviderAuthError) as exc:
+        if route == "upload":
+            provider.add_file_source(nb, "/x.pdf", "x.pdf")
+        else:
+            provider.source_statuses(nb)
+    assert not isinstance(exc.value, TransientProviderError)
+    assert str(exc.value) == "Google session needs attention"
+
+
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        ({"id": "s1", "status": "weird"}, "unexpected source status from the connector: 'weird'"),
+        ({"id": "s1"}, "unexpected source status from the connector: None"),
+        ({"status": "ready"}, "source without an id"),
+    ],
+)
+def test_source_statuses_bad_items_are_provider_errors(item: dict[str, Any], message: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"sources": [item]})
+
+    with pytest.raises(ProviderError, match=message):
+        _provider(handler).source_statuses(NotebookRef(notebook_id="nb-1"))
+
+
+def test_query_calls_notebook_query_and_returns_answer() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _ok({"answer": "[]"})
+
+    assert _provider(handler).query(NotebookRef(notebook_id="nb-1"), "ask") == "[]"
+    assert seen == [{"tool": "notebook_query", "args": {"notebook_id": "nb-1", "query": "ask"}}]
+
+
+def test_query_without_answer_is_a_provider_error() -> None:
+    with pytest.raises(ProviderError):
+        _provider(lambda r: _ok({"status": "ok"})).query(NotebookRef(notebook_id="nb-1"), "ask")
+
+
+def test_query_timeout_is_transient() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with pytest.raises(TransientProviderError):
+        _provider(handler).query(NotebookRef(notebook_id="nb-1"), "ask")
+
+
+# -- Redis trouble and the session lock (review 2026-10-29) ----------------------------
+class _StubLock:
+    def __init__(self, owner: _StubRedis, blocking_timeout: float | None) -> None:
+        self.owner = owner
+        self.blocking_timeout = blocking_timeout
+
+    def acquire(self, blocking: bool = True) -> bool:
+        if self.owner.acquire_error is not None:
+            raise self.owner.acquire_error
+        return True
+
+    def release(self) -> None:
+        if self.owner.release_error is not None:
+            raise self.owner.release_error
+
+
+class _StubRedis:
+    """Stands in for the provider's Redis client (no real lock taken)."""
+
+    def __init__(self) -> None:
+        self.acquire_error: Exception | None = None
+        self.release_error: Exception | None = None
+        self.waits: list[float | None] = []
+
+    def lock(self, name: str, timeout: float, blocking_timeout: float | None = None) -> _StubLock:
+        self.waits.append(blocking_timeout)
+        return _StubLock(self, blocking_timeout)
+
+    def close(self) -> None:
+        pass
+
+
+def _stubbed(handler: Handler) -> tuple[NotebookLmMcpProvider, _StubRedis]:
+    provider = _provider(handler)
+    provider._redis.close()
+    stub = _StubRedis()
+    provider._redis = stub  # type: ignore[assignment]
+    return provider, stub
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        __import__("redis").exceptions.ConnectionError("restarting"),
+        __import__("redis").exceptions.TimeoutError("slow"),
+        __import__("redis").exceptions.AuthenticationError("bad password"),
+    ],
+    ids=["connection", "timeout", "auth"],
+)
+def test_redis_trouble_taking_the_session_lock_is_transient(error: Exception) -> None:
+    provider, stub = _stubbed(lambda _r: _ok({"notebook_id": "nb-1"}))
+    stub.acquire_error = error
+    with pytest.raises(TransientProviderError, match="Redis"):
+        provider.create_notebook("x")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        __import__("redis").exceptions.LockNotOwnedError("key gone"),
+        __import__("redis").exceptions.ConnectionError("restarting"),
+    ],
+    ids=["lost", "down"],
+)
+def test_a_failed_lock_release_never_discards_a_finished_call(error: Exception) -> None:
+    """Worst case from the review: /studio/create succeeded, then the release fails
+    (the key vanished in a Redis restart). The NotebookLM id must still come back."""
+    provider, stub = _stubbed(lambda _r: httpx.Response(200, json={"artifact_id": "art-7"}))
+    stub.release_error = error
+    job = provider.generate(NotebookRef(notebook_id="nb-1"), ArtifactType.report, "p", {})
+    assert job.job_id == "art-7"
+
+
+def test_chat_waits_briefly_for_the_session_lock_but_generation_steps_outwait_it() -> None:
+    """A chat query holds the lock up to 330 s: generation calls wait longer than the
+    longest holder; a chat prep gives up after 60 s (its task retries with back-off)."""
+    from app.pipeline import notebooklm_mcp as m
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/call":
+            return _ok({"answer": "a"})
+        return httpx.Response(200, json={"status": 1, "artifact_id": "a", "sources": []})
+
+    provider, stub = _stubbed(handler)
+    nb = NotebookRef(notebook_id="nb-1")
+    job = StudioJobRef(job_id="a", notebook_id="nb-1", kind=ArtifactType.report)
+    provider.query(nb, "q")
+    provider.poll(job)
+    provider.generate(nb, ArtifactType.report, "p", {})
+    provider.source_statuses(nb)
+    chat, poll, create, status = stub.waits
+    assert chat == m._LOCK_BLOCKING_TIMEOUT_SEC == 60
+    longest_holder = max(m._QUERY_TIMEOUT_SEC, m._CHAINED_CALL_TIMEOUT_SEC)
+    for wait in (poll, create, status):
+        assert wait is not None and wait > longest_holder
+
+
+def test_shim_endpoints_chaining_two_connector_calls_get_room_for_both() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = request.extensions["timeout"]["read"]
+        return httpx.Response(200, json={"status": 1, "artifact_id": "a"})
+
+    provider, _stub = _stubbed(handler)
+    nb = NotebookRef(notebook_id="nb-1")
+    provider.generate(nb, ArtifactType.report, "p", {})
+    provider.poll(StudioJobRef(job_id="a", notebook_id="nb-1", kind=ArtifactType.report))
+    shim_tool_timeout = 300
+    assert seen["/studio/create"] > 2 * shim_tool_timeout
+    assert seen["/studio/artifact"] > 2 * shim_tool_timeout
+
+
+def test_poll_reports_an_artifact_notebooklm_no_longer_has() -> None:
+    provider, _stub = _stubbed(
+        lambda _r: httpx.Response(
+            200, json={"status": None, "raw": None, "html": None, "missing": True}
+        )
+    )
+    job = StudioJobRef(job_id="gone", notebook_id="nb-1", kind=ArtifactType.report)
+    assert provider.poll(job) is StudioStatus.missing
+
+
+def test_delete_notebook_calls_the_connector_with_confirm() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _ok({"status": "ok"})
+
+    provider, _stub = _stubbed(handler)
+    provider.delete_notebook(NotebookRef(notebook_id="nb-old"))
+    assert seen == [{"tool": "notebook_delete", "args": {"notebook_id": "nb-old", "confirm": True}}]

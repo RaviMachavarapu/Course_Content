@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import time
+
+from starlette.requests import Request
 from starlette.responses import Response
 
-from app.auth.sessions import COOKIE_NAMES, SessionScope, SessionStore
+from app.auth.device import DEVICE_COOKIE_NAMES, max_age_seconds, read_device_token
+from app.auth.sessions import COOKIE_NAMES, SessionData, SessionScope, SessionStore
 from app.config import Settings
 
 
@@ -18,7 +22,7 @@ def set_session_cookie(
     response.set_cookie(
         key=COOKIE_NAMES[scope],
         value=token,
-        max_age=store.ttl_seconds(scope),
+        max_age=store.max_seconds(scope),
         httponly=True,
         secure=settings.app_env != "dev",
         samesite="lax",
@@ -34,3 +38,49 @@ def clear_session_cookie(response: Response, scope: SessionScope, settings: Sett
         samesite="lax",
         path="/",
     )
+
+
+def set_device_cookie(
+    response: Response, scope: SessionScope, token: str, settings: Settings
+) -> None:
+    """The trusted-device cookie (auth.device): long-lived, never read by JS."""
+    response.set_cookie(
+        key=DEVICE_COOKIE_NAMES[scope],
+        value=token,
+        max_age=max_age_seconds(settings),
+        httponly=True,
+        secure=settings.app_env != "dev",
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_device_cookie(response: Response, scope: SessionScope, settings: Settings) -> None:
+    response.delete_cookie(
+        key=DEVICE_COOKIE_NAMES[scope],
+        httponly=True,
+        secure=settings.app_env != "dev",
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_device_cookie_after_logout(
+    request: Request,
+    response: Response,
+    scope: SessionScope,
+    session: SessionData | None,
+    settings: Settings,
+) -> None:
+    """A session signed in without "Remember this device" leaves nothing
+    behind, but only its own account's trust goes: a device cookie of another
+    account on this browser stays (controller ruling 2026-10-29). An
+    unreadable or expired cookie belongs to no one and goes too."""
+    if session is None or session.remember:
+        return
+    claims = read_device_token(
+        settings, request.cookies.get(DEVICE_COOKIE_NAMES[scope]), scope=scope, now=time.time()
+    )
+    if claims is not None and claims.user_id != session.user_id:
+        return
+    clear_device_cookie(response, scope, settings)

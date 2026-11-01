@@ -1,9 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useUIStore } from "@/lib/store";
 import { FlashcardsViewer } from "./FlashcardsViewer";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  useUIStore.setState({ toasts: [] });
+});
 
 function artifact(ratings: Record<string, string> = {}) {
   return {
@@ -13,6 +17,7 @@ function artifact(ratings: Record<string, string> = {}) {
     module_index: 0,
     course_slug: "nn",
     revision: 1,
+    version_id: "v1",
     content_json: {
       cards: [
         { front: "Q0", back: "A0", category: "Basics" },
@@ -40,7 +45,12 @@ function installFetch(art: unknown) {
       body = { ratings: { [idx]: value } };
       status = 200;
     } else if (url.includes("/progress") && method === "PUT") {
-      body = { completed: true, slide_last_index: null, audio_position_seconds: null, course_percent_complete: 50 };
+      body = {
+        completed: true,
+        slide_last_index: null,
+        audio_position_seconds: null,
+        course_percent_complete: 50,
+      };
       status = 200;
     } else if (url.includes("/api/student/artifacts/")) {
       body = art;
@@ -66,6 +76,22 @@ function renderViewer() {
   );
 }
 
+describe("FlashcardsViewer math", () => {
+  it("draws formulas on both faces", async () => {
+    const art = artifact();
+    art.content_json.cards = [
+      { front: "Rate of $S_N2$?", back: "Depends on $\\ce{H2O}$", category: "$S_N1$" },
+    ];
+    installFetch(art);
+    const { container } = renderViewer();
+    await screen.findByTestId("fc-face");
+    expect(container.querySelectorAll(".katex").length).toBe(2);
+    expect(screen.getByTestId("btn-fc1")).toHaveAttribute("aria-label", "Show answer");
+    await userEvent.click(screen.getByTestId("btn-fc1"));
+    expect(screen.getByTestId("fc-face").querySelector(".katex")).not.toBeNull();
+  });
+});
+
 describe("FlashcardsViewer", () => {
   it("shows the front, flips on click, and gates Prev at the start", async () => {
     installFetch(artifact());
@@ -89,13 +115,17 @@ describe("FlashcardsViewer", () => {
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(
         (c) =>
-          (c[1] as RequestInit)?.method === "PUT" &&
-          String(c[0]).includes("/flashcard-ratings/0"),
+          (c[1] as RequestInit)?.method === "PUT" && String(c[0]).includes("/flashcard-ratings/0"),
       );
       expect(put).toBeDefined();
-      expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({ value: "hard" });
+      expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({
+        value: "hard",
+        version_id: "v1",
+      });
     });
-    await waitFor(() => expect(screen.getByTestId("btn-fc4")).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-fc4")).toHaveAttribute("aria-pressed", "true"),
+    );
   });
 
   it("orders previously-Hard cards first", async () => {
@@ -121,7 +151,124 @@ describe("FlashcardsViewer", () => {
         (c) => (c[1] as RequestInit)?.method === "PUT" && String(c[0]).includes("/progress"),
       );
       expect(put).toBeDefined();
-      expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({ completed: true });
+      expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({
+        completed: true,
+        version_id: "v1",
+      });
     });
+  });
+});
+
+describe("FlashcardsViewer PDF link", () => {
+  const pdf = { kind: "flashcards_pdf", url: "/api/media/fc.pdf", page_index: null };
+  it("links the flashcards PDF when present", async () => {
+    installFetch({ ...artifact(), media: [pdf] });
+    renderViewer();
+    expect(await screen.findByTestId("btn-fc7")).toHaveAttribute("href", "/api/media/fc.pdf");
+  });
+  it("hides the link when absent", async () => {
+    installFetch(artifact());
+    renderViewer();
+    await screen.findByTestId("btn-fc1");
+    expect(screen.queryByTestId("btn-fc7")).toBeNull();
+  });
+});
+
+describe("FlashcardsViewer stability", () => {
+  it("keeps the current card in place after rating it", async () => {
+    installFetch(artifact());
+    renderViewer();
+    await screen.findByText("Q0");
+    await userEvent.click(screen.getByTestId("btn-fc6")); // Easy
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-fc6")).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(screen.getByTestId("fc-face")).toHaveTextContent("Q0");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("sends completion only once per visit", async () => {
+    const fetchMock = installFetch(artifact());
+    renderViewer();
+    await screen.findByText("Q0");
+    await userEvent.click(screen.getByTestId("btn-fc3"));
+    await userEvent.click(screen.getByTestId("btn-fc2"));
+    await userEvent.click(screen.getByTestId("btn-fc3"));
+    await new Promise((r) => setTimeout(r, 50));
+    const puts = fetchMock.mock.calls.filter(
+      (c) => (c[1] as RequestInit)?.method === "PUT" && String(c[0]).includes("/progress"),
+    );
+    expect(puts).toHaveLength(1);
+  });
+});
+
+describe("FlashcardsViewer — keyboard and republished decks", () => {
+  it("Space on a focused rating button rates the card instead of flipping it", async () => {
+    const fetchMock = installFetch(artifact());
+    renderViewer();
+    await screen.findByText("Q0");
+    screen.getByTestId("btn-fc6").focus(); // Easy
+    await userEvent.keyboard(" ");
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find((c) => String(c[0]).includes("/flashcard-ratings/0"));
+      expect(put).toBeDefined();
+    });
+    expect(screen.getByText("Q0")).toBeInTheDocument(); // not flipped
+  });
+
+  it("sends the deck version it shows with ratings and completion", async () => {
+    const fetchMock = installFetch(artifact());
+    renderViewer();
+    await screen.findByText("Q0");
+    await userEvent.click(screen.getByTestId("btn-fc4"));
+    await userEvent.click(screen.getByTestId("btn-fc3")); // last card → completion
+    await waitFor(() => {
+      const bodies = fetchMock.mock.calls
+        .filter((c) => (c[1] as RequestInit)?.method === "PUT")
+        .map((c) => JSON.parse((c[1] as RequestInit).body as string) as { version_id?: string });
+      expect(bodies.length).toBe(2);
+      expect(bodies.every((b) => b.version_id === "v1")).toBe(true);
+    });
+  });
+
+  it("a republished deck (409 stale_version) says so and reloads the new deck", async () => {
+    let version = "v1";
+    const fn = vi.fn((_input: string | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const reply = (status: number, body: unknown) =>
+        Promise.resolve({
+          ok: status < 300,
+          status,
+          statusText: String(status),
+          json: () => Promise.resolve(body),
+        } as Response);
+      if (method === "PUT") {
+        version = "v2"; // an admin published v2 meanwhile
+        return reply(409, {
+          error: { code: "stale_version", message: "This content was updated." },
+        });
+      }
+      const art = artifact();
+      return reply(
+        200,
+        version === "v1"
+          ? art
+          : {
+              ...art,
+              version_id: "v2",
+              revision: 2,
+              content_json: { cards: [{ front: "NEW Q0", back: "NEW A0" }] },
+            },
+      );
+    });
+    vi.stubGlobal("fetch", fn);
+    renderViewer();
+    await screen.findByText("Q0");
+    await userEvent.click(screen.getByTestId("btn-fc5")); // Good
+    expect(await screen.findByText("NEW Q0")).toBeInTheDocument();
+    expect(useUIStore.getState().toasts.map((t) => t.title)).toContain(
+      "This deck was updated — reloading",
+    );
+    expect(screen.getByText("1 of 1")).toBeInTheDocument();
   });
 });

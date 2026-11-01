@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
+import { uniqueMarker } from "./unique";
 
 /**
  * T042 / spec.md §7 AC5 — the full student flow, scripted end-to-end in one
@@ -17,7 +19,7 @@ const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "dev-admin-password-123
 test("AC5: register -> catalog -> consume all six -> progress reflected", async ({ page }) => {
   test.setTimeout(180_000); // slide_deck's LibreOffice cold start on the worker
 
-  const marker = Date.now();
+  const marker = uniqueMarker();
   const courseTitle = `AC5 Acceptance ${marker}`;
 
   // --- admin: publish a course with all six artifact types ---
@@ -27,7 +29,7 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=ac5${marker}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=ac5${marker}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Module title").fill("AC5 Module");
   await page.getByTestId("btn-ig6").click();
@@ -36,7 +38,9 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
 
   await page.getByTestId("btn-sr3").click();
   await page.getByTestId("btn-publish-confirm").click();
-  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(6);
+  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(
+    6,
+  );
 
   await page.getByTestId("btn-ig9").click();
   await page.getByRole("button", { name: "Log out" }).click();
@@ -51,9 +55,7 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  const card = page.locator('[data-testid="course-card"]', { hasText: courseTitle });
-  await expect(card).toBeVisible();
-  await card.getByTestId("btn-ct7").click();
+  await page.goto(`/learn/${await courseSlug(page.context(), courseTitle)}`);
   await expect(page).toHaveURL(/\/learn\//);
 
   // consume all six — a light touch per type (real per-button depth lives
@@ -80,9 +82,15 @@ test("AC5: register -> catalog -> consume all six -> progress reflected", async 
   await page.getByTestId("btn-rp2").click();
   await expect(page.getByText("100% Complete")).toBeVisible();
 
-  // progress reflected on the dedicated dashboard
-  await page.goto("/progress");
-  const progressRow = page.locator('[data-testid="progress-row"]', { hasText: courseTitle });
-  await expect(progressRow).toBeVisible();
-  await expect(progressRow.getByText("100%")).toBeVisible();
+  // progress reflected in the student's record
+  // the Progress page lists no courses (owner, 2026-10-30): the record is checked in the API
+  await expect
+    .poll(async () => {
+      const r = await page.request.get("/api/student/me/progress");
+      const { courses } = (await r.json()) as {
+        courses: { title: string; percent_complete: number }[];
+      };
+      return courses.find((c) => c.title === courseTitle)?.percent_complete;
+    })
+    .toBe(100);
 });

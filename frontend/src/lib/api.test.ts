@@ -1,0 +1,259 @@
+import {
+  ApiError,
+  apiFetch,
+  authErrorMessage,
+  errorMessage,
+  formatCountdown,
+  setCsrfFailureHandler,
+  setSessionEndedHandler,
+} from "./api";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setCsrfFailureHandler(null);
+  setSessionEndedHandler(null);
+  document.cookie = "sdp_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+});
+
+function respond(status: number, body: unknown) {
+  const fn = vi.fn((_input: string, _init?: RequestInit) =>
+    Promise.resolve({
+      ok: status < 300,
+      status,
+      statusText: String(status),
+      json: () => Promise.resolve(body),
+    } as Response),
+  );
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
+describe("apiFetch", () => {
+  it("sends X-CSRF-Token on student mutations", async () => {
+    document.cookie = "sdp_csrf=tok%2B1; path=/";
+    const fn = respond(200, {});
+    await apiFetch("/api/student/artifacts/a/progress", { method: "PUT", body: {} });
+    const init = fn.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok+1");
+  });
+
+  it("does not send the token on GET", async () => {
+    document.cookie = "sdp_csrf=tok; path=/";
+    const fn = respond(200, {});
+    await apiFetch("/api/student/catalog");
+    const init = fn.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBeUndefined();
+  });
+
+  it("reports a 403 csrf_failed to the handler with a session-expired message", async () => {
+    respond(403, { error: { code: "csrf_failed", message: "Missing or invalid CSRF token" } });
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    const err = await apiFetch("/api/admin/modules", { method: "POST", body: {} }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("csrf_failed");
+    expect((err as ApiError).message).toMatch(/session ended/i);
+    expect(handler).toHaveBeenCalledWith("/api/admin/modules");
+  });
+
+  it("leaves other 403s alone", async () => {
+    respond(403, { error: { code: "forbidden", message: "Nope" } });
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    await expect(apiFetch("/api/admin/x", { method: "POST" })).rejects.toThrow("Nope");
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe("apiFetch — a session that ended (401)", () => {
+  it.each([
+    ["GET", "/api/admin/staging/modules/m1"],
+    ["POST", "/api/admin/modules/m1/publish"],
+    ["PUT", "/api/student/artifacts/a/progress"],
+    ["GET", "/api/student/catalog"],
+  ])("reports %s %s and throws a 'Session ended' error", async (method, path) => {
+    respond(401, { error: { code: "unauthorized", message: "Not authenticated" } });
+    const handler = vi.fn();
+    setSessionEndedHandler(handler);
+    const err = await apiFetch(path, { method }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
+    expect((err as ApiError).message).toBe("Session ended — please sign in again.");
+    expect(handler).toHaveBeenCalledWith(path);
+  });
+
+  it.each([
+    "/api/student/auth/me",
+    "/api/admin/auth/me",
+    "/api/student/auth/login",
+    "/api/admin/auth/password-reset/confirm",
+  ])("leaves the auth endpoint %s to its caller", async (path) => {
+    respond(401, { error: { code: "invalid_credentials", message: "Invalid email or password" } });
+    const handler = vi.fn();
+    setSessionEndedHandler(handler);
+    await expect(apiFetch(path, { method: "POST" })).rejects.toThrow(/invalid email|.+/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("treats a logout whose session and CSRF token are both gone as done", async () => {
+    const fn = vi.fn((input: string) =>
+      Promise.resolve({
+        ok: false,
+        status: input.endsWith("/me") ? 401 : 403,
+        statusText: "",
+        json: () =>
+          Promise.resolve(
+            input.endsWith("/me")
+              ? { error: { code: "unauthorized", message: "Not authenticated" } }
+              : { error: { code: "csrf_failed", message: "Missing or invalid CSRF token" } },
+          ),
+      } as Response),
+    );
+    vi.stubGlobal("fetch", fn);
+    const csrf = vi.fn();
+    setCsrfFailureHandler(csrf);
+    await expect(apiFetch("/api/student/auth/logout", { method: "POST" })).resolves.toBeUndefined();
+    expect(csrf).not.toHaveBeenCalled();
+  });
+});
+
+describe("errorMessage", () => {
+  it("prefers the first field detail of a validation error", () => {
+    const err = new ApiError(422, "validation_error", "Request body failed validation", [
+      { loc: ["body", "options", "language"], msg: "Input should be 'en'" },
+    ]);
+    expect(errorMessage(err)).toBe("options.language: Input should be 'en'");
+  });
+  it("falls back to the server message, then the default", () => {
+    expect(errorMessage(new ApiError(409, "conflict", "Busy"))).toBe("Busy");
+    expect(errorMessage(new Error("x"), "Nope")).toBe("Nope");
+  });
+});
+
+type Reply = { status: number; body?: unknown; setCookie?: string };
+
+function sequence(replies: Reply[]) {
+  const queue = [...replies];
+  const fn = vi.fn((_input: string, _init?: RequestInit) => {
+    const r = queue.shift() ?? {
+      status: 500,
+      body: { error: { code: "x", message: "unexpected" } },
+    };
+    if (r.setCookie) document.cookie = r.setCookie;
+    return Promise.resolve({
+      ok: r.status < 300,
+      status: r.status,
+      statusText: String(r.status),
+      json: () => Promise.resolve(r.body ?? null),
+    } as Response);
+  });
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
+const CSRF_403: Reply = {
+  status: 403,
+  body: { error: { code: "csrf_failed", message: "Missing or invalid CSRF token" } },
+};
+
+describe("apiFetch CSRF recovery", () => {
+  it("refreshes the token via the area's /me and retries the request once", async () => {
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    const fn = sequence([
+      CSRF_403,
+      { status: 200, body: { user: {} }, setCookie: "sdp_csrf=fresh; path=/" },
+      { status: 201, body: { ok: true } },
+    ]);
+    await expect(apiFetch("/api/admin/modules", { method: "POST", body: {} })).resolves.toEqual({
+      ok: true,
+    });
+    expect(fn.mock.calls.map((c) => [c[0], c[1]?.method])).toEqual([
+      ["/api/admin/modules", "POST"],
+      ["/api/admin/auth/me", "GET"],
+      ["/api/admin/modules", "POST"],
+    ]);
+    const retried = fn.mock.calls[2]![1]!.headers as Record<string, string>;
+    expect(retried["X-CSRF-Token"]).toBe("fresh");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("uses the student /me for student requests", async () => {
+    const fn = sequence([CSRF_403, { status: 200, body: { user: {} } }, { status: 204 }]);
+    await apiFetch("/api/student/artifacts/a/progress", { method: "PUT", body: {} });
+    expect(fn.mock.calls[1]![0]).toBe("/api/student/auth/me");
+  });
+
+  it("falls back to 'session expired' when /me says not signed in", async () => {
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    const fn = sequence([CSRF_403, { status: 401, body: { error: { code: "unauthorized" } } }]);
+    await expect(apiFetch("/api/admin/modules", { method: "POST" })).rejects.toThrow(
+      /session ended/i,
+    );
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledWith("/api/admin/modules");
+  });
+
+  it("retries at most once", async () => {
+    const handler = vi.fn();
+    setCsrfFailureHandler(handler);
+    const fn = sequence([CSRF_403, { status: 200, body: { user: {} } }, CSRF_403]);
+    await expect(apiFetch("/api/admin/modules", { method: "POST" })).rejects.toMatchObject({
+      code: "csrf_failed",
+    });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("never retries a mutation that failed for another reason", async () => {
+    const fn = sequence([{ status: 500, body: { error: { code: "error", message: "boom" } } }]);
+    await expect(apiFetch("/api/admin/modules", { method: "POST" })).rejects.toThrow("boom");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retry_after", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("carries the server's retry_after on a 429", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 429,
+          statusText: "429",
+          json: () =>
+            Promise.resolve({
+              error: { code: "rate_limited", message: "Too many", retry_after: 42 },
+            }),
+        } as Response),
+      ),
+    );
+    await expect(
+      apiFetch("/api/student/auth/login", { method: "POST", body: {} }),
+    ).rejects.toMatchObject({ status: 429, retryAfter: 42 });
+  });
+
+  it("formats a countdown as m:ss", () => {
+    expect(formatCountdown(65)).toBe("1:05");
+    expect(formatCountdown(9)).toBe("0:09");
+    expect(formatCountdown(600)).toBe("10:00");
+  });
+});
+
+describe("authErrorMessage", () => {
+  it("explains rate limits and a disabled reset", () => {
+    expect(authErrorMessage(new ApiError(429, "rate_limited", "x"), "f")).toBe(
+      "Too many attempts — please try again later.",
+    );
+    expect(authErrorMessage(new ApiError(404, "password_reset_disabled", "x"), "f")).toMatch(
+      /password reset is turned off/i,
+    );
+    expect(authErrorMessage(new ApiError(400, "bad", "Server says"), "f")).toBe("Server says");
+    expect(authErrorMessage(new Error("x"), "f")).toBe("f");
+  });
+});

@@ -1,7 +1,9 @@
+import { asArray } from "@/lib/asArray";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, ErrorState, Icon, Skeleton } from "@/components";
 import { cn } from "@/lib/cn";
+import { MathText } from "@/components/math/MathText";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface Cue {
@@ -41,21 +43,27 @@ export function AudioPlayer({
   const [volume, setVolume] = useState(1);
   const [showTranscript, setShowTranscript] = useState(false);
   const seeked = useRef(false);
+  // Latest playback position, kept in a ref so the unmount save can read it:
+  // `audioRef` is still null at mount (the Skeleton renders first) and is
+  // detached again before a passive-effect cleanup runs.
+  const positionRef = useRef(0);
 
   // NotebookLM's Audio Overview is AAC (m4a); fixture content is mp3.
   const src = data?.media.find((m) => m.kind === "audio_mp3" || m.kind === "audio_m4a")?.url;
-  const cues = (data?.content_json?.transcript ?? []) as Cue[];
+  const cues = asArray<Cue>(data?.content_json?.transcript);
   const fallbackDuration = Number(data?.content_json?.duration_seconds ?? 0);
   const totalDuration = duration || fallbackDuration;
 
-  const save = useCallback(
-    (extra: { completed?: boolean } = {}) => {
-      const el = audioRef.current;
-      if (!el) return;
-      progress.mutate({ audio_position_seconds: Math.floor(el.currentTime), ...extra });
-    },
-    [progress],
-  );
+  // `useMutation` returns a new object on every render, and playback
+  // re-renders ~4×/s (timeupdate): keep `save` stable, or the 5 s interval
+  // below is torn down and restarted before it ever fires.
+  const mutateRef = useRef(progress.mutate);
+  mutateRef.current = progress.mutate;
+  const save = useCallback((extra: { completed?: boolean } = {}) => {
+    const el = audioRef.current;
+    if (!el) return;
+    mutateRef.current({ audio_position_seconds: Math.floor(el.currentTime), ...extra });
+  }, []);
 
   // periodic position save while playing
   useEffect(() => {
@@ -64,12 +72,27 @@ export function AudioPlayer({
     return () => window.clearInterval(id);
   }, [playing, save]);
 
+  // the tab is hidden or closed (a phone may kill a backgrounded browser)
   useEffect(() => {
-    const el = audioRef.current;
+    const onHide = (): void => {
+      if (document.visibilityState === "hidden" && positionRef.current > 0) save();
+    };
+    const onPageHide = (): void => {
+      if (positionRef.current > 0) save();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
-      if (el && el.currentTime > 0) {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [save]);
+
+  useEffect(() => {
+    return () => {
+      if (positionRef.current > 0) {
         // best-effort save on unmount
-        progress.mutate({ audio_position_seconds: Math.floor(el.currentTime) });
+        progress.mutate({ audio_position_seconds: Math.floor(positionRef.current) });
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,10 +102,7 @@ export function AudioPlayer({
   if (isError || !data || !src)
     return <ErrorState title="Audio isn’t ready" onRetry={() => void refetch()} />;
 
-  const activeCue = cues.reduce(
-    (acc, c, i) => (c.t <= time ? i : acc),
-    -1,
-  );
+  const activeCue = cues.reduce((acc, c, i) => (c.t <= time ? i : acc), -1);
 
   const el = () => audioRef.current;
   const togglePlay = () => {
@@ -118,7 +138,10 @@ export function AudioPlayer({
           }
           seeked.current = true;
         }}
-        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          positionRef.current = e.currentTarget.currentTime;
+          setTime(e.currentTarget.currentTime);
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => {
           setPlaying(false);
@@ -133,9 +156,7 @@ export function AudioPlayer({
       <Card className="flex flex-col items-center gap-4 p-8">
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="font-headline-md text-headline-md">Listen to Lesson</p>
-          {moduleTitle && (
-            <p className="text-body-md text-on-surface-variant">{moduleTitle}</p>
-          )}
+          {moduleTitle && <p className="text-body-md text-on-surface-variant">{moduleTitle}</p>}
         </div>
         <button
           type="button"
@@ -157,7 +178,9 @@ export function AudioPlayer({
         </div>
 
         <div className="flex w-full items-center gap-3">
-          <span className="w-12 text-right font-label-sm text-label-sm tabular-nums">{fmt(time)}</span>
+          <span className="w-12 text-right font-label-sm text-label-sm tabular-nums">
+            {fmt(time)}
+          </span>
           <input
             type="range"
             data-testid="btn-au4"
@@ -234,7 +257,7 @@ export function AudioPlayer({
                   <span className="shrink-0 tabular-nums text-label-sm text-on-surface-variant">
                     {fmt(c.t)}
                   </span>
-                  {c.text}
+                  <MathText text={c.text} />
                 </button>
               </li>
             ))}

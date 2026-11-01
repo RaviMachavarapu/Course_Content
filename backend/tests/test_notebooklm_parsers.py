@@ -70,7 +70,7 @@ def test_interactive_report_becomes_sections_with_formatting() -> None:
     body = "".join(s["html"] for s in content["sections"])
     assert "<strong>Define</strong>" in body  # bold run
     assert "<em>6.034</em>" in body  # italic run
-    assert "<code>2^4</code>" in body  # code run
+    assert '<span class="math-inline">2^4</span>' in body  # formula run
     assert "<h3>The Power of Representation</h3>" in body  # [null,6] subheading
     assert "<ul><li>" in body  # bullet list
     assert "<blockquote>" in body  # [null,null,true] highlighted statement
@@ -152,3 +152,176 @@ def _mp4(timescale: int, duration: int) -> bytes:
 def test_mp4_duration_is_read_from_mvhd() -> None:
     assert mp4_duration_seconds(_mp4(44100, 44100 * 359)) == pytest.approx(359.0)
     assert mp4_duration_seconds(b"not an mp4") is None
+
+
+# -- formulas -------------------------------------------------------------------
+def _run_report(run: list[Any]) -> str:
+    return _blocks_report([run])
+
+
+def _blocks_report(runs: list[list[Any]]) -> str:
+    from app.pipeline.parsers import notebooklm as nb
+
+    return "".join(
+        s["html"] for s in nb._sections_from_blocks([[None, None, [runs, [None, None]]]])
+    )
+
+
+def _fmt(bold: Any = None, italic: Any = None, slot9: Any = None) -> list[Any]:
+    f: list[Any] = [None] * 10
+    f[0], f[1], f[9] = bold, italic, slot9
+    return f
+
+
+def test_interactive_inline_formula_becomes_math_span() -> None:
+    out = _run_report([0, 4, ["S_N2", [None] * 9 + [1]]])
+    assert '<span class="math-inline">S_N2</span>' in out
+    assert "<code>" not in out
+
+
+def test_interactive_bold_formula() -> None:
+    out = _run_report([0, 4, ["S_N2", _fmt(bold=True, slot9=1)]])
+    assert "<strong>" in out and '<span class="math-inline">S_N2</span>' in out
+    assert "<code>" not in out
+
+
+def test_interactive_display_formula_becomes_math_div() -> None:
+    out = _run_report([0, 4, ["\\text{R-MgX} + \\text{H}_2\\text{O}", _fmt(slot9=2)]])
+    assert '<div class="math-display">\\text{R-MgX} + \\text{H}_2\\text{O}</div>' in out
+
+
+def test_formula_text_is_escaped() -> None:
+    out = _run_report([0, 3, ["a<b", _fmt(slot9=1)]])
+    assert '<span class="math-inline">a&lt;b</span>' in out
+    out = _run_report([0, 3, ["<script>x</script>", _fmt(slot9=1)]])
+    assert "<script>" not in out
+
+
+def _doc_html(markdown: str) -> str:
+    from app.pipeline.parsers import notebooklm as nb
+
+    _, sections = nb._sections_from_markdown(markdown)
+    return "".join(s["html"] for s in sections)
+
+
+def test_markdown_math_survives_markdown_rendering() -> None:
+    out = _doc_html("## S\nRate $k_1 * [A]_0$ and $$\\alpha_2$$ cost \\$5")
+    assert '<span class="math-inline">k_1 * [A]_0</span>' in out
+    assert '<div class="math-display">\\alpha_2</div>' in out
+    assert "$5" in out
+    assert "<em>" not in out
+
+
+def test_markdown_dollar_amounts_stay_text() -> None:
+    out = _doc_html("## S\nIt costs $5 and $10 today")
+    assert "math-" not in out and "$5 and $10" in out
+
+
+def test_markdown_math_is_escaped() -> None:
+    out = _doc_html("## S\nx $<img src=x onerror=alert(1)>$ y")
+    assert "<img" not in out and "&lt;img" in out
+
+
+def test_real_code_stays_code() -> None:
+    out = _doc_html("## S\nCall `print(x)` now and `$a$` too")
+    assert "<code>print(x)</code>" in out
+    assert "<code>$a$</code>" in out
+
+
+def test_stray_backtick_does_not_unprotect_math_across_paragraphs() -> None:
+    out = _doc_html("## S\nThe prime ` symbol.\n\nRate $k_1 * [A]_0$ here.\n\nUse `print(x)` now.")
+    assert '<span class="math-inline">k_1 * [A]_0</span>' in out
+    assert "<em>" not in out
+    assert "<code>print(x)</code>" in out
+
+
+def _blocks_sections(blocks: list[list[Any]]) -> list[dict[str, str]]:
+    from app.pipeline.parsers import notebooklm as nb
+
+    return nb._sections_from_blocks(
+        [[None, None, [runs, style]] for runs, style in blocks]  # type: ignore[misc]
+    )
+
+
+def test_heading_keeps_formula_runs_as_dollar_latex() -> None:
+    sections = _blocks_sections(
+        [
+            (
+                [
+                    [0, 7, ["Rate of ", None]],
+                    [7, 11, ["S_N2", _fmt(slot9=1)]],
+                    [11, 16, [" and ", None]],
+                    [16, 20, ["\\alpha", _fmt(slot9=2)]],
+                    [20, 30, [" costs $5 and $10", None]],
+                ],
+                [None, 5],
+            ),
+            ([[0, 4, ["Body", None]]], [None, None]),
+        ]
+    )
+    assert sections[0]["heading"] == "Rate of $S_N2$ and $$\\alpha$$ costs \\$5 and \\$10"
+
+
+def test_heading_plain_run_dollar_math_is_kept() -> None:
+    sections = _blocks_sections(
+        [
+            ([[0, 9, ["$S_N2$ Reactions", None]]], [None, 5]),
+            ([[0, 4, ["Body", None]]], [None, None]),
+        ]
+    )
+    assert sections[0]["heading"] == "$S_N2$ Reactions"
+
+
+def test_plain_run_dollar_math_becomes_math_span() -> None:
+    out = _run_report([0, 20, ["a<b in $S_N2$ here", None]])
+    assert out == '<p>a&lt;b in <span class="math-inline">S_N2</span> here</p>'
+
+
+def test_plain_run_dollar_display_math_and_bold() -> None:
+    out = _run_report([0, 20, ["Rate $$\\alpha_2$$", _fmt(bold=True)]])
+    assert '<strong>Rate <div class="math-display">\\alpha_2</div></strong>' in out
+
+
+def test_plain_run_currency_stays_text() -> None:
+    out = _run_report([0, 20, ["It costs $5 and $10", None]])
+    assert out == "<p>It costs $5 and $10</p>"
+
+
+# -- unexpected shapes are parse errors, not crashes (review 2026-10-28) ---------------
+def test_an_interactive_block_with_an_empty_body_is_skipped() -> None:
+    from app.pipeline.parsers import notebooklm as nb
+
+    sections = nb._sections_from_blocks([[None, None, []], [None, None, [[[["x"]]], [None, 1]]]])
+    assert isinstance(sections, list)
+
+
+def test_a_flashcard_that_is_not_an_object_is_a_parse_error() -> None:
+    page = _page({"flashcards": [["front", "back"]]})
+    with pytest.raises(ArtifactParseError, match="card 1"):
+        parse_notebooklm(ArtifactType.flashcards, None, page)
+
+
+def test_a_quiz_option_that_is_not_an_object_is_a_parse_error() -> None:
+    page = _page({"quiz": [{"question": "q", "answerOptions": ["a", "b", "c", "d"]}]})
+    with pytest.raises(ArtifactParseError, match="question 1"):
+        parse_notebooklm(ArtifactType.quiz, None, page)
+
+
+def test_any_other_unexpected_shape_is_a_parse_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.pipeline.parsers import notebooklm as nb
+
+    def broken(_row: Any) -> Any:
+        raise TypeError("'int' object is not subscriptable")
+
+    monkeypatch.setattr(nb, "parse_slide_deck", broken)
+    with pytest.raises(ArtifactParseError, match="slide_deck: unexpected data shape"):
+        parse_notebooklm(ArtifactType.slide_deck, [1, 2], None)
+
+
+def test_a_truncated_mvhd_box_gives_no_duration() -> None:
+    data = _mp4(44100, 44100)
+    moov_at = data.index(b"moov") - 4
+    # keep the box headers but cut the mvhd payload short
+    header = struct.pack(">I4s", 8 + 8 + 10, b"moov") + struct.pack(">I4s", 8 + 10, b"mvhd")
+    truncated = data[:moov_at] + header + bytes(10)
+    assert mp4_duration_seconds(truncated) is None

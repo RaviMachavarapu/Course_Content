@@ -12,8 +12,7 @@ interface Props {
 
 export function ModuleExplorer({ course, activeModuleIndex, activeType }: Props): JSX.Element {
   const navigate = useNavigate();
-  const current =
-    course.modules.find((m) => m.index === activeModuleIndex) ?? course.modules[0];
+  const current = course.modules.find((m) => m.index === activeModuleIndex) ?? course.modules[0];
   if (!current) return <p className="p-4 text-body-md text-on-surface-variant">No modules.</p>;
 
   const available = new Set(current.artifacts.map((a) => a.type));
@@ -29,7 +28,7 @@ export function ModuleExplorer({ course, activeModuleIndex, activeType }: Props)
   };
 
   return (
-    <aside className="flex w-full flex-col gap-4 border-b border-outline-variant p-4 lg:h-full lg:w-72 lg:border-b-0 lg:border-r">
+    <aside className="flex w-full min-w-0 flex-col gap-4 border-b border-outline-variant p-4 lg:h-full lg:w-72 lg:border-b-0 lg:border-r">
       <div>
         <p className="font-label-sm text-label-sm uppercase tracking-wide text-on-surface-variant">
           Module Explorer
@@ -39,13 +38,13 @@ export function ModuleExplorer({ course, activeModuleIndex, activeType }: Props)
         </p>
       </div>
 
-      <label className="flex flex-col gap-1">
+      <label className="flex min-w-0 flex-col gap-1">
         <span className="sr-only">Switch module</span>
         <select
           data-testid="module-switcher"
           value={current.index}
           onChange={(e) => switchModule(Number(e.target.value))}
-          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md focus:border-tertiary focus:outline-none focus-visible:shadow-focus"
+          className="w-full min-w-0 max-w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md focus:border-tertiary focus:outline-none focus-visible:shadow-focus"
         >
           {course.modules.map((m) => (
             <option key={m.id} value={m.index}>

@@ -39,14 +39,33 @@ class StudioStatus(str, enum.Enum):
     failed = "failed"
     #: a slide outline is drafted and waits for review ("Review slide outline")
     awaiting_review = "awaiting_review"
+    #: NotebookLM no longer knows the artifact (deleted, or its notebook is gone)
+    missing = "missing"
+
+
+class SourceState(str, enum.Enum):
+    pending = "pending"
+    ready = "ready"
+    failed = "failed"
 
 
 class ProviderError(Exception):
     """A content provider failed a call."""
 
 
+class ProviderAuthError(ProviderError):
+    """The NotebookLM Google session needs signing in again."""
+
+
 class TransientProviderError(ProviderError):
     """A provider failure that is worth retrying (timeout, 5xx, locked session)."""
+
+
+class UncertainProviderError(ProviderError):
+    """A call that changes NotebookLM (a new notebook, source or artifact) lost its
+    connection after the request went out, so NotebookLM may have acted on it. Not
+    retried automatically (a second request could make a duplicate and spend quota);
+    the message is written for admins, who decide with Retry."""
 
 
 class GenerationTimeout(ProviderError):
@@ -80,6 +99,18 @@ class ContentProvider(Protocol):
 
     def add_source(self, nb: NotebookRef, url: str) -> SourceRef: ...
 
+    def add_file_source(self, nb: NotebookRef, path: str, display_name: str) -> SourceRef:
+        """Upload a local file (absolute path, same in the mcp container) as a source."""
+        ...
+
+    def source_statuses(self, nb: NotebookRef) -> dict[str, SourceState]:
+        """Processing state of every source in the notebook, by source id."""
+        ...
+
+    def delete_source(self, nb: NotebookRef, source_id: str) -> None:
+        """Delete a source NotebookLM marked failed (refused for any other source)."""
+        ...
+
     def generate(
         self,
         nb: NotebookRef,
@@ -92,14 +123,20 @@ class ContentProvider(Protocol):
 
     def fetch_content(self, job: StudioJobRef) -> RawArtifact: ...
 
-    def fetch_binary(self, job: StudioJobRef, kind: ArtifactType) -> bytes | None: ...
-
     def download(self, url: str) -> tuple[bytes, str]:
         """Fetch a media URL the provider returned; (data, content type)."""
         ...
 
     def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
         """Revise a drafted slide outline (feedback) or build the deck (None)."""
+        ...
+
+    def query(self, nb: NotebookRef, text: str) -> str:
+        """Ask the notebook's chat a question; the answer text (may wrap JSON in prose)."""
+        ...
+
+    def delete_notebook(self, nb: NotebookRef) -> None:
+        """Delete a notebook for good (its sources and Studio artifacts too)."""
         ...
 
     def health(self) -> ProviderHealth: ...

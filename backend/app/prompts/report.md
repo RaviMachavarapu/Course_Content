@@ -5,3 +5,7 @@ Structure: a two- to three-sentence executive summary, then 3–5 themed section
 with headings, then a short "Implications" section. Use precise, neutral prose.
 Cite specific figures and named concepts from the source. End with a bulleted
 list of the 5 most important points.
+
+Write every mathematical expression, equation, chemical formula and scientific symbol in LaTeX between $ signs (e.g. $S_N2$, $\frac{1}{2}mv^2$, $\ce{H2O}$), copied exactly from the source, never paraphrased or invented.
+
+Use standard LaTeX (e.g. \frac{dx}{dt}, \mathrm{m/s^2}, \mathbf{F}) rather than package shorthand such as \dv, \SI or \qty.

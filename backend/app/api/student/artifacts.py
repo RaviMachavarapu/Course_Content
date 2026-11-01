@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentStudent, DbDep
+from app.api.deps import CurrentStudent, DbDep, current_student
+from app.auth.csrf import csrf_protect
 from app.errors import APIError
 from app.models.artifact import Artifact
 from app.models.course import Course
-from app.models.enums import ArtifactType, CourseStatus
-from app.models.flashcard_rating import FlashcardRating
+from app.models.enums import STUDENT_HIDDEN_MEDIA_KINDS, ArtifactType
 from app.models.module import Module
 from app.models.progress import ArtifactProgress
 from app.schemas.student import (
@@ -22,17 +22,22 @@ from app.schemas.student import (
     ArtifactProgressResponse,
     StudentArtifactOut,
 )
-from app.services.progress import record_artifact_progress
+from app.services.progress import published_ratings, record_artifact_progress
+from app.services.visibility import is_live
 from app.storage.service import get_storage
 
-router = APIRouter(prefix="/api/student", tags=["student-artifacts"])
-
-_VISIBLE_COURSE = {CourseStatus.published, CourseStatus.partially_published}
+router = APIRouter(
+    prefix="/api/student",
+    tags=["student-artifacts"],
+    # a student session (401 first), then CSRF on every state-changing request
+    dependencies=[Depends(current_student), Depends(csrf_protect)],
+)
 
 
 def _visible_artifact(db: DbDep, artifact_id: uuid.UUID) -> Artifact:
-    """The artifact behind a published version under a visible course, or a 404
-    (never a 403 — don't confirm an unpublished artifact exists)."""
+    """The artifact behind a published version, or a 404 (never a 403 — don't
+    confirm an unpublished artifact exists). Course/module workflow status is
+    deliberately ignored (app.services.visibility)."""
     artifact = db.scalar(
         select(Artifact)
         .where(Artifact.id == artifact_id)
@@ -44,13 +49,21 @@ def _visible_artifact(db: DbDep, artifact_id: uuid.UUID) -> Artifact:
             .selectinload(Module.artifacts),
         )
     )
-    if (
-        artifact is None
-        or artifact.published_version_id is None
-        or artifact.module.course.status not in _VISIBLE_COURSE
-    ):
+    if artifact is None or not is_live(artifact):
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
     return artifact
+
+
+def ensure_current_version(artifact: Artifact, version_id: uuid.UUID | None) -> None:
+    """A write from a page showing an older published version (another one was
+    published since it loaded) would land on content the student never saw:
+    409 ``stale_version``, and the page reloads. No version given: no check."""
+    if version_id is not None and version_id != artifact.published_version_id:
+        raise APIError(
+            status.HTTP_409_CONFLICT,
+            "stale_version",
+            "This content was updated. Reload to see the new version.",
+        )
 
 
 @router.get("/artifacts/{artifact_id}", response_model=StudentArtifactOut)
@@ -62,9 +75,7 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Not available")
 
     ordered = sorted(module.course.modules, key=lambda m: m.order_index)
-    live_ids = [
-        m.id for m in ordered if any(a.published_version_id is not None for a in m.artifacts)
-    ]
+    live_ids = [m.id for m in ordered if any(is_live(a) for a in m.artifacts)]
     module_index = live_ids.index(module.id) if module.id in live_ids else 0
 
     storage = get_storage()
@@ -77,6 +88,8 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
         for mf in sorted(
             version.media_files, key=lambda mf: (mf.page_index if mf.page_index is not None else -1)
         )
+        # e.g. the quiz PDF with its answer key (students get the questions-only one)
+        if mf.kind not in STUDENT_HIDDEN_MEDIA_KINDS
     ]
 
     prog = db.scalar(
@@ -99,15 +112,8 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
 
     ratings: dict[int, str] = {}
     if artifact.type is ArtifactType.flashcards:
-        ratings = {
-            r.card_index: r.rating.value
-            for r in db.scalars(
-                select(FlashcardRating).where(
-                    FlashcardRating.user_id == student.id,
-                    FlashcardRating.artifact_id == artifact.id,
-                )
-            )
-        }
+        cards = (version.content_json or {}).get("cards", [])
+        ratings = published_ratings(db, student.id, version.id, len(cards))
 
     return StudentArtifactOut(
         id=artifact.id,
@@ -116,6 +122,7 @@ def get_artifact(artifact_id: uuid.UUID, db: DbDep, student: CurrentStudent) -> 
         module_index=module_index,
         course_slug=module.course.slug,
         revision=version.revision,
+        version_id=version.id,
         content_json=content_json,
         content_html=version.content_html,
         media=media,
@@ -134,6 +141,7 @@ def put_progress(
     student: CurrentStudent,
 ) -> ArtifactProgressResponse:
     artifact = _visible_artifact(db, artifact_id)
+    ensure_current_version(artifact, body.version_id)
     row, course_percent = record_artifact_progress(
         db,
         user_id=student.id,

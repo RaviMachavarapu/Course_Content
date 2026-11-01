@@ -28,6 +28,15 @@ function PromptCard({ template }: { template: PromptTemplate }): JSX.Element {
             v{template.version} · updated {new Date(template.updated_at).toLocaleString()}
           </span>
         </div>
+        {type === "report" && (
+          <p
+            data-testid="report-prompt-hint"
+            className="font-label-sm text-label-sm text-on-surface-variant"
+          >
+            Used only for the “Create your own” report. NotebookLM&apos;s other report templates
+            (Interactive, Briefing doc, Study guide, Blog post) take no instructions.
+          </p>
+        )}
         <textarea
           aria-label={`${ARTIFACT_LABELS[type]} prompt`}
           value={draft}
@@ -44,7 +53,11 @@ function PromptCard({ template }: { template: PromptTemplate }): JSX.Element {
               save.mutate(
                 { type, body: draft },
                 {
-                  onSuccess: (t) => toast({ title: `${ARTIFACT_LABELS[type]} saved as v${t.version}`, tone: "success" }),
+                  onSuccess: (t) =>
+                    toast({
+                      title: `${ARTIFACT_LABELS[type]} saved as v${t.version}`,
+                      tone: "success",
+                    }),
                   onError: (err) =>
                     toast({
                       title: "Save failed",
@@ -67,7 +80,10 @@ function PromptCard({ template }: { template: PromptTemplate }): JSX.Element {
                   restore.mutate(type, {
                     onSuccess: () => {
                       setConfirmRestore(false);
-                      toast({ title: `${ARTIFACT_LABELS[type]} restored to default`, tone: "success" });
+                      toast({
+                        title: `${ARTIFACT_LABELS[type]} restored to default`,
+                        tone: "success",
+                      });
                     },
                   })
                 }
@@ -109,8 +125,8 @@ export function PromptsTab(): JSX.Element {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-body-md text-on-surface-variant">
-        Each save creates a new active version. Generations and redos from then on use the new
-        text; past versions record the version they ran with.
+        Each save creates a new active version. Generations and redos from then on use the new text;
+        past versions record the version they ran with.
       </p>
       {isPending
         ? ARTIFACT_TYPES.map((t) => <Skeleton key={t} className="h-64" />)

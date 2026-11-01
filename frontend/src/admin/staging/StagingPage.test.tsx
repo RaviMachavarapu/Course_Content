@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useUIStore } from "@/lib/store";
 import { StagingPage } from "./StagingPage";
+import { stagingPollInterval } from "./useStaging";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  useUIStore.setState({ toasts: [] });
+});
 
 const TYPES = ["slide_deck", "flashcards", "quiz", "report", "infographic", "audio_overview"];
 
@@ -49,6 +54,13 @@ function artifact(type: string, over: Record<string, unknown> = {}) {
   };
 }
 
+const PDF_BY_TYPE: Record<string, [string, string]> = {
+  flashcards: ["flashcards_pdf", "btn-sr16"],
+  quiz: ["quiz_pdf", "btn-sr17"],
+  infographic: ["infographic_pdf", "btn-sr18"],
+  slide_deck: ["slides_handout_pdf", "btn-sr19"],
+};
+
 function stagingBody(over: Record<string, unknown>[] = []) {
   const map = new Map(over.map((a) => [a.type, a]));
   return {
@@ -58,6 +70,8 @@ function stagingBody(over: Record<string, unknown>[] = []) {
       status: "pending_review",
       course_id: "c1",
       course_status: "pending_review",
+      source_url: "https://example.com/nn",
+      source_files: [{ file_name: "book.pdf", size_bytes: 10, part_count: 3 }],
     },
     artifacts: TYPES.map((t) => map.get(t) ?? artifact(t)),
   };
@@ -82,8 +96,7 @@ function installFetch(
   return fn;
 }
 
-function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/admin/modules/m1/staging"]}>
@@ -111,9 +124,99 @@ describe("StagingPage", () => {
     expect(screen.getByTestId("btn-sr11")).toHaveAttribute("href", "/api/media/x.png");
   });
 
+  it("offers each type's Quarto PDF when present and hides it when absent", async () => {
+    const withPdf = Object.entries(PDF_BY_TYPE).map(([type, [kind]]) => {
+      const a = artifact(type);
+      a.current_version.media = [
+        ...a.current_version.media,
+        { kind, url: `/api/media/${kind}.pdf`, size_bytes: 9, page_index: null },
+      ];
+      return a;
+    });
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody(withPdf) }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    for (const [kind, testid] of Object.values(PDF_BY_TYPE)) {
+      expect(screen.getByTestId(testid)).toHaveAttribute("href", `/api/media/${kind}.pdf`);
+    }
+  });
+
+  it("shows both quiz PDFs: with answers and questions only", async () => {
+    const quiz = artifact("quiz");
+    quiz.current_version.media = [
+      ...quiz.current_version.media,
+      { kind: "quiz_pdf", url: "/api/media/answers.pdf", size_bytes: 9, page_index: null },
+      { kind: "quiz_questions_pdf", url: "/api/media/q.pdf", size_bytes: 9, page_index: null },
+    ];
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody([quiz]) }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    expect(screen.getByTestId("btn-sr17")).toHaveAttribute("href", "/api/media/answers.pdf");
+    expect(screen.getByTestId("btn-sr20")).toHaveAttribute("href", "/api/media/q.pdf");
+    expect(screen.getByTestId("btn-sr20")).toHaveTextContent("questions .pdf");
+  });
+
+  it("shows no Quarto PDF buttons when none exist", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    for (const [, testid] of Object.values(PDF_BY_TYPE)) {
+      expect(screen.queryByTestId(testid)).toBeNull();
+    }
+  });
+
+  it("shows the module's link and PDFs under the title", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    expect(await screen.findByText("https://example.com/nn")).toBeInTheDocument();
+    expect(screen.getByText("book.pdf (split into 3 parts)")).toBeInTheDocument();
+  });
+
   it("opens the redo modal and posts the note", async () => {
     const fetchMock = installFetch([
       { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/api/admin/artifacts/a-quiz/redo",
+        status: 202,
+        body: { job: { id: "j", state: "queued" } },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    await userEvent.type(
+      await screen.findByLabelText("Instruction (optional) — what should change?"),
+      "make it shorter",
+    );
+    await userEvent.click(screen.getByTestId("btn-sr7"));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-quiz/redo"),
+      );
+      expect(post).toBeDefined();
+      expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
+        note: "make it shorter",
+        options: { quantity: "standard", difficulty: "medium", language: "en" },
+        custom_prompt: "",
+      });
+    });
+  });
+
+  it("a report template without instructions offers no note and sends no prompt", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([
+          artifact("report", {
+            custom_prompt: "Chapter 1 only",
+            generation_options: { format: "document", template: "custom", language: "en" },
+          }),
+        ]),
+      },
       {
         method: "POST",
         match: "/api/admin/artifacts/a-report/redo",
@@ -125,7 +228,24 @@ describe("StagingPage", () => {
     await screen.findByRole("heading", { name: "Neural Nets" });
 
     await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
-    await userEvent.type(await screen.findByRole("textbox"), "make it shorter");
+    // "Create your own" takes instructions: note and prompt are offered
+    await userEvent.type(
+      await screen.findByLabelText("Instruction (optional) — what should change?"),
+      "shorter",
+    );
+    expect(screen.getByLabelText("Describe the kind of report to create")).toHaveValue(
+      "Chapter 1 only",
+    );
+    await userEvent.click(screen.getByRole("radio", { name: /Study guide/ }));
+    expect(
+      screen.queryByLabelText("Instruction (optional) — what should change?"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Describe the kind of report to create"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("redo-no-instruction")).toHaveTextContent(
+      "NotebookLM's “Study guide” template doesn't take instructions.",
+    );
     await userEvent.click(screen.getByTestId("btn-sr7"));
 
     await waitFor(() => {
@@ -133,10 +253,10 @@ describe("StagingPage", () => {
         (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-report/redo"),
       );
       expect(post).toBeDefined();
+      // no note; custom_prompt omitted, so the stored text is kept for "Create your own"
       expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
-        note: "make it shorter",
-        options: { format: "interactive", template: null, language: "en" },
-        custom_prompt: "",
+        note: null,
+        options: { format: "document", template: "study_guide", language: "en" },
       });
     });
   });
@@ -283,6 +403,41 @@ describe("StagingPage", () => {
     });
   });
 
+  it("offers Cancel on a generating card and posts a cancel on click", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([artifact("quiz", { status: "processing", current_version: null })]),
+      },
+      {
+        method: "POST",
+        match: "/api/admin/artifacts/a-quiz/cancel",
+        body: { id: "a-quiz", status: "error", last_error: "cancelled" },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    const cancel = screen.getByTestId("btn-sr21");
+    expect(cancel).toHaveTextContent(/cancel/i);
+
+    const posts = () =>
+      fetchMock.mock.calls.filter(
+        (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-quiz/cancel"),
+      );
+    // owner decision 11: a confirm first; dismissing it sends nothing
+    await userEvent.click(cancel);
+    expect(
+      await screen.findByText("Cancel this generation? Any progress is discarded."),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("btn-sr21-dismiss"));
+    expect(posts()).toHaveLength(0);
+
+    await userEvent.click(screen.getByTestId("btn-sr21"));
+    await userEvent.click(await screen.findByTestId("btn-sr21-confirm"));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+  });
+
   it("wires BTN-SR2 (Publish Complete Course) to the course-scoped confirm modal", async () => {
     installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
     renderPage();
@@ -297,10 +452,152 @@ describe("StagingPage", () => {
     const fetchMock = installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
     renderPage();
     await screen.findByRole("heading", { name: "Neural Nets" });
-    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
-    await screen.findByRole("textbox");
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    await screen.findByLabelText("Instruction (optional) — what should change?");
     await userEvent.click(screen.getByTestId("btn-sr8"));
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "POST")).toBe(false);
+  });
+
+  it("a failed publish says why and keeps the dialog open", async () => {
+    installFetch([
+      { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/publish",
+        status: 409,
+        body: { error: { code: "conflict", message: "Nothing ready to publish" } },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByTestId("btn-sr2"));
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByTestId("btn-publish-confirm"));
+    await waitFor(() =>
+      expect(useUIStore.getState().toasts).toContainEqual(
+        expect.objectContaining({ tone: "error", description: "Nothing ready to publish" }),
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("a double-click on the publish confirm sends one publish", async () => {
+    const fetchMock = installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) =>
+      init?.method === "POST" ? new Promise<Response>(() => {}) : real(input, init),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByTestId("btn-sr3"));
+    const confirm = await screen.findByTestId("btn-publish-confirm");
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST"),
+      ).toHaveLength(1),
+    );
+    expect(
+      fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST"),
+    ).toHaveLength(1);
+  });
+
+  it("a failed redo shows the server's field error", async () => {
+    installFetch([
+      { method: "GET", match: "/staging", body: stagingBody() },
+      {
+        method: "POST",
+        match: "/redo",
+        status: 422,
+        body: {
+          error: {
+            code: "validation_error",
+            message: "Request body failed validation",
+            fields: [{ loc: ["body", "note"], msg: "String should have at most 4000 characters" }],
+          },
+        },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    await userEvent.click(screen.getByRole("button", { name: "Redo Report" }));
+    await userEvent.click(screen.getByTestId("btn-sr7"));
+    await waitFor(() =>
+      expect(useUIStore.getState().toasts[0]?.description).toMatch(
+        /note: String should have at most 4000/,
+      ),
+    );
+  });
+
+  it("reopening the redo modal starts from a clean note", async () => {
+    installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    const NOTE = "Instruction (optional) — what should change?";
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    await userEvent.type(await screen.findByLabelText(NOTE), "discard me");
+    await userEvent.click(screen.getByTestId("btn-sr8"));
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    const box = await screen.findByLabelText(NOTE);
+    expect(box).toHaveValue("");
+    expect(box).toHaveAttribute("maxLength", "4000");
+  });
+
+  it("Retry is disabled while its request runs (a double-click sends one POST)", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([
+          artifact("quiz", { status: "error", last_error: "bad markup", current_version: null }),
+        ]),
+      },
+    ]);
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) =>
+      init?.method === "POST" ? new Promise<Response>(() => {}) : real(input, init),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    const retry = screen.getByTestId("btn-sr6");
+    // a real double-click can land both clicks before React re-renders the
+    // button disabled (seen in the browser E2E): two clicks in one tick
+    act(() => {
+      retry.click();
+      retry.click();
+    });
+    await waitFor(() => expect(screen.getByTestId("btn-sr6")).toBeDisabled());
+    const posts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST");
+    expect(posts).toHaveLength(1);
+  });
+
+  it("a failed background poll keeps the cards (and an open dialog) on screen", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const fetchMock = installFetch([{ method: "GET", match: "/staging", body: stagingBody() }]);
+    renderPage(qc);
+    await screen.findByRole("heading", { name: "Neural Nets" });
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError("network down")));
+    await qc.refetchQueries({ queryKey: ["admin", "staging", "m1"] });
+    expect(screen.getAllByTestId("btn-sr4")).toHaveLength(6);
+    expect(screen.queryByText("Could not load staging")).not.toBeInTheDocument();
+    expect(await screen.findByText(/couldn’t refresh/i)).toBeInTheDocument();
+  });
+});
+
+describe("stagingPollInterval", () => {
+  const pending = { artifacts: [{ status: "processing" }] };
+  const settled = { artifacts: [{ status: "ready" }] };
+  it("polls while loading or while anything is still generating", () => {
+    expect(stagingPollInterval(undefined, "pending")).toBe(2500);
+    expect(stagingPollInterval(pending, "success")).toBe(2500);
+    expect(stagingPollInterval(pending, "error")).toBe(2500);
+  });
+  it("stops once settled, and on an error with nothing to show (404/401)", () => {
+    expect(stagingPollInterval(settled, "success")).toBe(false);
+    expect(stagingPollInterval(undefined, "error")).toBe(false);
   });
 });

@@ -15,10 +15,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const ORIGIN = "https://notebook.google.com";
+export const ORIGIN = "https://notebook.google.com";
 const BATCH_PATH = "/_/LabsTailwindUi/data/batchexecute";
 const AUTH_PATH = path.join(os.homedir(), ".notebooklm-mcp", "auth.json");
-const UA =
+export const UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
 
 // First RPC parameter the web app sends with Studio requests.
@@ -38,13 +38,22 @@ export class StudioError extends Error {
   }
 }
 
+// The signed-in account's long-lived session cookie: it changes only on a new
+// sign-in, not when Google rotates SIDCC & co.
+let signedInAs = null;
+
 function savedCookies() {
+  let jar;
   try {
     const raw = JSON.parse(fs.readFileSync(AUTH_PATH, "utf-8")).cookies;
-    return new Map(raw.split("; ").map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
+    jar = new Map(raw.split("; ").map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
   } catch {
     throw new StudioError("no saved Google session (auth.json)", { auth: true });
   }
+  const session = jar.get("SID") ?? jar.get("__Secure-1PSID") ?? null;
+  if (signedInAs !== null && session !== signedInAs) resetSession(); // a new sign-in
+  signedInAs = session;
+  return jar;
 }
 
 // auth.json drops cookie domains. These are host-only for notebook.google.com
@@ -56,7 +65,7 @@ const HOST_ONLY = { OSID: "notebook.google.com", "__Secure-OSID": "notebook.goog
 // new values, so keep them here (in memory only — the connector owns auth.json).
 const refreshed = new Map();
 
-function remember(res) {
+export function remember(res) {
   for (const sc of res.headers.getSetCookie()) {
     const [pair, ...attrs] = sc.split(";").map((part) => part.trim());
     const domain = attrs.find((a) => /^domain=/i.test(a))?.slice(7).replace(/^\./, "");
@@ -66,7 +75,7 @@ function remember(res) {
   }
 }
 
-function cookieHeader(host) {
+export function cookieHeader(host) {
   const jar = savedCookies();
   for (const [k, v] of refreshed) jar.set(k, v);
   return [...jar]
@@ -76,6 +85,13 @@ function cookieHeader(host) {
 }
 
 let tokens = null; // { at, sid, bl, fetchedAt }
+
+/** Forget the in-memory session state (rotated cookies, page token): after a
+ * re-sign-in they belong to the old session and would be mixed into requests. */
+export function resetSession() {
+  refreshed.clear();
+  tokens = null;
+}
 
 async function pageTokens(force = false) {
   if (!force && tokens && Date.now() - tokens.fetchedAt < 10 * 60 * 1000) return tokens;
@@ -148,7 +164,15 @@ export async function rpc(rpcId, params, sourcePath, retried = false) {
       });
     }
   }
-  throw new StudioError(`no ${rpcId} result in NotebookLM's reply (HTTP ${res.status})`);
+  const msg = `no ${rpcId} result in NotebookLM's reply (HTTP ${res.status})`;
+  // Google overloaded or rate-limiting: worth a retry (plain Error -> 502)
+  if (transientHttp(res.status)) throw new Error(msg);
+  throw new StudioError(msg);
+}
+
+/** 5xx and 429 are Google being busy, not a rejection: retried by the backend. */
+export function transientHttp(status) {
+  return status >= 500 || status === 429;
 }
 
 // -- option codes (all observed) ------------------------------------------------
@@ -306,7 +330,10 @@ export async function download(url) {
       current = new URL(res.headers.get("location"), current);
       continue;
     }
-    if (!res.ok) throw new StudioError(`media download failed (HTTP ${res.status})`);
+    if (!res.ok) {
+      const msg = `media download failed (HTTP ${res.status})`;
+      throw transientHttp(res.status) ? new Error(msg) : new StudioError(msg);
+    }
     const type = res.headers.get("content-type") || "application/octet-stream";
     if (type.startsWith("text/html")) {
       throw new StudioError("media download returned a web page, not a file (session rejected?)", { auth: true });
@@ -331,10 +358,37 @@ async function rangedDownload(url, headers, size) {
   for (let start = 0; start < size; start += RANGE_CHUNK) {
     const end = Math.min(start + RANGE_CHUNK, size) - 1;
     const res = await fetch(url, { headers: { ...headers, Range: `bytes=${start}-${end}` } });
-    if (res.status !== 206) throw new StudioError(`media range download failed (HTTP ${res.status})`);
+    if (res.status !== 206) {
+      const msg = `media range download failed (HTTP ${res.status})`;
+      throw transientHttp(res.status) ? new Error(msg) : new StudioError(msg);
+    }
     parts.push(Buffer.from(await res.arrayBuffer()));
   }
   const data = Buffer.concat(parts);
   if (data.length !== size) throw new StudioError(`media download incomplete (${data.length} of ${size} bytes)`);
   return data;
+}
+
+// studio_poll's status strings -> NotebookLM's codes (connector's mapping).
+const STATUS_CODES = { pending: 1, in_progress: 2, completed: 3, failed: 4 };
+
+/**
+ * Status + content of one artifact: {status, raw, html, missing}. status is
+ * NotebookLM's code (3 = completed, 6 = outline waiting for review) or null;
+ * `missing` = neither call knows the id (deleted in NotebookLM, notebook gone),
+ * so the backend can stop waiting for it. `callTool(name, args)` is the connector.
+ */
+export async function artifactState(callTool, notebookId, artifactId) {
+  const data = await callTool("artifact_content_get", { notebook_id: notebookId, artifact_id: artifactId });
+  const row = Array.isArray(data?.raw) && data.raw.length ? data.raw[0] : null;
+  let status = row ? (row[4] ?? null) : null;
+  let missing = false;
+  if (status === null) {
+    // Flashcards/quiz come back as html with no row; studio_poll has their status.
+    const poll = await callTool("studio_poll", { notebook_id: notebookId });
+    const listed = (poll?.artifacts ?? []).find((a) => a.artifact_id === artifactId);
+    status = listed ? (STATUS_CODES[listed.status] ?? null) : null;
+    missing = !listed && !row && !data?.html;
+  }
+  return { status, raw: row, html: data?.html ?? null, missing };
 }

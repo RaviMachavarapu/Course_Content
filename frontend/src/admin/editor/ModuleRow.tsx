@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "@/components";
 import { ARTIFACT_LABELS, ARTIFACT_TYPES, type ModuleSummary } from "../api";
+import { SourceSummary } from "../SourceSummary";
 import { StatusChip, StatusDot } from "../AdminStatus";
 
 interface ModuleRowProps {
@@ -68,8 +69,8 @@ export function ModuleRow({
             <span className="font-label-lg text-label-lg text-on-surface">{module.title}</span>
             <StatusChip status={module.status} />
           </div>
-          <div className="mt-1 truncate text-label-sm text-on-surface-variant">
-            {module.source_url}
+          <div className="mt-1">
+            <SourceSummary sourceUrl={module.source_url} files={module.source_files} />
           </div>
         </div>
 

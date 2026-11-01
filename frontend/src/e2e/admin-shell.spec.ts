@@ -42,7 +42,7 @@ test("nav highlights the route and the notifications panel opens", async ({ page
   await expect(page).toHaveURL(/\/admin\/settings$/);
   await page.getByTestId("btn-ig1").click(); // New Artifact -> focuses the ingestion form
   await expect(page).toHaveURL(/\/admin\/ingestion\?focus=form$/);
-  await expect(page.getByLabel("Source URL")).toBeFocused();
+  await expect(page.getByLabel("Link (optional)")).toBeFocused();
 
   // notifications panel opens from the header bell and lists activity or an empty state
   await page.getByTestId("btn-ig8").click();

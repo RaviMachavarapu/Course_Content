@@ -298,6 +298,26 @@ export function optionsProblem(type: ArtifactType, values: OptionValues): string
 }
 
 /**
+ * Whether NotebookLM receives a focus prompt (and so a redo instruction) for these
+ * options. Reports take one only with "Create your own"; the interactive format and
+ * the other document templates send none (mcp/shim/studio.js buildSpec). Matches the
+ * backend's `takes_focus` (app/schemas/content_options.py).
+ */
+export function takesPrompt(type: ArtifactType, values: OptionValues): boolean {
+  return type !== "report" || (values.format === "document" && values.template === "custom");
+}
+
+/** Why NotebookLM takes no instructions for these options, or null when it does. */
+export function noPromptReason(type: ArtifactType, values: OptionValues): string | null {
+  if (takesPrompt(type, values)) return null;
+  const choiceLabel = (key: string) =>
+    OPTION_FIELDS[type].find((f) => f.key === key)?.choices.find((c) => c.value === values[key])
+      ?.label;
+  const name = choiceLabel("template") ?? choiceLabel("format") ?? "report";
+  return `NotebookLM's “${name}” template doesn't take instructions.`;
+}
+
+/**
  * NotebookLM's free-text box per type. Text typed here replaces the
  * Settings → Generation Prompts template for that artifact (owner decision
  * 2026-10-20). Reports have one only for "Create your own", as in NotebookLM.
@@ -323,7 +343,7 @@ export const PROMPT_FIELDS: Partial<
   report: {
     label: "Describe the kind of report to create",
     placeholder: "",
-    visible: (v) => v.format === "document" && v.template === "custom",
+    visible: (v) => takesPrompt("report", v),
   },
   flashcards: { label: "What should the topic be?", placeholder: "" },
   quiz: { label: "What should the topic be?", placeholder: "" },

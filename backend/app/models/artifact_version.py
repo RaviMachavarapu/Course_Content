@@ -41,6 +41,12 @@ class ArtifactVersion(Base):
     content_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     notebooklm_artifact_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: The generation options this run actually used (language, difficulty, ...; the
+    #: artifact's `generation_options` as sent with the NotebookLM request). The
+    #: artifact's own options may change later (a Redo with new options), so a published
+    #: version keeps what it was made with. None for versions stored before 2026-10-30
+    #: that the backfill could not fill.
+    generation_options: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

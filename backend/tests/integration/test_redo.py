@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 from fastapi import status
@@ -20,6 +21,8 @@ from app.pipeline.fixture import FixtureProvider
 from app.services.prompts import seed_prompt_templates
 
 PROVIDER = FixtureProvider()
+#: The one report template NotebookLM sends a focus prompt with ("Create your own").
+CUSTOM_REPORT: dict[str, Any] = {"format": "document", "template": "custom"}
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +41,9 @@ def _module_with_generated(db: Session, types: list[ArtifactType]) -> Module:
     )
     db.add(module)
     db.flush()
-    jobs = orchestrator.start_module_generation(db, PROVIDER, module.id, types)
+    jobs = orchestrator.start_module_generation(
+        db, PROVIDER, module.id, types, options_by_type={ArtifactType.report: CUSTOM_REPORT}
+    )
     for job in jobs:
         orchestrator.run_artifact_generation(db, PROVIDER, job.artifact_id, job_id=job.job_id)
     return module
@@ -264,6 +269,7 @@ def test_redo_endpoint_sets_and_clears_the_custom_prompt(
     by_type = {a["type"]: a for a in staging["artifacts"]}
     assert by_type["slide_deck"]["custom_prompt"] == "A deck for beginners"
 
+    orchestrator.run_artifact_generation(db_session, PROVIDER, deck.id)  # the redo finishes
     resp = client.post(
         f"/api/admin/artifacts/{deck.id}/redo", json={"custom_prompt": ""}, headers=headers
     )
@@ -294,3 +300,267 @@ def test_rerun_all_keeps_each_artifacts_options(db_session: Session) -> None:
 
     orchestrator.start_module_generation(db_session, PROVIDER, module.id, [ArtifactType.quiz])
     assert quiz.generation_options == {"quantity": "more", "difficulty": "hard", "language": "hi"}
+
+
+# -- one generation per artifact at a time (review 2026-10-28) ---------------------------
+def test_redo_while_processing_is_409_and_queues_nothing(
+    client: TestClient, db_session: Session
+) -> None:
+    from sqlalchemy import func, select
+
+    from app.models.generation_job import GenerationJob
+
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    headers = _admin_headers(client, db_session)
+    url = f"/api/admin/artifacts/{report.id}/redo"
+    assert client.post(url, json={}, headers=headers).status_code == status.HTTP_202_ACCEPTED
+
+    def jobs() -> int:
+        return (
+            db_session.scalar(select(func.count()).where(GenerationJob.artifact_id == report.id))
+            or 0
+        )
+
+    before = jobs()
+    resp = client.post(url, json={"note": "again"}, headers=headers)
+    assert resp.status_code == status.HTTP_409_CONFLICT
+    assert resp.json()["error"]["code"] == "artifact_busy"
+    assert "still generating" in resp.json()["error"]["message"]
+    assert jobs() == before
+
+
+def test_rerun_all_while_generating_is_409(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.api.admin.courses._dispatch_all", lambda *a, **k: None)
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    headers = _admin_headers(client, db_session)
+    url = f"/api/admin/courses/modules/{module.id}/regenerate"
+    assert client.post(url, headers=headers).status_code == status.HTTP_200_OK
+    resp = client.post(url, headers=headers)
+    assert resp.status_code == status.HTTP_409_CONFLICT
+    assert resp.json()["error"]["code"] == "module_busy"
+
+
+def test_retry_after_a_timeout_resumes_the_notebooklm_artifact(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[dict[str, Any]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda p: sent.append(p))
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    report.status = ArtifactStatus.error
+    report.notebooklm_studio_id = "nb-artifact-1"
+    report.studio_request = {"focus_prompt": "p", "redo_note": None}
+    db_session.flush()
+    headers = _admin_headers(client, db_session)
+
+    resp = client.post(f"/api/admin/artifacts/{report.id}/retry", headers=headers)
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    assert sent[-1]["kwargs"]["resume"] is True
+    db_session.expire_all()
+    assert db_session.get(Artifact, report.id).notebooklm_studio_id == "nb-artifact-1"
+
+    # a Redo always generates a new one
+    orchestrator.run_artifact_generation(db_session, PROVIDER, report.id, resume=True)
+    db_session.expire_all()
+    resp = client.post(f"/api/admin/artifacts/{report.id}/redo", json={}, headers=headers)
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    assert sent[-1]["kwargs"]["resume"] is False
+
+
+# -- the options each version was made with (PR #2 review finding 1, owner 2026-10-30) --
+def _quiz(db: Session) -> Artifact:
+    module = _module_with_generated(db, [ArtifactType.quiz])
+    return next(a for a in module.artifacts if a.type is ArtifactType.quiz)
+
+
+def _version(db: Session, version_id: uuid.UUID | None) -> ArtifactVersion:
+    assert version_id is not None
+    version = db.get(ArtifactVersion, version_id)
+    assert version is not None
+    return version
+
+
+def _publish(db: Session, artifact: Artifact) -> None:
+    from app.services.publish import publish_module
+
+    db.refresh(artifact)
+    publish_module(db, artifact.module)
+    db.flush()
+    db.expire_all()
+
+
+def test_a_version_records_the_options_it_was_generated_with(db_session: Session) -> None:
+    quiz = _quiz(db_session)
+    v1 = _version(db_session, quiz.current_version_id)
+    assert v1.generation_options == {
+        "quantity": "standard",
+        "difficulty": "medium",
+        "language": "en",
+    }
+
+
+def test_retakes_follow_the_published_version_not_a_redo_until_it_is_published(
+    db_session: Session,
+) -> None:
+    from app.tasks.quiz import wanted_for
+
+    quiz = _quiz(db_session)
+    _publish(db_session, quiz)
+    quiz = db_session.get(Artifact, quiz.id)
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}
+
+    # the Redo with Tamil / hard is queued: the artifact's options change at once ...
+    orchestrator.enqueue_artifact_regeneration(
+        db_session, quiz.id, redo_note="tamil", options={"language": "ta", "difficulty": "hard"}
+    )
+    db_session.expire_all()
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.generation_options["language"] == "ta"
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}  # ... retakes don't
+
+    # ... the new version is stored but not published: still the published one's
+    v2 = orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, redo_note="tamil")
+    db_session.expire_all()
+    assert v2 is not None
+    assert _version(db_session, v2.id).generation_options == {
+        "quantity": "standard",
+        "difficulty": "hard",
+        "language": "ta",
+    }
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.published_version_id != v2.id
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}
+
+    # publishing it switches retakes
+    _publish(db_session, quiz)
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.published_version_id == v2.id
+    assert wanted_for(quiz) == {"language": "ta", "difficulty": "hard"}
+
+
+def test_a_failed_redo_does_not_change_retakes(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tasks.quiz import wanted_for
+
+    quiz = _quiz(db_session)
+    _publish(db_session, quiz)
+    orchestrator.enqueue_artifact_regeneration(
+        db_session, quiz.id, redo_note="hindi", options={"language": "hi"}
+    )
+
+    def boom(*a: Any, **k: Any) -> Any:
+        raise orchestrator.ProviderError("NotebookLM said no")
+
+    monkeypatch.setattr(PROVIDER, "generate", boom)
+    with pytest.raises(orchestrator.ProviderError):
+        orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, redo_note="hindi")
+    db_session.expire_all()
+    quiz = db_session.get(Artifact, quiz.id)
+    assert quiz.status is ArtifactStatus.error
+    assert quiz.generation_options["language"] == "hi"
+    assert wanted_for(quiz) == {"language": "en", "difficulty": "medium"}
+
+
+def test_a_resumed_run_records_the_options_sent_with_the_request(db_session: Session) -> None:
+    """Retry after a timeout: the version records the options sent when NotebookLM was
+    asked, not the artifact's options if they changed meanwhile."""
+    quiz = _quiz(db_session)
+    quiz.status = ArtifactStatus.error
+    quiz.notebooklm_studio_id = "nb-artifact-1"
+    sent = {"quantity": "fewer", "difficulty": "easy", "language": "te"}
+    quiz.studio_request = {"focus_prompt": "p", "redo_note": None, "generation_options": sent}
+    quiz.generation_options = {"quantity": "more", "difficulty": "hard", "language": "kn"}
+    db_session.flush()
+    version = orchestrator.run_artifact_generation(db_session, PROVIDER, quiz.id, resume=True)
+    assert version is not None
+    assert _version(db_session, version.id).generation_options == sent
+
+
+def test_a_published_version_without_recorded_options_falls_back_to_the_artifact(
+    db_session: Session,
+) -> None:
+    from app.tasks.quiz import wanted_for
+
+    quiz = _quiz(db_session)
+    _publish(db_session, quiz)
+    quiz = db_session.get(Artifact, quiz.id)
+    _version(db_session, quiz.published_version_id).generation_options = None
+    quiz.generation_options = {"language": "mr", "difficulty": "easy"}
+    db_session.flush()
+    assert wanted_for(quiz) == {"language": "mr", "difficulty": "easy"}
+
+
+# -- report options that take no focus (owner decision 2026-10-31) -------
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"format": "interactive"},
+        {"format": "document", "template": "briefing_doc"},
+        {"format": "document", "template": "study_guide"},
+        {"format": "document", "template": "blog_post"},
+    ],
+)
+def test_report_template_without_focus_sends_and_records_no_prompt(
+    db_session: Session, options: dict[str, Any]
+) -> None:
+    seed_prompt_templates(db_session)
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    report.custom_prompt = "Only cover chapter 2."
+    db_session.flush()
+    sent: list[str] = []
+    real = PROVIDER.generate
+
+    def spy(nb: Any, kind: Any, focus_prompt: str, opts: Any) -> Any:
+        sent.append(focus_prompt)
+        return real(nb, kind, focus_prompt, opts)
+
+    job = orchestrator.enqueue_artifact_regeneration(
+        db_session, report.id, redo_note="Shorter", options=options
+    )
+    assert job.kind.value == "generate_artifact"  # the note is ignored
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(PROVIDER, "generate", spy)
+        v = orchestrator.run_artifact_generation(
+            db_session, PROVIDER, report.id, job_id=job.id, redo_note="Shorter"
+        )
+    assert sent == [""]
+    assert v.focus_prompt_used == ""
+    assert v.redo_note is None
+    assert v.prompt_template_id is None
+    assert v.prompt_template_version is None
+    assert report.custom_prompt == "Only cover chapter 2."  # kept for "Create your own"
+
+
+def test_custom_report_template_still_sends_the_prompt_and_note(db_session: Session) -> None:
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    orchestrator.enqueue_artifact_regeneration(
+        db_session,
+        report.id,
+        redo_note="Shorter",
+        options={"format": "document", "template": "custom"},
+        custom_prompt="Only cover chapter 2.",
+    )
+    v = orchestrator.run_artifact_generation(db_session, PROVIDER, report.id, redo_note="Shorter")
+    assert v.redo_note == "Shorter"
+    assert v.focus_prompt_used.startswith("Only cover chapter 2.")
+
+
+def test_redo_endpoint_ignores_a_note_for_a_report_template_without_focus(
+    client: TestClient, db_session: Session
+) -> None:
+    module = _module_with_generated(db_session, [ArtifactType.report])
+    report = next(a for a in module.artifacts if a.type is ArtifactType.report)
+    headers = _admin_headers(client, db_session)
+    resp = client.post(
+        f"/api/admin/artifacts/{report.id}/redo",
+        json={"note": "Shorter", "options": {"format": "document", "template": "study_guide"}},
+        headers=headers,
+    )
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    assert resp.json()["job"]["kind"] == "generate_artifact"

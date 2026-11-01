@@ -73,7 +73,11 @@ function installFetch(extra: Handler[] = []) {
         ],
       },
     },
-    { method: "GET", match: "/api/admin/auth/me", body: { user: { id: "me", email: "root@example.com" } } },
+    {
+      method: "GET",
+      match: "/api/admin/auth/me",
+      body: { user: { id: "me", email: "root@example.com" } },
+    },
   ];
   const handlers = [...extra, ...base];
   const fn = vi.fn((input: string | URL, init?: RequestInit): Promise<Response> => {
@@ -118,6 +122,9 @@ describe("SettingsPage", () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Report" })).toBeInTheDocument();
+    // NotebookLM sends the report prompt only with "Create your own": say so, once
+    expect(screen.getAllByTestId("report-prompt-hint")).toHaveLength(1);
+    expect(screen.getByTestId("report-prompt-hint")).toHaveTextContent("Create your own");
     const box = screen.getByLabelText("Report prompt");
     await userEvent.type(box, " extra");
     await userEvent.click(screen.getByTestId("btn-st1-report"));
@@ -233,8 +240,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(
         (c) =>
-          (c[1] as RequestInit)?.method === "POST" &&
-          String(c[0]).endsWith("/api/admin/users"),
+          (c[1] as RequestInit)?.method === "POST" && String(c[0]).endsWith("/api/admin/users"),
       );
       expect(post).toBeDefined();
       expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({

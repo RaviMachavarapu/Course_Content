@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Button, Card, CardBody, Chip, Icon } from "@/components";
+import { Button, Card, CardBody, Chip, Icon, Modal } from "@/components";
 import { ARTIFACT_LABELS, type ArtifactType } from "../api";
 import { STATUS_LABELS, toChipStatus } from "../statusMap";
 import type { StagingArtifact } from "./api";
@@ -24,6 +24,12 @@ const DOWNLOAD: Partial<Record<string, { label: string; testid: string }>> = {
   infographic_png: { label: ".png", testid: "btn-sr11" },
   report_pdf: { label: ".pdf", testid: "btn-sr12" },
   deck_pdf: { label: ".pdf", testid: "btn-sr12" },
+  flashcards_pdf: { label: "flashcards .pdf", testid: "btn-sr16" },
+  quiz_pdf: { label: "quiz .pdf", testid: "btn-sr17" },
+  // the students' copy: questions and options, no answer key
+  quiz_questions_pdf: { label: "questions .pdf", testid: "btn-sr20" },
+  infographic_pdf: { label: "infographic .pdf", testid: "btn-sr18" },
+  slides_handout_pdf: { label: "handout .pdf", testid: "btn-sr19" },
 };
 
 const n = (v: unknown): string => (typeof v === "number" ? String(v) : "—");
@@ -53,13 +59,23 @@ function previewText(type: ArtifactType, p: Record<string, unknown>): string {
 interface Props {
   artifact: StagingArtifact;
   busy: boolean;
-  onRedo: (note: string | null, options: OptionValues, customPrompt: string) => void;
+  onRedo: (note: string | null, options: OptionValues, customPrompt: string | undefined) => void;
   onRetry: () => void;
   onOutline: (feedback: string | null) => void;
+  /** Stop waiting for a stuck generation (lost job, hung call). */
+  onCancel?: () => void;
 }
 
-export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Props): JSX.Element {
+export function ArtifactCard({
+  artifact,
+  busy,
+  onRedo,
+  onRetry,
+  onOutline,
+  onCancel,
+}: Props): JSX.Element {
   const [modalOpen, setModalOpen] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const label = ARTIFACT_LABELS[artifact.type];
   const isGenerating = ["queued", "processing", "running"].includes(artifact.status);
   const isError = artifact.status === "error";
@@ -112,9 +128,22 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Pro
               variant="secondary"
               iconLeft="refresh"
               onClick={onRetry}
+              disabled={busy}
               data-testid="btn-sr6"
             >
               Retry
+            </Button>
+          ) : isGenerating && onCancel ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              iconLeft="cancel"
+              disabled={busy}
+              onClick={() => setConfirmCancel(true)}
+              title="Stop waiting for this generation. Retry picks it up again."
+              data-testid="btn-sr21"
+            >
+              Cancel
             </Button>
           ) : (
             <Button
@@ -153,6 +182,37 @@ export function ArtifactCard({ artifact, busy, onRedo, onRetry, onOutline }: Pro
           })}
         </div>
       </CardBody>
+
+      {onCancel && (
+        <Modal
+          open={confirmCancel && isGenerating}
+          onClose={() => setConfirmCancel(false)}
+          title={`Cancel ${label} generation`}
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmCancel(false)}
+                data-testid="btn-sr21-dismiss"
+              >
+                Keep generating
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setConfirmCancel(false);
+                  onCancel();
+                }}
+                data-testid="btn-sr21-confirm"
+              >
+                Cancel generation
+              </Button>
+            </>
+          }
+        >
+          <p className="text-body-md">Cancel this generation? Any progress is discarded.</p>
+        </Modal>
+      )}
 
       <RedoModal
         open={modalOpen}

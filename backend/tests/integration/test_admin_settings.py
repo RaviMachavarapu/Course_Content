@@ -149,3 +149,42 @@ def test_settings_endpoints_require_admin(client: TestClient, db_session: Sessio
     client.cookies.clear()
     assert client.get("/api/admin/users").status_code == status.HTTP_401_UNAUTHORIZED
     assert client.get("/api/admin/settings/audio").status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ------------------------------------------------- review 2026-10-29 (E2E round)
+
+
+def test_reactivating_an_admin_does_not_revive_old_sessions(
+    client: TestClient, db_session: Session
+) -> None:
+    """Scenario 13: deactivated because the laptop was stolen, reactivated a
+    day later — the thief's session must stay dead."""
+    root_h = _login(client, db_session)
+    other_id = client.post(
+        "/api/admin/users",
+        json={"email": "lost@example.com", "display_name": "L", "password": "lost-good-pw-5"},
+        headers=root_h,
+    ).json()["id"]
+    root_cookies = dict(client.cookies)
+
+    client.cookies.clear()
+    client.post(
+        "/api/admin/auth/login", json={"email": "lost@example.com", "password": "lost-good-pw-5"}
+    )
+    stolen = dict(client.cookies)
+
+    client.cookies.clear()
+    client.cookies.update(root_cookies)
+    for active in (False, True):
+        r = client.patch(f"/api/admin/users/{other_id}", json={"is_active": active}, headers=root_h)
+        assert r.status_code == status.HTTP_200_OK
+
+    client.cookies.clear()
+    client.cookies.update(stolen)
+    assert client.get("/api/admin/auth/me").status_code == status.HTTP_401_UNAUTHORIZED
+    # the owner can sign in again normally
+    client.cookies.clear()
+    again = client.post(
+        "/api/admin/auth/login", json={"email": "lost@example.com", "password": "lost-good-pw-5"}
+    )
+    assert again.status_code == status.HTTP_200_OK

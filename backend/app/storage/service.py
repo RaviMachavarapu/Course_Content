@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -32,6 +33,11 @@ STORAGE_EXTS: dict[MediaFileKind, str] = {
     MediaFileKind.audio_m4a: "m4a",
     MediaFileKind.cover: "png",
     MediaFileKind.hero: "png",
+    MediaFileKind.flashcards_pdf: "pdf",
+    MediaFileKind.quiz_pdf: "pdf",
+    MediaFileKind.quiz_questions_pdf: "pdf",
+    MediaFileKind.infographic_pdf: "pdf",
+    MediaFileKind.slides_handout_pdf: "pdf",
 }
 
 
@@ -71,6 +77,37 @@ class Storage:
         log.info("storage.put", key=key, size=stored.size_bytes)
         return stored
 
+    def append(self, key: str, offset: int, data: bytes) -> int:
+        """Write `data` at `offset` and return the new size.
+
+        `offset` must not exceed the current size (a missing file has size 0),
+        otherwise `ValueError`. If the file is longer than `offset` (a previous
+        write landed on disk but the caller never recorded it), it is truncated
+        to `offset` first, so a retry at the recorded offset self-heals.
+        """
+        path = self._path(key)
+        size = path.stat().st_size if path.is_file() else 0
+        if offset > size:
+            raise ValueError(f"offset {offset} is beyond current size {size} for {key!r}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("r+b" if size else "wb") as fh:
+            fh.truncate(offset)
+            fh.seek(offset)
+            fh.write(data)
+        return offset + len(data)
+
+    def move(self, src_key: str, dst_key: str) -> None:
+        src, dst = self._path(src_key), self._path(dst_key)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.replace(dst)
+
+    def sha256(self, key: str) -> str:
+        digest = hashlib.sha256()
+        with self._path(key).open("rb") as fh:
+            while block := fh.read(1024 * 1024):
+                digest.update(block)
+        return digest.hexdigest()
+
     def path_for(self, key: str) -> Path:
         """Absolute filesystem path for `key` (validated). For FileResponse etc."""
         return self._path(key)
@@ -87,6 +124,18 @@ class Storage:
             return False
         path.unlink()
         log.info("storage.delete", key=key)
+        return True
+
+    def delete_tree(self, prefix: str) -> bool:
+        """Remove the folder `prefix` (a validated key inside MEDIA_ROOT, never
+        the root itself) with everything under it."""
+        path = self._path(prefix)
+        if path == self._root:
+            raise ValueError("refusing to delete MEDIA_ROOT")
+        if not path.is_dir():
+            return False
+        shutil.rmtree(path)
+        log.info("storage.delete_tree", prefix=prefix)
         return True
 
     def url_for(self, key: str) -> str:

@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api";
-import type { ArtifactType } from "../api";
+import type { ArtifactType, SourceFile } from "../api";
 import type { OptionValues } from "../generationOptions";
 
 export interface MediaOut {
@@ -43,6 +43,8 @@ export interface StagingResponse {
     status: string;
     course_id: string;
     course_status: string;
+    source_url: string | null;
+    source_files: SourceFile[];
   };
   artifacts: StagingArtifact[];
 }
@@ -108,6 +110,13 @@ export const stagingApi = {
     apiFetch<{ job: { id: string; state: string } }>(`/api/admin/artifacts/${artifactId}/retry`, {
       method: "POST",
     }),
+
+  /** Stop waiting for a stuck generation; the card shows a retryable error. */
+  cancel: (artifactId: string) =>
+    apiFetch<{ id: string; status: string; last_error: string | null }>(
+      `/api/admin/artifacts/${artifactId}/cancel`,
+      { method: "POST" },
+    ),
 
   inspect: (artifactId: string, version?: string) =>
     apiFetch<InspectResponse>(

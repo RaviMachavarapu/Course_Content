@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { courseSlug } from "./helpers";
+import { uniqueMarker } from "./unique";
 
 /**
  * T033 — student slide viewer. Admin publishes a deck (slide_deck + report),
@@ -10,7 +12,7 @@ const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "dev-admin-password-123
 test("slide viewer: navigate, notes, complete on last slide", async ({ page }) => {
   test.setTimeout(180_000); // LibreOffice cold start on the worker
 
-  const marker = Date.now();
+  const marker = uniqueMarker();
   const courseTitle = `Slides E2E ${marker}`;
 
   await page.goto("/admin/login");
@@ -19,7 +21,7 @@ test("slide viewer: navigate, notes, complete on last slide", async ({ page }) =
   await page.getByTestId("btn-al1").click();
   await expect(page).toHaveURL(/\/admin\/ingestion$/);
 
-  await page.getByLabel("Source URL").fill(`https://www.youtube.com/watch?v=sld${marker}`);
+  await page.getByLabel("Link (optional)").fill(`https://www.youtube.com/watch?v=sld${marker}`);
   await page.getByLabel("Course title").fill(courseTitle);
   await page.getByLabel("Module title").fill("Deck Module");
   for (const t of ["flashcards", "quiz", "infographic", "audio_overview"]) {
@@ -31,7 +33,9 @@ test("slide viewer: navigate, notes, complete on last slide", async ({ page }) =
   await expect(page.getByText("Generating…")).toHaveCount(0, { timeout: 120_000 });
   await page.getByTestId("btn-sr3").click();
   await page.getByTestId("btn-publish-confirm").click();
-  await expect(page.locator('[data-status="published"]')).toHaveCount(2);
+  await expect(page.locator('[data-testid="artifact-grid"] [data-status="published"]')).toHaveCount(
+    2,
+  );
 
   await page.getByTestId("btn-ig9").click();
   await page.getByRole("button", { name: "Log out" }).click();
@@ -45,7 +49,7 @@ test("slide viewer: navigate, notes, complete on last slide", async ({ page }) =
   await page.getByTestId("btn-sl1").click();
   await expect(page).toHaveURL(/\/catalog$/);
 
-  await page.locator('[data-testid="course-card"]', { hasText: courseTitle }).getByTestId("btn-ct7").click();
+  await page.goto(`/learn/${await courseSlug(page.context(), courseTitle)}`);
   await expect(page).toHaveURL(/\/learn\/slides-e2e-/);
 
   // open Slides (BTN-WS4)

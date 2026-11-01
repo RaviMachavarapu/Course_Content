@@ -9,7 +9,9 @@ export function OverviewPanel(): JSX.Element {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="font-headline-lg text-headline-lg">{course.title}</h1>
+        <h1 className="font-headline-lg text-headline-lg [overflow-wrap:anywhere]">
+          {course.title}
+        </h1>
         {course.description && (
           <p className="mt-1 max-w-2xl text-body-md text-on-surface-variant">
             {course.description}
@@ -22,9 +24,7 @@ export function OverviewPanel(): JSX.Element {
 
       <div className="flex flex-col gap-3">
         {course.modules.map((m) => {
-          const first = WORKSPACE_ARTIFACT_ORDER.find((t) =>
-            m.artifacts.some((a) => a.type === t),
-          );
+          const first = WORKSPACE_ARTIFACT_ORDER.find((t) => m.artifacts.some((a) => a.type === t));
           return (
             <Card key={m.id} className="p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -32,7 +32,7 @@ export function OverviewPanel(): JSX.Element {
                   <p className="font-label-sm text-label-sm text-on-surface-variant">
                     Unit {m.index + 1}
                   </p>
-                  <p className="font-label-lg text-label-lg">{m.title}</p>
+                  <p className="font-label-lg text-label-lg [overflow-wrap:anywhere]">{m.title}</p>
                 </div>
                 {first && (
                   <Link

@@ -37,4 +37,24 @@ describe("ForgotPasswordPage", () => {
     await userEvent.click(screen.getByTestId("btn-fp1"));
     await waitFor(() => expect(screen.getByText(/check your email/i)).toBeInTheDocument());
   });
+
+  it.each([
+    [
+      {
+        status: 429,
+        body: { error: { code: "rate_limited", message: "Too many attempts. Try again later." } },
+      },
+      "Too many attempts — please try again later.",
+    ],
+    [
+      { status: 404, body: { error: { code: "password_reset_disabled", message: "x" } } },
+      "Password reset is turned off",
+    ],
+  ])("explains a failed request (%#)", async (reply, text) => {
+    mockFetch(reply);
+    renderPage();
+    await userEvent.type(screen.getByLabelText("Email"), "sam@example.com");
+    await userEvent.click(screen.getByTestId("btn-fp1"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(text);
+  });
 });

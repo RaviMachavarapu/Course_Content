@@ -1,24 +1,30 @@
 """Per-artifact-type render step of the pipeline.
 
 Given a parsed `content_json` (and the provider job, for binaries), produce the
-media files to store. Flashcards and quiz are interactive JSON with no media
-(D5); every other type has a real renderer (slides T018, infographic T019,
-report T020, audio wired against the provider).
+media files to store. Flashcards, quiz and report are content_json with no
+media (D5; the report's HTML is `report_html.build_report_html`); slides
+(T018), infographic (T019) and audio have real renderers. Every type's
+downloadable PDF except audio is typeset after generation
+(app/pipeline/artifact_pdf.py).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
+from app.logging import get_logger
 from app.models.enums import ArtifactType, MediaFileKind
-from app.pipeline.provider import ContentProvider, StudioJobRef
-from app.render import RenderError
+from app.pipeline.provider import StudioJobRef
+from app.render import RenderError, notebook_logo
 from app.render.infographic import render_infographic
-from app.render.report_pdf import render_report
 from app.render.slides_pptx import render_slides
-from app.schemas.content import ReportContent
+
+if TYPE_CHECKING:
+    from app.pipeline.fixture import FixtureProvider
+
+log = get_logger("pipeline.renderers")
 
 
 @dataclass(frozen=True)
@@ -27,32 +33,18 @@ class MediaBlob:
     data: bytes
     mime: str
     page_index: int | None = None
-    #: sanitised HTML to persist on the ArtifactVersion (report only, for now)
-    content_html: str | None = None
 
 
-Renderer = Callable[[dict[str, Any], ContentProvider, StudioJobRef], list[MediaBlob]]
-
-
-def _render_report(
-    content_json: dict[str, Any], _p: ContentProvider, _j: StudioJobRef
-) -> list[MediaBlob]:
-    rendered = render_report(ReportContent.model_validate(content_json))
-    return [
-        MediaBlob(
-            kind=MediaFileKind.report_pdf,
-            data=rendered.pdf,
-            mime="application/pdf",
-            content_html=rendered.html,
-        )
-    ]
+#: FixtureProvider only: its Studio-style HTML is rendered by us. NotebookLM's own
+#: media is downloaded instead (orchestrator `_content_and_media`).
+Renderer = Callable[[dict[str, Any], "FixtureProvider", StudioJobRef], list[MediaBlob]]
 
 
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 def _render_slides(
-    content_json: dict[str, Any], _p: ContentProvider, _j: StudioJobRef
+    content_json: dict[str, Any], _p: FixtureProvider, _j: StudioJobRef
 ) -> list[MediaBlob]:
     rendered = render_slides(content_json)
     blobs = [
@@ -67,7 +59,7 @@ def _render_slides(
 
 
 def _render_audio(
-    _content_json: dict[str, Any], provider: ContentProvider, job: StudioJobRef
+    _content_json: dict[str, Any], provider: FixtureProvider, job: StudioJobRef
 ) -> list[MediaBlob]:
     mp3 = provider.fetch_binary(job, ArtifactType.audio_overview)
     if not mp3:
@@ -76,7 +68,7 @@ def _render_audio(
 
 
 def _render_infographic(
-    content_json: dict[str, Any], _p: ContentProvider, _j: StudioJobRef
+    content_json: dict[str, Any], _p: FixtureProvider, _j: StudioJobRef
 ) -> list[MediaBlob]:
     rendered = render_infographic(content_json)
     return [
@@ -93,7 +85,26 @@ RENDERERS: dict[ArtifactType, Renderer] = {
     ArtifactType.slide_deck: _render_slides,
     ArtifactType.flashcards: _no_media,
     ArtifactType.quiz: _no_media,
-    ArtifactType.report: _render_report,
+    ArtifactType.report: _no_media,
     ArtifactType.infographic: _render_infographic,
     ArtifactType.audio_overview: _render_audio,
 }
+
+
+def strip_notebook_logo(blobs: list[MediaBlob]) -> list[MediaBlob]:
+    """NotebookLM's media with its "Gemini Notebook" mark removed (owner decision
+    2026-10-29): `notebook_logo.clean_media`, the same cleaning as the CLI's
+    `strip-notebook-logo`. An image or document that can't be read is kept as it is:
+    cleaning never fails a generation."""
+    cleaned = notebook_logo.clean_media(
+        [notebook_logo.MediaItem(kind=b.kind, data=b.data, page_index=b.page_index) for b in blobs],
+        tolerant=True,
+    )
+    return [
+        b
+        if data is None
+        else replace(
+            b, data=data, mime="image/png" if b.kind in notebook_logo.LOGO_IMAGE_KINDS else b.mime
+        )
+        for b, data in zip(blobs, cleaned.new_data, strict=True)
+    ]

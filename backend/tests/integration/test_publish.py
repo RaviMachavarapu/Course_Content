@@ -69,8 +69,10 @@ def test_publish_module_partial_reports_skips(client: TestClient, db_session: Se
     skipped = {s["type"]: s for s in body["skipped"]}
     assert set(skipped) == {"slide_deck", "infographic"}
     assert skipped["slide_deck"]["reason"] == "not generated yet"
-    assert body["module_status"] == ModuleStatus.partially_published.value
-    assert body["course_status"] == CourseStatus.partially_published.value
+    # the two skipped types were never requested (still `pending`), so every
+    # generated artifact is live: the module is published (review 2026-10-28)
+    assert body["module_status"] == ModuleStatus.published.value
+    assert body["course_status"] == CourseStatus.published.value
 
     db_session.expire_all()
     for a in db_session.get(Module, module.id).artifacts:

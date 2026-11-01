@@ -1,6 +1,10 @@
+import { asArray } from "@/lib/asArray";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, ErrorState, Icon, Skeleton } from "@/components";
+import { PdfDownloadLink } from "@/components/PdfDownloadLink";
+import { MathText } from "@/components/math/MathText";
+import { MathHtml } from "@/components/math/MathHtml";
 import { useArtifactProgress, useStudentArtifact } from "../useWorkspace";
 
 interface Section {
@@ -36,8 +40,8 @@ export function ReportViewer({
     return <ErrorState title="Report isn’t ready" onRetry={() => void refetch()} />;
 
   const content = (data.content_json ?? {}) as ReportContent;
-  const sections = content.sections ?? [];
-  const pdfUrl = data.media.find((m) => m.kind === "report_pdf")?.url;
+  const sections = asArray<Section>(content.sections);
+  const takeaways = asArray<string>(content.key_takeaways);
 
   return (
     <div className="relative mx-auto max-w-3xl pb-24">
@@ -47,18 +51,20 @@ export function ReportViewer({
           {content.read_minutes ?? "—"} min read
         </div>
         <h1 className="mt-2 font-headline-lg text-headline-lg text-on-background">
-          {content.title ?? "Report"}
+          <MathText text={content.title ?? "Report"} />
         </h1>
       </div>
 
-      {content.key_takeaways && content.key_takeaways.length > 0 && (
+      {takeaways.length > 0 && (
         <aside className="mt-6 rounded-xl border-l-4 border-tertiary bg-tertiary-container/20 p-4">
           <p className="font-label-md text-label-md uppercase tracking-wide text-tertiary">
             Key takeaways
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-body-md">
-            {content.key_takeaways.map((t, i) => (
-              <li key={i}>{t}</li>
+            {takeaways.map((t, i) => (
+              <li key={i}>
+                <MathText text={t} />
+              </li>
             ))}
           </ul>
         </aside>
@@ -68,13 +74,9 @@ export function ReportViewer({
         {sections.map((s, i) => (
           <li key={i}>
             <h2 className="font-headline-md text-headline-md">
-              <span className="text-tertiary">{i + 1}.</span> {s.heading}
+              <span className="text-tertiary">{i + 1}.</span> <MathText text={s.heading} />
             </h2>
-            <div
-              className="prose-report mt-2 space-y-3 text-body-md leading-relaxed text-on-surface [&_a]:text-tertiary [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_strong]:font-semibold"
-              // backend renders + sanitises this HTML (nh3 allowlist, T020)
-              dangerouslySetInnerHTML={{ __html: s.html }}
-            />
+            <SectionHtml html={s.html} />
           </li>
         ))}
       </ol>
@@ -102,17 +104,23 @@ export function ReportViewer({
         </Button>
       </div>
 
-      {pdfUrl && (
-        <a
-          href={pdfUrl}
-          download
-          data-testid="btn-rp3"
-          className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-tertiary px-5 py-3 font-label-md text-label-md text-on-tertiary shadow-level-2"
-        >
-          <Icon name="download" className="text-[18px]" />
-          Download .pdf
-        </a>
-      )}
+      <PdfDownloadLink
+        media={data.media}
+        kind="report_pdf"
+        testid="btn-rp3"
+        label="Download .pdf"
+        className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-tertiary px-5 py-3 font-label-md text-label-md text-on-tertiary shadow-level-2"
+      />
     </div>
+  );
+}
+
+function SectionHtml({ html }: { html: string }): JSX.Element {
+  // backend renders + sanitises this HTML (nh3 allowlist, T020); math is drawn by KaTeX
+  return (
+    <MathHtml
+      html={html}
+      className="prose-report mt-2 space-y-3 text-body-md leading-relaxed text-on-surface [&_a]:text-tertiary [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_strong]:font-semibold"
+    />
   );
 }

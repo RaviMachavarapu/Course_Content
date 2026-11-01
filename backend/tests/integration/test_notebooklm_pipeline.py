@@ -7,8 +7,11 @@ downloads, and records what the pipeline asked for.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import struct
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,7 @@ from app.models.enums import ArtifactStatus, ArtifactType, MediaFileKind, Module
 from app.models.media_file import MediaFile
 from app.models.module import Module
 from app.pipeline import orchestrator
+from app.pipeline.parsers.notebooklm import parse_notebooklm
 from app.pipeline.provider import (
     NotebookRef,
     ProviderError,
@@ -91,11 +95,8 @@ class FakeNotebookLm:
     def fetch_content(self, job: StudioJobRef) -> RawArtifact:
         return RawArtifact(
             html=self.html or "",
-            extras={"artifact_id": job.job_id, "source": "notebooklm", "row": self.row},
+            extras={"artifact_id": job.job_id, "row": self.row},
         )
-
-    def fetch_binary(self, job: StudioJobRef, kind: ArtifactType) -> bytes | None:
-        return None
 
     def download(self, url: str) -> tuple[bytes, str]:
         if self.fail_downloads:
@@ -124,6 +125,8 @@ def _artifact(db: Session, kind: ArtifactType, options: dict[str, Any] | None = 
         source_url="https://youtu.be/x",
         source_type=ModuleSourceType.youtube,
         notebooklm_notebook_id="nb-1",
+        # sources already in the notebook (as the migration marks existing ones)
+        sources_ready_at=dt.datetime.now(dt.UTC),
     )
     db.add(module)
     db.flush()
@@ -176,7 +179,7 @@ def test_audio_is_stored_as_m4a_with_its_real_duration(db_session: Session) -> N
     assert _media_kinds(db_session, version) == [(MediaFileKind.audio_m4a, None)]
 
 
-def test_report_text_comes_from_notebooklm_and_the_pdf_from_us(db_session: Session) -> None:
+def test_report_text_comes_from_notebooklm_and_the_html_from_us(db_session: Session) -> None:
     provider = FakeNotebookLm(_row("report_interactive.json"))
     artifact = _artifact(db_session, ArtifactType.report)
 
@@ -185,7 +188,8 @@ def test_report_text_comes_from_notebooklm_and_the_pdf_from_us(db_session: Sessi
     assert version is not None
     assert version.content_json["title"].startswith("Introduction to Artificial Intelligence")
     assert provider.downloads == []
-    assert _media_kinds(db_session, version) == [(MediaFileKind.report_pdf, None)]
+    # no media: the PDF is typeset afterwards by the build_artifact_pdf task
+    assert _media_kinds(db_session, version) == []
     assert version.content_html and "<h2" in version.content_html
 
 
@@ -243,9 +247,8 @@ def test_outline_review_then_proceed_builds_the_deck(
     assert artifact.outline_json["slides"] == ["**Intro**: the course.", "**Models**: why."]
 
     # 2. Staging shows the outline; the admin proceeds.
-    monkeypatch.setattr("app.api.admin.staging.get_content_provider", lambda: provider)
-    dispatched: list[tuple[Any, ...]] = []
-    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda *a: dispatched.append(a))
+    dispatched: list[dict[str, Any]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda p: dispatched.append(p))
     headers = _admin_headers(client, db_session)
     staging = client.get(f"/api/admin/modules/{artifact.module_id}/staging").json()
     deck = next(a for a in staging["artifacts"] if a["type"] == "slide_deck")
@@ -254,17 +257,26 @@ def test_outline_review_then_proceed_builds_the_deck(
 
     resp = client.post(f"/api/admin/artifacts/{artifact.id}/outline/proceed", headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
-    assert provider.outline_actions == [None]
-    assert dispatched and dispatched[0][-1] is True  # resume=True
+    # no NotebookLM call in the admin's request: the job sends the action
+    assert provider.outline_actions == []
+    [payload] = dispatched
+    assert payload["kwargs"]["resume"] is True
+    assert payload["kwargs"]["outline"] == {"feedback": None}
     db_session.expire_all()
     artifact = db_session.get(Artifact, artifact.id)
     assert artifact is not None and artifact.status is ArtifactStatus.processing
 
-    # 3. The worker waits for the built deck — without generating again.
+    # 3. The worker sends "proceed", then waits for the built deck — without generating again.
     provider.row, provider.status = _row("slide_deck.json"), StudioStatus.ready
     version = orchestrator.run_artifact_generation(
-        db_session, provider, artifact.id, job_id=uuid.UUID(resp.json()["job"]["id"]), resume=True
+        db_session,
+        provider,
+        artifact.id,
+        job_id=uuid.UUID(resp.json()["job"]["id"]),
+        resume=True,
+        outline=payload["kwargs"]["outline"],
     )
+    assert provider.outline_actions == [None]
     assert version is not None
     assert len(provider.generated) == 1
     assert artifact.status is ArtifactStatus.ready
@@ -278,22 +290,47 @@ def test_outline_feedback_is_sent_and_needs_text(
     provider.status = StudioStatus.awaiting_review
     artifact = _artifact(db_session, ArtifactType.slide_deck, {"review_outline": True})
     orchestrator.run_artifact_generation(db_session, provider, artifact.id)
-    monkeypatch.setattr("app.api.admin.staging.get_content_provider", lambda: provider)
-    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda *a: None)
+    dispatched: list[dict[str, Any]] = []
+    monkeypatch.setattr("app.api.admin.staging._dispatch", lambda p: dispatched.append(p))
     headers = _admin_headers(client, db_session)
 
     url = f"/api/admin/artifacts/{artifact.id}/outline/feedback"
     assert client.post(url, json={"feedback": ""}, headers=headers).status_code == 422
+    # whitespace-only is no feedback: rejected, not sent on as Proceed
+    assert client.post(url, json={"feedback": " \n\t "}, headers=headers).status_code == 422
+    assert dispatched == []
     resp = client.post(url, json={"feedback": "  Fewer slides  "}, headers=headers)
     assert resp.status_code == status.HTTP_202_ACCEPTED
+    [payload] = dispatched
+    assert payload["kwargs"]["outline"] == {"feedback": "Fewer slides"}
+
+    # the worker sends the feedback, then waits for the revised outline
+    revised: list[Any] = [None] * 31
+    revised[30] = [[["Style"], ["**Only**: one slide."]]]
+    provider.row = revised
+    assert (
+        orchestrator.run_artifact_generation(
+            db_session,
+            provider,
+            artifact.id,
+            job_id=uuid.UUID(resp.json()["job"]["id"]),
+            resume=True,
+            outline=payload["kwargs"]["outline"],
+        )
+        is None
+    )
     assert provider.outline_actions == ["Fewer slides"]
+    db_session.expire_all()
+    artifact = db_session.get(Artifact, artifact.id)
+    assert artifact is not None and artifact.status is ArtifactStatus.outline_review
+    assert artifact.outline_json is not None
+    assert artifact.outline_json["slides"] == ["**Only**: one slide."]
 
 
 def test_outline_actions_need_an_outline_waiting(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     artifact = _artifact(db_session, ArtifactType.slide_deck)
-    monkeypatch.setattr("app.api.admin.staging.get_content_provider", lambda: FakeNotebookLm(None))
     headers = _admin_headers(client, db_session)
     resp = client.post(f"/api/admin/artifacts/{artifact.id}/outline/proceed", headers=headers)
     assert resp.status_code == status.HTTP_409_CONFLICT
@@ -368,3 +405,167 @@ def test_persistent_download_failures_end_as_a_permanent_error(db_session: Sessi
     # not Transient: Celery must not retry (that would generate it again)
     assert not isinstance(info.value, TransientProviderError)
     assert artifact.status is ArtifactStatus.error
+
+
+# -- the "Gemini Notebook" mark is cropped off NotebookLM's images (2026-10-29) -----------
+
+
+class _MediaNotebookLm(FakeNotebookLm):
+    """Serves real images / PDF / PPTX for the row's media URLs."""
+
+    def __init__(self, row: list[Any], media: dict[str, bytes]) -> None:
+        super().__init__(row)
+        self.media = media
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        self.downloads.append(url)
+        return self.media[url], "application/octet-stream"
+
+
+def _media_for(kind: ArtifactType, row: list[Any]) -> dict[str, bytes]:
+    from app.pipeline.parsers.notebooklm import parse_notebooklm
+    from app.render import notebook_logo as nl
+    from tests.test_notebook_logo import _logo, _png, _pptx, _slide
+
+    refs = parse_notebooklm(kind, row, "").media
+    images: list[bytes] = []
+    for _ref in (r for r in refs if r.kind not in (MediaFileKind.deck_pdf, MediaFileKind.pptx)):
+        image = _slide((12, 58, 110))
+        _logo(image)
+        images.append(_png(image))
+    media: dict[str, bytes] = {}
+    it = iter(images)
+    for ref in refs:
+        if ref.kind is MediaFileKind.deck_pdf:
+            media[ref.url] = nl.images_pdf(images)
+        elif ref.kind is MediaFileKind.pptx:
+            media[ref.url] = _pptx(images)
+        else:
+            media[ref.url] = next(it)
+    return media
+
+
+@pytest.mark.parametrize("kind", [ArtifactType.slide_deck, ArtifactType.infographic])
+def test_the_notebook_mark_is_cropped_before_storing(
+    db_session: Session, kind: ArtifactType
+) -> None:
+    import io
+
+    from PIL import Image
+    from pypdf import PdfReader
+
+    from app.storage.service import get_storage
+
+    name = "slide_deck.json" if kind is ArtifactType.slide_deck else "infographic.json"
+    row = _row(name)
+    provider = _MediaNotebookLm(row, _media_for(kind, row))
+    artifact = _artifact(db_session, kind)
+
+    version = orchestrator.run_artifact_generation(db_session, provider, artifact.id)
+
+    assert version is not None
+    storage = get_storage()
+    rows = list(
+        db_session.scalars(select(MediaFile).where(MediaFile.artifact_version_id == version.id))
+    )
+    pngs = [m for m in rows if m.kind in (MediaFileKind.slide_png, MediaFileKind.infographic_png)]
+    assert pngs
+    for m in pngs:
+        with Image.open(io.BytesIO(storage.open(m.storage_key))) as im:
+            assert im.size[0] == 1376 and im.size[1] < 768
+    for m in rows:
+        if m.kind is MediaFileKind.deck_pdf:
+            pages = PdfReader(io.BytesIO(storage.open(m.storage_key))).pages
+            assert all(p.mediabox.height < 768 for p in pages)
+
+
+class _SlowDownloads(FakeNotebookLm):
+    """Downloads that take a moment, recording how many ran at once and where."""
+
+    def __init__(self, row: list[Any] | None) -> None:
+        super().__init__(row)
+        self.running = 0
+        self.peak = 0
+        self.fail_url: str | None = None
+        self._guard = threading.Lock()
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        with self._guard:
+            self.running += 1
+            self.peak = max(self.peak, self.running)
+        try:
+            time.sleep(0.05)
+            if url == self.fail_url:
+                raise ProviderError("media download failed (HTTP 403)")
+            return super().download(url)
+        finally:
+            with self._guard:
+                self.running -= 1
+
+
+def test_slide_media_downloads_run_concurrently_in_order() -> None:
+    provider = _SlowDownloads(_row("slide_deck.json"))
+    job = StudioJobRef(job_id="nlm-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    raw = provider.fetch_content(job)
+    beats: list[str] = []
+    main = threading.current_thread().name
+
+    _content, blobs, _html = orchestrator._content_and_media(
+        provider,
+        ArtifactType.slide_deck,
+        raw,
+        job,
+        on_progress=lambda: beats.append(threading.current_thread().name),
+    )
+
+    urls = [
+        ref.url for ref in parse_notebooklm(ArtifactType.slide_deck, raw.extras["row"], "").media
+    ]
+    assert len(urls) == 4 and provider.peak > 1
+    # order kept: each blob holds the bytes of the URL in its position
+    assert [b.data for b in blobs] == [b"\x89PNG\r\n\x1a\n" + u.encode() for u in urls]
+    assert beats == [main] * 4  # heartbeats from the run's own thread, one per download
+
+
+def test_a_failed_slide_media_download_fails_the_run() -> None:
+    provider = _SlowDownloads(_row("slide_deck.json"))
+    job = StudioJobRef(job_id="nlm-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    raw = provider.fetch_content(job)
+    urls = [
+        ref.url for ref in parse_notebooklm(ArtifactType.slide_deck, raw.extras["row"], "").media
+    ]
+    provider.fail_url = urls[1]
+    with pytest.raises(ProviderError, match="HTTP 403"):
+        orchestrator._content_and_media(provider, ArtifactType.slide_deck, raw, job)
+
+
+class _BlockedDownloads(FakeNotebookLm):
+    """One download fails at once; the others hang until `release` is set."""
+
+    def __init__(self, row: list[Any] | None, fail_url: str) -> None:
+        super().__init__(row)
+        self.fail_url = fail_url
+        self.release = threading.Event()
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        if url == self.fail_url:
+            raise ProviderError("media download failed (HTTP 403)")
+        self.release.wait(timeout=10)
+        return super().download(url)
+
+
+def test_a_failed_download_does_not_wait_for_the_others_in_flight() -> None:
+    """Waiting on a hung download after a failure (or the soft time limit) could
+    outlast the hard limit, so the worker is killed before the failure is recorded."""
+    row = _row("slide_deck.json")
+    job = StudioJobRef(job_id="nlm-1", notebook_id="nb-1", kind=ArtifactType.slide_deck)
+    urls = [ref.url for ref in parse_notebooklm(ArtifactType.slide_deck, row, "").media]
+    provider = _BlockedDownloads(row, fail_url=urls[0])
+    raw = provider.fetch_content(job)
+    started = time.monotonic()
+    try:
+        with pytest.raises(ProviderError, match="HTTP 403"):
+            orchestrator._content_and_media(provider, ArtifactType.slide_deck, raw, job)
+        assert time.monotonic() - started < 5
+    finally:
+        provider.release.set()
