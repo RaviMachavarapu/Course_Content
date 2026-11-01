@@ -42,7 +42,8 @@ export function AudioPlayer({
   const [showTranscript, setShowTranscript] = useState(false);
   const seeked = useRef(false);
 
-  const src = data?.media.find((m) => m.kind === "audio_mp3")?.url;
+  // NotebookLM's Audio Overview is AAC (m4a); fixture content is mp3.
+  const src = data?.media.find((m) => m.kind === "audio_mp3" || m.kind === "audio_m4a")?.url;
   const cues = (data?.content_json?.transcript ?? []) as Cue[];
   const fallbackDuration = Number(data?.content_json?.duration_seconds ?? 0);
   const totalDuration = duration || fallbackDuration;

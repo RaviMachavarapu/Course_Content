@@ -35,7 +35,8 @@ def derive_module_status(artifact_statuses: Sequence[ArtifactStatus]) -> ModuleS
         return ModuleStatus.partially_published
     if any(s is ArtifactStatus.error for s in statuses):
         return ModuleStatus.error
-    if any(s is ArtifactStatus.ready for s in statuses):
+    # An outline awaiting review needs the admin, like a ready artifact.
+    if any(s in (ArtifactStatus.ready, ArtifactStatus.outline_review) for s in statuses):
         return ModuleStatus.pending_review
     return ModuleStatus.processing
 

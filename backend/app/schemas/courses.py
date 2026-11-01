@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,6 +32,11 @@ class ModuleCreateRequest(BaseModel):
     #: value. Validated against app.schemas.content_options's per-type
     #: models; any type omitted here gets that type's defaults.
     options: dict[ArtifactType, dict[str, Any]] = Field(default_factory=dict)
+    #: Per-type focus text. A non-empty entry replaces that type's Settings
+    #: prompt template; omitted or blank means "use the template".
+    prompts: dict[ArtifactType, Annotated[str, Field(max_length=4000)]] = Field(
+        default_factory=dict
+    )
 
 
 class ModulePatchRequest(BaseModel):

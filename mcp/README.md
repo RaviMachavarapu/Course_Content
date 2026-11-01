@@ -10,45 +10,41 @@ so the backend worker can drive Google NotebookLM to generate the six artifacts.
 
 ## One-time authentication
 
-`notebooklm-mcp-server auth` opens a real Chromium window for an interactive
-Google sign-in — there's no way to script this with a submitted
-email/password, and this app will never ask you to type your Google password
-into anything that isn't `accounts.google.com`. Since this container has no
-physical screen, `entrypoint.sh` boots a virtual display (Xvfb) plus a
-web-viewable VNC session (x11vnc + noVNC) so you can watch and click through
-that real Chromium window from an ordinary browser tab on your own machine:
+> **Don't use `notebooklm-mcp-server auth`.** At 4.0.2 it treats NotebookLM's
+> public landing page as "signed in", exits within seconds and saves a session
+> with no login in it. It also targets `notebooklm.google.com`, which now
+> redirects to `notebook.google.com` ("Gemini Notebook"). Verified live on
+> 2026-10-22: `docs/spikes/notebooklm-2026-10-capture.md`.
+
+Sign in with `mcp/auth-login.mjs` instead. It opens Google's sign-in page in a
+real Chromium window on the container's virtual display, waits until
+`notebook.google.com` is actually signed in, and saves the session in the
+connector's `auth.json` format:
 
 ```bash
-docker compose --profile mcp run --rm --service-ports mcp \
-  npx -y notebooklm-mcp-server@4.0.2 auth
+docker compose --profile mcp stop mcp      # the browser and the shim share ports
+docker compose --profile mcp run --rm --service-ports \
+  -v "$PWD/mcp/auth-login.mjs:/auth-login.mjs:ro" mcp node /auth-login.mjs
+docker compose --profile mcp up -d mcp
 ```
 
-(`--service-ports` is required — `docker compose run` doesn't publish the
-service's normal `ports:` otherwise.) Then open **http://localhost:6080/vnc.html**
-in your regular browser, click **Connect**, and you'll see the container's
-Chromium window — sign in there with the **dedicated** Google account exactly
-as you would on your own machine.
+While it waits, open **http://localhost:6080/vnc.html**, click **Connect** and
+sign in. Type the Google password only on Google's own page. The browser
+profile is kept in `mcp/auth/browser-profile`. Re-running the command with a
+still-signed-in profile just re-exports the session.
 
-On success, session cookies are written to `mcp/auth/auth.json` (git-ignored,
-mounted into the container). The server auto-refreshes the rotating
-`__Secure-1PSIDTS` token on startup; if the session lapses (weeks), re-run the
-command above and call `refresh_auth` (Admin → Settings → NotebookLM →
-Reload auth).
+Close the browser after signing in. While it's open, it rotates the same
+Google session, and the connector's copy stops working after about an hour.
 
-The same virtual display + noVNC also start when the container runs
-normally (`docker compose --profile mcp up -d mcp`), so
-**http://localhost:6080/vnc.html** works any time the `mcp` service is up —
-handy for confirming *why* a health check is failing (an expired-session
-error page, a CAPTCHA, etc.) without needing to re-run the `auth` command
-just to look.
+`mcp/auth/` holds credentials and is git-ignored (`mcp/auth/.gitignore`).
 
-## ⚠️ DBSC limitation (Open Item O3)
+## DBSC (Open Item O3)
 
-Google accounts that enforce **Device Bound Session Credentials** — the default
-for Workspace and most personal accounts — tie the session to device-held keys,
-and exported cookies are rejected. Use a Google account **without** DBSC
-enforcement, or live generation will not work. This does not block any build or
-test work.
+Earlier sign-in failures were blamed on Google's Device Bound Session
+Credentials. They were actually the address change and the broken `auth`
+command above. With the new address, cookies copied out of the browser work
+on this account. If a different account does enforce DBSC, the connector
+can't use it.
 
 ## Transport: an HTTP shim in front of a stdio server (T016)
 
@@ -69,28 +65,32 @@ the tool calls the backend needs as plain HTTP on `:7332`
   cookies (from a fresh `auth` run) are picked up without a container
   restart.
 
-## Tools used by the backend (pinned version `4.0.2`)
+## What the backend uses
 
-Per upstream `docs/TOOLS.md` at this pin — **not yet live-verified against a
-real authenticated session**, see `docs/spikes/O1-infographic.md` /
-`docs/spikes/O2-audio.md`:
+Notebooks and sources go through the connector's own tools, via `POST /call`:
+`notebook_create`, `notebook_add_url`, `notebook_get` and `notebook_list`
+(the health check).
 
-- `notebook_create {title}` → `{status, notebook_id, title}`
-- `notebook_add_url {notebook_id, url}` → `{status, source_id}`
-- `{slide_deck,flashcards,quiz,report,infographic,audio_overview}_create
-  {notebook_id, source_ids, focus_prompt, ...type-specific options}` →
-  `{status, artifact: {artifact_id, type, status}}` (poll for completion)
-- `studio_poll {notebook_id}` → `{artifacts: [{artifact_id, title, type,
-  status, content, media_url}]}` — **`media_url` is the most promising lead
-  for O2 (audio) and possibly O1 (infographic image)**, but its exact
-  contents (a direct file URL? auth-gated? mp3 only, or also present for
-  infographic?) need a live check.
-- `artifact_content_get {notebook_id, artifact_id}` → `{artifact_id, html,
-  mind_map_tree}` — no image/binary field here, which is why D15
-  (render our own infographic from structure) is the shipped default
-  regardless of what O1 finds.
-- `refresh_auth` (if exposed as an MCP tool at this pin — TOOLS.md didn't
-  confirm; the shim's `/refresh-auth` reconnects either way as a fallback).
+Studio goes through the shim's `/studio/*` endpoints (`shim/studio.js`). The
+connector's own Studio requests use the old format, which Google rejects with
+`[3]` INVALID_ARGUMENT. These endpoints send the format the web app sends
+today. Every layout and option code was recorded live, and `shim/test/`
+checks the builder against all 30 recorded requests
+(`docker run --rm -v "$PWD/mcp/shim:/s:ro" -w /s node:20-slim node --test test/`).
+
+| Endpoint | Does |
+|---|---|
+| `POST /studio/create {notebook_id, kind, focus_prompt, options}` | Starts a generation. Returns `{artifact_id}` |
+| `GET /studio/artifact?notebook_id&artifact_id` | Returns `{status, raw, html}`. Status 3 = completed, 4 = failed, 6 = slide outline waiting for review |
+| `POST /studio/outline {notebook_id, artifact_id, feedback?}` | With `feedback`, revises the outline. Without it, builds the deck |
+| `GET /studio/download?url=` | Downloads NotebookLM media (slide PNG/PDF/PPTX, infographic PNG, audio m4a), following redirects with the Google cookies |
+
+Errors: 401 means the Google session needs attention. 422 means NotebookLM
+rejected the request (not retried). 502 means anything else (retried).
+
+The image patches the connector's hard-coded `BASE_URL` to
+`notebook.google.com` (`mcp/Dockerfile`). The build fails if that line
+changes.
 
 ## Pinning
 

@@ -16,6 +16,7 @@ from typing import Any
 from app.models.enums import ArtifactType
 from app.pipeline.provider import (
     NotebookRef,
+    ProviderError,
     ProviderHealth,
     RawArtifact,
     SourceRef,
@@ -79,6 +80,14 @@ class FixtureProvider:
             return (self._dir / "audio_overview.mp3").read_bytes()
         # Infographic image is rendered by us from structure (D15); nothing to fetch.
         return None
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        # Fixture content is self-contained; it never hands out media URLs.
+        raise ProviderError(f"FixtureProvider has no remote media ({url})")
+
+    def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
+        # Fixture generations finish immediately; they never wait for an outline.
+        raise ProviderError("FixtureProvider has no slide outline to review")
 
     def health(self) -> ProviderHealth:
         return ProviderHealth(

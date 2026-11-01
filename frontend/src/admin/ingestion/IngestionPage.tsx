@@ -3,7 +3,12 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Card, CardBody, Icon, Input, Select } from "@/components";
 import { ApiError } from "@/lib/api";
 import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
-import { DEFAULT_OPTIONS, type OptionsByType } from "../generationOptions";
+import {
+  DEFAULT_OPTIONS,
+  optionsProblem,
+  type OptionsByType,
+  type PromptsByType,
+} from "../generationOptions";
 import { ARTIFACT_LABELS, ARTIFACT_TYPES, type ArtifactType } from "../api";
 import { StatusChip, StatusDot } from "../AdminStatus";
 import { sourceUrlError } from "../sourceValidation";
@@ -40,6 +45,7 @@ export function IngestionPage(): JSX.Element {
   const [existingCourseId, setExistingCourseId] = useState(scopedCourseId);
   const [types, setTypes] = useState<Set<ArtifactType>>(new Set(ARTIFACT_TYPES));
   const [optionsByType, setOptionsByType] = useState<OptionsByType>({ ...DEFAULT_OPTIONS });
+  const [promptsByType, setPromptsByType] = useState<PromptsByType>({});
   const [submitted, setSubmitted] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -50,7 +56,18 @@ export function IngestionPage(): JSX.Element {
   const courseSelectErr = target === "existing" && !existingCourseId ? "Choose a course" : null;
   const typesErr = types.size === 0 ? "Select at least one artifact type" : null;
 
-  const isValid = !urlErr && !moduleTitleErr && !courseTitleErr && !courseSelectErr && !typesErr;
+  const optionProblems = new Map(
+    [...types]
+      .map((t) => [t, optionsProblem(t, optionsByType[t] ?? DEFAULT_OPTIONS[t])] as const)
+      .filter((entry): entry is readonly [ArtifactType, string] => entry[1] !== null),
+  );
+  const isValid =
+    !urlErr &&
+    !moduleTitleErr &&
+    !courseTitleErr &&
+    !courseSelectErr &&
+    !typesErr &&
+    optionProblems.size === 0;
 
   const toggleType = (t: ArtifactType) =>
     setTypes((prev) => {
@@ -67,7 +84,12 @@ export function IngestionPage(): JSX.Element {
     if (!isValid) return;
 
     const selectedOptions: OptionsByType = {};
-    for (const t of types) selectedOptions[t] = optionsByType[t] ?? DEFAULT_OPTIONS[t];
+    const selectedPrompts: PromptsByType = {};
+    for (const t of types) {
+      selectedOptions[t] = optionsByType[t] ?? DEFAULT_OPTIONS[t];
+      const text = promptsByType[t]?.trim();
+      if (text) selectedPrompts[t] = text;
+    }
 
     ingest.mutate(
       {
@@ -75,6 +97,7 @@ export function IngestionPage(): JSX.Element {
         moduleTitle,
         types: [...types],
         options: selectedOptions,
+        prompts: selectedPrompts,
         target:
           target === "new"
             ? { kind: "new", title: courseTitle, description, category }
@@ -236,7 +259,12 @@ export function IngestionPage(): JSX.Element {
                   type={t}
                   values={optionsByType[t] ?? DEFAULT_OPTIONS[t]}
                   onChange={(next) => setOptionsByType((prev) => ({ ...prev, [t]: next }))}
+                  prompt={promptsByType[t] ?? ""}
+                  onPromptChange={(next) => setPromptsByType((prev) => ({ ...prev, [t]: next }))}
                 />
+                {submitted && optionProblems.get(t) && (
+                  <p className="font-label-sm text-label-sm text-error">{optionProblems.get(t)}</p>
+                )}
               </fieldset>
             ))}
 

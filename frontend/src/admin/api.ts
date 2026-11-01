@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api";
+import type { OptionValues } from "./generationOptions";
 
 export type ArtifactType =
   "slide_deck" | "flashcards" | "quiz" | "report" | "infographic" | "audio_overview";
@@ -106,7 +107,8 @@ export const adminApi = {
       source_url: string;
       title: string;
       types: ArtifactType[];
-      options?: Record<string, Record<string, string>>;
+      options?: Record<string, OptionValues>;
+      prompts?: Record<string, string>;
     },
   ) =>
     apiFetch<{ module: ModuleSummary; job_ids: string[] }>(
@@ -114,8 +116,7 @@ export const adminApi = {
       { method: "POST", body },
     ),
 
-  recentJobs: () =>
-    apiFetch<{ jobs: RecentJob[] }>("/api/admin/jobs/recent").then((r) => r.jobs),
+  recentJobs: () => apiFetch<{ jobs: RecentJob[] }>("/api/admin/jobs/recent").then((r) => r.jobs),
 
   pipeline: (params: { page?: number; page_size?: number; status?: string; q?: string } = {}) => {
     const qs = new URLSearchParams();

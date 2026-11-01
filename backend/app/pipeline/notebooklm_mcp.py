@@ -6,12 +6,11 @@ behind a thin HTTP shim (`mcp/shim/server.js`) that speaks MCP to it and
 re-exposes the tool calls this provider needs. `MCP_ENDPOINT` points at that
 shim (default `http://mcp:7332`, matching `docker-compose.yml`).
 
-Tool names, argument shapes, and the `studio_poll`/`artifact_content_get`
-response shapes below are taken from the pinned upstream `docs/TOOLS.md`
-(`mcp/README.md` records the exact version and quotes the relevant tools) —
-**not yet live-verified against a real authenticated session**. See
-`docs/spikes/O1-infographic.md` and `docs/spikes/O2-audio.md` for the
-verification checklist this needs before being trusted in production.
+Notebook and source calls use the connector's tools. Studio generation,
+status, outline review and media downloads use the shim's `/studio/*`
+endpoints, which speak the request format the NotebookLM web app uses today
+(the pinned connector's own Studio requests are rejected by Google). Both were
+verified live on 2026-10-22: docs/spikes/notebooklm-2026-10-capture.md.
 
 A Redis lock (`mcp:session`) serializes calls across all API/worker
 processes: `notebooklm-mcp-server` holds one stdio session per shim
@@ -22,6 +21,7 @@ against the same underlying browser session.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -59,8 +59,11 @@ _CREATE_TOOL_BY_TYPE: dict[ArtifactType, str] = {
     ArtifactType.audio_overview: "audio_overview_create",
 }
 
-_TERMINAL_FAILED = {"failed", "unknown"}
-_TERMINAL_READY = {"completed"}
+# NotebookLM artifact status codes (shim's /studio/artifact).
+_STATUS_COMPLETED = 3
+_STATUS_FAILED = 4
+_STATUS_OUTLINE_REVIEW = 6
+_DOWNLOAD_TIMEOUT_SEC = 300.0
 
 
 class NotebookLmMcpProvider:
@@ -86,52 +89,64 @@ class NotebookLmMcpProvider:
         focus_prompt: str,
         options: dict[str, Any],
     ) -> StudioJobRef:
-        tool = _CREATE_TOOL_BY_TYPE[kind]
-        # `source_ids` is deliberately omitted: this app creates exactly one
-        # source per notebook, and the upstream tool defaults to "every
-        # source in the notebook" when it's left out (per TOOLS.md; not yet
-        # confirmed live).
-        args = {"notebook_id": nb.notebook_id, "focus_prompt": focus_prompt, **options}
-        data = self._call(tool, args)
-        artifact = data.get("artifact") or {}
-        artifact_id = artifact.get("artifact_id")
+        data = self._studio(
+            "POST",
+            "/studio/create",
+            json={
+                "notebook_id": nb.notebook_id,
+                "kind": kind.value,
+                "focus_prompt": focus_prompt,
+                "options": options,
+            },
+        )
+        artifact_id = data.get("artifact_id")
         if not artifact_id:
-            raise ProviderError(f"{tool} did not return an artifact_id: {data!r}")
+            raise ProviderError(f"/studio/create returned no artifact_id: {data!r}")
         return StudioJobRef(job_id=str(artifact_id), notebook_id=nb.notebook_id, kind=kind)
 
     def poll(self, job: StudioJobRef) -> StudioStatus:
-        artifact = self._poll_artifact(job)
-        if artifact is None:
-            return StudioStatus.pending
-        status = artifact.get("status")
-        if status in _TERMINAL_READY:
+        status = self._artifact(job).get("status")
+        if status == _STATUS_COMPLETED:
             return StudioStatus.ready
-        if status in _TERMINAL_FAILED:
+        if status == _STATUS_OUTLINE_REVIEW:
+            return StudioStatus.awaiting_review
+        if status == _STATUS_FAILED:
             return StudioStatus.failed
         return StudioStatus.pending
 
     def fetch_content(self, job: StudioJobRef) -> RawArtifact:
-        data = self._call(
-            "artifact_content_get",
-            {"notebook_id": job.notebook_id, "artifact_id": job.job_id},
+        data = self._artifact(job)
+        return RawArtifact(
+            html=str(data.get("html") or ""),
+            extras={"artifact_id": job.job_id, "source": "notebooklm", "row": data.get("raw")},
         )
-        extras: dict[str, Any] = {"artifact_id": job.job_id}
-        if data.get("mind_map_tree") is not None:
-            extras["mind_map_tree"] = data["mind_map_tree"]
-        return RawArtifact(html=str(data.get("html") or ""), extras=extras)
 
     def fetch_binary(self, job: StudioJobRef, kind: ArtifactType) -> bytes | None:
-        if kind is not ArtifactType.audio_overview:
-            # Infographic image: D15 renders our own from structure — never fetched.
-            return None
+        # NotebookLM media is fetched by URL (`download`); kept for the protocol.
+        return None
+
+    def download(self, url: str) -> tuple[bytes, str]:
+        # Not under the session lock: a plain HTTPS fetch that doesn't touch the
+        # connector's stdio session, and a large deck held the lock long enough
+        # to time out other jobs' polls (seen live 2026-10-22).
         resp = self._http.get(
-            "/media",
-            params={"notebook_id": job.notebook_id, "artifact_id": job.job_id},
+            "/studio/download", params={"url": url}, timeout=_DOWNLOAD_TIMEOUT_SEC
         )
-        if resp.status_code == 404:
-            return None
         self._raise_for_status(resp)
-        return resp.content
+        return resp.content, resp.headers.get("content-type", "application/octet-stream")
+
+    def outline_action(self, job: StudioJobRef, feedback: str | None) -> None:
+        resp = self._locked(
+            lambda: self._http.post(
+                "/studio/outline",
+                json={
+                    "notebook_id": job.notebook_id,
+                    "artifact_id": job.job_id,
+                    "feedback": feedback,
+                },
+            )
+        )
+        self._raise_for_status(resp)
 
     def health(self) -> ProviderHealth:
         try:
@@ -161,14 +176,32 @@ class NotebookLmMcpProvider:
 
     # -- internals ----------------------------------------------------------
 
-    def _poll_artifact(self, job: StudioJobRef) -> dict[str, Any] | None:
-        data = self._call("studio_poll", {"notebook_id": job.notebook_id})
-        for artifact in data.get("artifacts") or []:
-            if artifact.get("artifact_id") == job.job_id:
-                return dict(artifact)
-        return None
+    def _artifact(self, job: StudioJobRef) -> dict[str, Any]:
+        return self._studio(
+            "GET",
+            "/studio/artifact",
+            params={"notebook_id": job.notebook_id, "artifact_id": job.job_id},
+        )
+
+    def _studio(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        resp = self._locked(lambda: self._http.request(method, path, **kwargs))
+        self._raise_for_status(resp)
+        body = resp.json()
+        if not isinstance(body, dict):
+            raise ProviderError(f"{path} returned a non-object result: {body!r}")
+        return body
 
     def _call(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        resp = self._locked(lambda: self._http.post("/call", json={"tool": tool, "args": args}))
+        self._raise_for_status(resp)
+        body = resp.json()
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise ProviderError(f"{tool} returned a non-object result: {body!r}")
+        return data
+
+    def _locked(self, request: Callable[[], httpx.Response]) -> httpx.Response:
+        """Run one shim request under the shared NotebookLM session lock."""
         lock = self._redis.lock(
             _LOCK_KEY,
             timeout=_LOCK_TIMEOUT_SEC,
@@ -180,13 +213,7 @@ class NotebookLmMcpProvider:
                 f"could not acquire {_LOCK_KEY} within {_LOCK_BLOCKING_TIMEOUT_SEC}s"
             )
         try:
-            resp = self._http.post("/call", json={"tool": tool, "args": args})
-            self._raise_for_status(resp)
-            body = resp.json()
-            data = body.get("data")
-            if not isinstance(data, dict):
-                raise ProviderError(f"{tool} returned a non-object result: {body!r}")
-            return data
+            return request()
         finally:
             lock.release()
 

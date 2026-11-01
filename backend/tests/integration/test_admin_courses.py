@@ -100,7 +100,7 @@ def test_create_module_stores_per_type_generation_options(
             "types": ["quiz", "audio_overview", "infographic", "report"],
             "options": {
                 "quiz": {"quantity": "more", "difficulty": "hard"},
-                "audio_overview": {"format": "brief", "length": "short", "language": "es"},
+                "audio_overview": {"format": "debate", "length": "short", "language": "hi"},
                 "infographic": {"orientation": "portrait"},
             },
         },
@@ -112,19 +112,29 @@ def test_create_module_stores_per_type_generation_options(
     module = db_session.get(Module, module_id)
     assert module is not None
     by_type = {a.type.value: a for a in module.artifacts}
-    assert by_type["quiz"].generation_options == {"quantity": "more", "difficulty": "hard"}
-    assert by_type["audio_overview"].generation_options == {
-        "format": "brief",
-        "length": "short",
-        "language": "es",
+    assert by_type["quiz"].generation_options == {
+        "quantity": "more",
+        "difficulty": "hard",
+        "language": "en",
     }
-    # orientation given, language defaulted
+    assert by_type["audio_overview"].generation_options == {
+        "format": "debate",
+        "length": "short",
+        "language": "hi",
+    }
+    # orientation given, the rest defaulted
     assert by_type["infographic"].generation_options == {
         "orientation": "portrait",
         "language": "en",
+        "detail": "standard",
+        "style": "auto",
     }
     # requested but no options entry -> that type's defaults, not empty
-    assert by_type["report"].generation_options == {"language": "en"}
+    assert by_type["report"].generation_options == {
+        "format": "interactive",
+        "template": None,
+        "language": "en",
+    }
     # BR1's other rows exist but weren't requested for this ingest — left
     # untouched (empty) until they're actually generated
     slide_deck = db_session.scalar(
@@ -132,6 +142,30 @@ def test_create_module_stores_per_type_generation_options(
     )
     assert slide_deck is not None
     assert slide_deck.generation_options == {}
+
+
+def test_create_module_stores_custom_prompts(client: TestClient, db_session: Session) -> None:
+    from app.models.module import Module
+
+    h = _admin(client, db_session)
+    cid = client.post("/api/admin/courses", json={"title": "CP"}, headers=h).json()["course"]["id"]
+    r = client.post(
+        f"/api/admin/courses/{cid}/modules",
+        json={
+            "source_url": "https://www.youtube.com/watch?v=prompts",
+            "title": "Module 1",
+            "types": ["quiz", "flashcards", "report"],
+            "prompts": {"quiz": " Three questions on chapter 1 ", "flashcards": "   "},
+        },
+        headers=h,
+    )
+    assert r.status_code == status.HTTP_201_CREATED
+    module = db_session.get(Module, r.json()["module"]["id"])
+    assert module is not None
+    by_type = {a.type.value: a for a in module.artifacts}
+    assert by_type["quiz"].custom_prompt == "Three questions on chapter 1"
+    assert by_type["flashcards"].custom_prompt is None  # blank -> template
+    assert by_type["report"].custom_prompt is None  # omitted -> template
 
 
 def test_create_module_rejects_bad_option_value(client: TestClient, db_session: Session) -> None:

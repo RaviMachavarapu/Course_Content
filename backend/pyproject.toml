@@ -21,6 +21,8 @@ dependencies = [
     "beautifulsoup4>=4.12,<5",
     "lxml>=5.3,<6",
     "nh3>=0.2.19,<0.3",
+    # NotebookLM Document reports come back as Markdown.
+    "markdown-it-py>=3.0,<4",
     "python-pptx>=1.0,<2",
     "weasyprint>=63,<64",
     "structlog>=24.4,<25",

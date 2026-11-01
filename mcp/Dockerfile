@@ -30,10 +30,21 @@ ENV NOTEBOOKLM_MCP_PACKAGE=notebooklm-mcp-server@4.0.2
 # download; also fails the build loudly if the pin no longer resolves.
 RUN npx -y ${NOTEBOOKLM_MCP_PACKAGE} --version || true
 
+# NotebookLM moved to https://notebook.google.com ("Gemini Notebook");
+# notebooklm.google.com now redirects there, and the server's HTTP client drops
+# the Cookie header on that cross-host redirect, so every call came back
+# "Authentication expired" (verified live 2026-10-22). The pinned server
+# hard-codes the old address with no override, so patch it in the cached
+# package — and fail the build if the line isn't there (e.g. after a bump).
+RUN F="$(find /root/.npm/_npx -path '*/node_modules/notebooklm-mcp-server/dist/index.js' | head -1)" \
+    && grep -q 'BASE_URL = "https://notebooklm.google.com"' "$F" \
+    && sed -i 's#BASE_URL = "https://notebooklm.google.com"#BASE_URL = "https://notebook.google.com"#' "$F" \
+    && grep -q 'BASE_URL = "https://notebook.google.com"' "$F"
+
 WORKDIR /srv/shim
 COPY shim/package.json .
 RUN npm install --omit=dev
-COPY shim/server.js .
+COPY shim/server.js shim/studio.js ./
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

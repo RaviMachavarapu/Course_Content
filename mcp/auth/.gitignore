@@ -1,0 +1,3 @@
+# Google session credentials (auth.json, browser profile). Never commit.
+*
+!.gitignore

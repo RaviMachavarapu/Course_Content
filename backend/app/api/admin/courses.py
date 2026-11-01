@@ -185,7 +185,13 @@ def create_module(
 
     provider = get_content_provider()
     jobs = orchestrator.start_module_generation(
-        db, provider, module.id, body.types, requested_by=admin.id, options_by_type=body.options
+        db,
+        provider,
+        module.id,
+        body.types,
+        requested_by=admin.id,
+        options_by_type=body.options,
+        prompts_by_type=body.prompts,
     )
     db.flush()
 

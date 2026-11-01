@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StagingPage } from "./StagingPage";
 
@@ -27,7 +27,14 @@ function artifact(type: string, over: Record<string, unknown> = {}) {
             : type === "audio_overview"
               ? [{ kind: "audio_mp3", url: "/api/media/x.mp3", size_bytes: 9, page_index: null }]
               : type === "infographic"
-                ? [{ kind: "infographic_png", url: "/api/media/x.png", size_bytes: 9, page_index: null }]
+                ? [
+                    {
+                      kind: "infographic_png",
+                      url: "/api/media/x.png",
+                      size_bytes: 9,
+                      page_index: null,
+                    },
+                  ]
                 : [],
       preview:
         type === "quiz"
@@ -128,7 +135,8 @@ describe("StagingPage", () => {
       expect(post).toBeDefined();
       expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
         note: "make it shorter",
-        options: { language: "en" },
+        options: { format: "interactive", template: null, language: "en" },
+        custom_prompt: "",
       });
     });
   });
@@ -147,7 +155,7 @@ describe("StagingPage", () => {
     await screen.findByRole("heading", { name: "Neural Nets" });
 
     await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
-    await userEvent.selectOptions(await screen.findByLabelText("Difficulty"), "hard");
+    await userEvent.click(await screen.findByRole("radio", { name: "Hard" }));
     await userEvent.click(screen.getByTestId("btn-sr7"));
 
     await waitFor(() => {
@@ -156,7 +164,92 @@ describe("StagingPage", () => {
       );
       expect(post).toBeDefined();
       const body = JSON.parse((post![1] as RequestInit).body as string);
-      expect(body.options).toEqual({ quantity: "standard", difficulty: "hard" });
+      expect(body.options).toEqual({ quantity: "standard", difficulty: "hard", language: "en" });
+    });
+  });
+
+  it("an outline waiting for review offers feedback and proceed", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([
+          artifact("slide_deck", {
+            status: "outline_review",
+            current_version: null,
+            outline: {
+              style: "A 'Technical Blueprint' look.",
+              slides: ["**Intro**: the course.", "**Models**: why."],
+            },
+          }),
+        ]),
+      },
+      {
+        method: "POST",
+        match: "/api/admin/artifacts/a-slide_deck/outline/",
+        status: 202,
+        body: { job: { id: "j", state: "queued" } },
+      },
+    ]);
+    renderPage();
+    const review = await screen.findByTestId("outline-review");
+    expect(within(review).getByText("Intro")).toBeInTheDocument();
+    expect(screen.getByText("Outline review")).toBeInTheDocument();
+    expect(screen.getByTestId("btn-sr14")).toBeDisabled(); // no feedback typed yet
+
+    await userEvent.type(
+      within(review).getByLabelText("Add feedback to refine the outline"),
+      "Fewer slides",
+    );
+    await userEvent.click(screen.getByTestId("btn-sr14"));
+    await userEvent.click(screen.getByTestId("btn-sr15"));
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls
+        .filter((c) => (c[1] as RequestInit)?.method === "POST")
+        .map((c) => [String(c[0]), (c[1] as RequestInit).body]);
+      expect(posts).toEqual([
+        [
+          "/api/admin/artifacts/a-slide_deck/outline/feedback",
+          JSON.stringify({ feedback: "Fewer slides" }),
+        ],
+        ["/api/admin/artifacts/a-slide_deck/outline/proceed", undefined],
+      ]);
+    });
+  });
+
+  it("redo modal prefills the stored custom prompt and sends the edited text", async () => {
+    const fetchMock = installFetch([
+      {
+        method: "GET",
+        match: "/staging",
+        body: stagingBody([artifact("quiz", { custom_prompt: "Chapter 1 only" })]),
+      },
+      {
+        method: "POST",
+        match: "/api/admin/artifacts/a-quiz/redo",
+        status: 202,
+        body: { job: { id: "j", state: "queued" } },
+      },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Neural Nets" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Redo Quiz" }));
+    const box = await screen.findByLabelText("What should the topic be?");
+    expect(box).toHaveValue("Chapter 1 only");
+    await userEvent.clear(box);
+    await userEvent.type(box, "Chapter 3 only");
+    await userEvent.click(screen.getByTestId("btn-sr7"));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => (c[1] as RequestInit)?.method === "POST" && String(c[0]).includes("a-quiz/redo"),
+      );
+      expect(post).toBeDefined();
+      expect(JSON.parse((post![1] as RequestInit).body as string).custom_prompt).toBe(
+        "Chapter 3 only",
+      );
     });
   });
 
@@ -195,7 +288,9 @@ describe("StagingPage", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Neural Nets" });
     await userEvent.click(screen.getByTestId("btn-sr2"));
-    expect(await screen.findByRole("heading", { name: /publish complete course/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /publish complete course/i }),
+    ).toBeInTheDocument();
   });
 
   it("BTN-SR8 cancels the redo modal without posting", async () => {

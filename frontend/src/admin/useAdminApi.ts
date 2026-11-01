@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ArtifactType, adminApi } from "./api";
-import type { OptionsByType } from "./generationOptions";
+import type { OptionsByType, PromptsByType } from "./generationOptions";
 
 export function useMcpStatus() {
   return useQuery({
@@ -47,6 +47,7 @@ export interface IngestInput {
   moduleTitle: string;
   types: ArtifactType[];
   options?: OptionsByType;
+  prompts?: PromptsByType;
 }
 
 export function useIngest() {
@@ -69,6 +70,7 @@ export function useIngest() {
         title: input.moduleTitle,
         types: input.types,
         options: input.options,
+        prompts: input.prompts,
       });
       return { courseId, moduleId: res.module.id };
     },

@@ -2,16 +2,23 @@ import { useState } from "react";
 import { Button, Modal } from "@/components";
 import type { ArtifactType } from "../api";
 import { GenerationOptionsEditor } from "../GenerationOptionsEditor";
-import { DEFAULT_OPTIONS } from "../generationOptions";
+import {
+  DEFAULT_OPTIONS,
+  normalizeOptions,
+  optionsProblem,
+  type OptionValues,
+} from "../generationOptions";
 
 interface RedoModalProps {
   open: boolean;
   type: ArtifactType;
   typeLabel: string;
   pending: boolean;
-  initialOptions: Record<string, string>;
+  initialOptions: OptionValues;
+  /** The artifact's stored custom prompt ("" = it uses the Settings template). */
+  initialPrompt: string;
   onCancel: () => void;
-  onStart: (note: string | null, options: Record<string, string>) => void;
+  onStart: (note: string | null, options: OptionValues, customPrompt: string) => void;
 }
 
 export function RedoModal({
@@ -20,13 +27,19 @@ export function RedoModal({
   typeLabel,
   pending,
   initialOptions,
+  initialPrompt,
   onCancel,
   onStart,
 }: RedoModalProps): JSX.Element {
   const [note, setNote] = useState("");
-  const [options, setOptions] = useState<Record<string, string>>(
-    Object.keys(initialOptions).length ? initialOptions : DEFAULT_OPTIONS[type],
+  // Stored options can predate newer fields: start from NotebookLM's defaults.
+  const [options, setOptions] = useState<OptionValues>(
+    normalizeOptions(type, { ...DEFAULT_OPTIONS[type], ...initialOptions }),
   );
+  const problem = optionsProblem(type, options);
+  // Whatever is in this box is sent (owner decision 2026-10-20); empty means
+  // "use the Settings template".
+  const [customPrompt, setCustomPrompt] = useState(initialPrompt);
 
   return (
     <Modal
@@ -40,7 +53,8 @@ export function RedoModal({
           </Button>
           <Button
             loading={pending}
-            onClick={() => onStart(note.trim() || null, options)}
+            disabled={problem !== null}
+            onClick={() => onStart(note.trim() || null, options, customPrompt.trim())}
             data-testid="btn-sr7"
           >
             Start regeneration
@@ -60,7 +74,18 @@ export function RedoModal({
         </label>
         <div data-testid="redo-options">
           <p className="mb-1 font-label-md text-label-md text-on-surface-variant">Options</p>
-          <GenerationOptionsEditor type={type} values={options} onChange={setOptions} />
+          <GenerationOptionsEditor
+            type={type}
+            values={options}
+            onChange={setOptions}
+            prompt={customPrompt}
+            onPromptChange={setCustomPrompt}
+          />
+          {problem && (
+            <p role="alert" className="mt-2 font-label-sm text-label-sm text-error">
+              {problem}
+            </p>
+          )}
         </div>
       </div>
     </Modal>

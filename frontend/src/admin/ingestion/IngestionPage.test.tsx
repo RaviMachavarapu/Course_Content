@@ -150,7 +150,11 @@ describe("IngestionPage", () => {
     await userEvent.type(screen.getByLabelText("Module title"), "Module 1");
 
     const audioSection = within(screen.getByTestId("options-audio_overview"));
-    await userEvent.selectOptions(audioSection.getByLabelText("Format"), "brief");
+    await userEvent.click(audioSection.getByRole("radio", { name: "Brief" }));
+    await userEvent.type(
+      within(screen.getByTestId("options-quiz")).getByLabelText("What should the topic be?"),
+      "  Chapter 2 only  ",
+    );
 
     await userEvent.click(screen.getByTestId("btn-ig6"));
     await waitFor(() => expect(screen.getByText("STAGING PAGE")).toBeInTheDocument());
@@ -160,7 +164,33 @@ describe("IngestionPage", () => {
     );
     const body = JSON.parse((modulePost![1] as RequestInit).body as string);
     expect(body.options.audio_overview.format).toBe("brief");
-    expect(body.options.slide_deck).toEqual({ language: "en" });
+    expect(body.options.slide_deck).toEqual({
+      format: "detailed",
+      length: "default",
+      language: "en",
+      review_outline: false,
+    });
+    // only non-blank prompts are sent, trimmed; the rest use the template
+    expect(body.prompts).toEqual({ quiz: "Chapter 2 only" });
+  });
+
+  it("blocks submit until a document report has a template", async () => {
+    const fetchMock = installFetch([HEALTHY, NO_COURSES, EMPTY_PIPELINE]);
+    renderPage();
+    await userEvent.type(screen.getByLabelText("Source URL"), "https://youtu.be/abc");
+    await userEvent.type(screen.getByLabelText("Course title"), "Intro to ML");
+    await userEvent.type(screen.getByLabelText("Module title"), "Module 1");
+    const report = within(screen.getByTestId("options-report"));
+    await userEvent.click(report.getByRole("radio", { name: "Document" }));
+
+    await userEvent.click(screen.getByTestId("btn-ig6"));
+    expect(await report.findByText("Choose a report template.")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((c) => (c[1] as RequestInit | undefined)?.method === "POST"),
+    ).toBe(false);
+
+    await userEvent.click(report.getByRole("radio", { name: "Study guide" }));
+    expect(report.queryByText("Choose a report template.")).not.toBeInTheDocument();
   });
 
   it("warns when NotebookLM is disconnected but still allows submit", async () => {

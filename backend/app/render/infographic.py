@@ -107,6 +107,8 @@ def _run_capture(cmd: list[str]) -> bytes:
 
 def render_infographic(content_json: dict[str, object]) -> RenderedInfographic:
     content = InfographicContent.model_validate(content_json)
+    if content.diagram_kind is None or content.diagram_source is None:
+        raise RenderError("infographic: no diagram to render (NotebookLM supplies its own image)")
     dot_exe = _dot()
 
     dot_source = (

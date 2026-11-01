@@ -12,6 +12,7 @@ function art(type: string, status: string): StagingArtifact {
     current_version: null,
     job: { state: null },
     generation_options: {},
+    custom_prompt: null,
   };
 }
 
